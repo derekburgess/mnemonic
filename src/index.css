@@ -1,0 +1,492 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --panel-2: #1e222b;
+  --line: #2a2f3a;
+  --text: #e6e8ec;
+  --dim: #8b93a3;
+  --accent: #6ea8fe;
+  --ok: #5fd08a;
+  --ok-soft: rgba(95, 208, 138, 0.12);
+  --warn: #f0b357;
+  --err: #f2777a;
+  --err-soft: rgba(242, 119, 122, 0.12);
+
+  --node-w: 300px;
+  --node-pad: 10px;
+  /* the width a field fills inside a base-width node */
+  --field-w: calc(var(--node-w) - 2 * var(--node-pad) - 2px);
+
+  color-scheme: dark;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app { display: flex; flex-direction: column; height: 100vh; }
+
+/* ---------- toolbar ---------- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand { font-weight: 600; letter-spacing: 0.04em; margin-right: 6px; }
+.toolbar .spacer { flex: 1; }
+.progress { color: var(--dim); font-variant-numeric: tabular-nums; }
+
+button, .file {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled), .file:hover { border-color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.primary {
+  background: var(--ok);
+  color: var(--bg);
+  border-color: var(--ok);
+  font-weight: 600;
+}
+/* Beats the shared button:hover accent border. */
+button.primary:hover:not(:disabled) {
+  border-color: var(--ok);
+  filter: brightness(1.08);
+}
+
+/* Outlined buttons that carry their action's colour without the weight of a filled one. */
+button.tinted {
+  color: var(--tint);
+  border-color: color-mix(in srgb, var(--tint) 45%, transparent);
+}
+button.tinted:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--tint) 12%, transparent);
+  border-color: var(--tint);
+}
+.tint-ok { --tint: var(--ok); }
+.tint-warn { --tint: var(--warn); }
+.tint-err { --tint: var(--err); }
+
+.file { position: relative; overflow: hidden; }
+.file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+.notice {
+  padding: 8px 14px;
+  background: rgba(240, 179, 87, 0.12);
+  border-bottom: 1px solid var(--line);
+  color: var(--warn);
+  cursor: pointer;
+}
+
+/* ---------- nodes ---------- */
+
+.node {
+  width: max-content;
+  min-width: var(--node-w);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: var(--node-pad);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.node.status-running { border-color: var(--accent); }
+.node.status-error { border-color: var(--err); }
+.node.output { background: var(--panel); }
+/* Dashed marks an artifact that nothing wires to any more. */
+.node.output.detached { border-style: dashed; }
+
+.node-head { display: flex; align-items: center; gap: 6px; }
+
+/* Takes the free space so the trailing icon is pinned right, as .label does on a step. */
+.node-head .meta { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.node-head .meta strong,
+.node-head .meta .dim {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.node-head .meta strong { font-size: 13px; }
+
+.label {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text);
+  font: 600 13px inherit;
+  padding: 3px 4px;
+}
+.label:hover { border-color: var(--line); }
+.label:focus { border-color: var(--accent); outline: none; }
+
+.dim { color: var(--dim); font-size: 11px; }
+.tokens { font-variant-numeric: tabular-nums; }
+
+.spinner {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2.4s; }
+}
+
+/* Copy sits over its field and surfaces on hover so it never crowds the text. */
+.field { position: relative; }
+
+.field .copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--dim);
+  background: var(--panel-2);
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+.field .copy.copied { color: var(--ok); opacity: 1; }
+.field:hover .copy,
+.field .copy:focus-visible { opacity: 1; }
+.field .copy:hover:not(:disabled) { color: var(--text); }
+.field .copy:disabled { opacity: 0; }
+
+.icon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--dim);
+}
+.icon:hover:not(:disabled) { color: var(--err); border-color: var(--err); }
+
+.row { display: flex; gap: 8px; }
+.row label { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--dim); }
+
+/* A full-width labelled field. Unlike .row items these do size the node. */
+.stack { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--dim); }
+
+select, textarea, .line {
+  /* textarea width is set per field below so the resize grip can drive it */
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 6px;
+  font: inherit;
+}
+select, .line { width: 100%; }
+select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline: none; }
+.line { font-size: 13px; }
+
+.instructions {
+  display: block;
+  width: 100%;
+  min-width: 200px;
+  min-height: 54px;
+  padding-right: 34px;
+  resize: both;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.prompt {
+  display: block;
+  width: 100%;
+  min-width: 200px;
+  min-height: 76px;
+  padding-right: 34px;
+  resize: both;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.node .run { width: 100%; }
+.node .error {
+  margin: 0;
+  padding: 7px 9px;
+  color: var(--err);
+  font-size: 12px;
+  line-height: 1.45;
+  background: var(--err-soft);
+  border: 1px solid var(--err);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+
+.node.output .text {
+  width: var(--field-w);
+  min-width: 200px;
+  min-height: 34px;
+  /* A definite default height: content past it scrolls, and the grip can still drag past it.
+     A max-height would cap the grip too, which is what made these nodes run away. */
+  height: 260px;
+  overflow: auto;
+  resize: both;
+  font-size: 13px;
+  line-height: 1.45;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 34px 5px 6px;
+  cursor: text;
+  user-select: text;
+}
+
+/* ---------- react flow ---------- */
+
+/* The wrapper is positioning only; all node chrome lives on .node itself. */
+.react-flow__node {
+  width: auto;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font-size: inherit;
+  text-align: left;
+}
+
+.react-flow__node.selected .node { border-color: var(--accent); }
+
+/* Handles ride the node's own border rather than a wrapper box around it. */
+.react-flow__handle {
+  width: 10px;
+  height: 10px;
+  background: var(--dim);
+  border: 2px solid var(--bg);
+  border-radius: 50%;
+}
+.react-flow__handle-top { top: -5px; }
+.react-flow__handle-bottom { bottom: -5px; }
+.react-flow__handle:hover,
+.react-flow__handle.connecting { background: var(--accent); }
+.react-flow__edge-path { stroke: var(--dim); stroke-width: 1.6; }
+/* Widen the grab target so an endpoint is easy to catch and drag off. */
+.react-flow__edge .react-flow__edge-interaction { stroke-width: 18; }
+.react-flow__edge:hover .react-flow__edge-path { stroke: var(--text); }
+.react-flow__edge.selected .react-flow__edge-path { stroke: var(--accent); }
+
+/* ---------- canvas panels ---------- */
+
+/* Controls and minimap ship light-theme defaults; give them the toolbar's surface. */
+.react-flow__controls,
+.react-flow__minimap {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.react-flow__controls-button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  background: var(--panel);
+  border: none;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+}
+.react-flow__controls-button:last-child { border-bottom: none; }
+.react-flow__controls-button:hover:not(:disabled) { background: var(--panel-2); }
+.react-flow__controls-button svg { fill: var(--text); max-width: 13px; max-height: 13px; }
+.react-flow__controls-button:disabled svg { fill: var(--line); }
+
+.react-flow__minimap { border-radius: 8px; }
+.react-flow__minimap-mask { stroke: none; }
+
+.react-flow__attribution { background: transparent; }
+.react-flow__attribution a { color: var(--line); }
+
+/* ---------- skip toggle ---------- */
+
+.skip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--dim);
+  cursor: pointer;
+  user-select: none;
+}
+
+.skip input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.skip .track {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+.skip .track::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--dim);
+  transition: transform 0.14s ease, background 0.14s ease;
+}
+
+.skip:hover .track { border-color: var(--warn); }
+.skip input:focus-visible ~ .track { border-color: var(--accent); }
+
+.skip input:checked ~ .track {
+  background: color-mix(in srgb, var(--warn) 28%, transparent);
+  border-color: var(--warn);
+}
+.skip input:checked ~ .track::after {
+  transform: translateX(16px);
+  background: var(--warn);
+}
+
+/* A skipped node stays legible but visibly out of play. */
+.node.skipped { opacity: 0.55; }
+.node.skipped:hover { opacity: 0.8; }
+.node.skipped .skip { color: var(--warn); }
+
+@media (prefers-reduced-motion: reduce) {
+  .skip .track, .skip .track::after { transition: none; }
+}
+
+/* ---------- rendered markdown ---------- */
+
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+
+.md p, .md ul, .md ol, .md blockquote, .md pre, .md table { margin: 0 0 8px; }
+
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
+  margin: 12px 0 6px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--text);
+}
+.md h1 { font-size: 14px; }
+.md h2 { font-size: 13px; }
+
+.md ul, .md ol { padding-left: 18px; }
+.md li { margin: 2px 0; }
+.md li > ul, .md li > ol { margin: 2px 0; }
+
+.md a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.md strong { color: var(--text); font-weight: 650; }
+.md em { font-style: italic; }
+.md del { color: var(--dim); }
+
+.md code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.md pre {
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  overflow-x: auto;
+}
+/* The block already carries the frame; the inner code element should not repeat it. */
+.md pre code {
+  padding: 0;
+  border: none;
+  background: none;
+  overflow-wrap: normal;
+  white-space: pre;
+}
+
+.md blockquote {
+  padding-left: 9px;
+  border-left: 2px solid var(--line);
+  color: var(--dim);
+}
+
+.md hr { margin: 10px 0; border: none; border-top: 1px solid var(--line); }
+
+.md table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.md th, .md td { padding: 4px 6px; border: 1px solid var(--line); text-align: left; }
+.md th { background: var(--bg); font-weight: 650; }
+
+.md img { max-width: 100%; height: auto; border-radius: 4px; }
+
+/* ---------- scrollbars ---------- */
+
+/* Hidden, not disabled: these surfaces still scroll by wheel, drag and keyboard. Removing the
+   bar also frees the field's corner for the copy button. */
+.prompt,
+.instructions,
+.node.output .text,
+.md pre {
+  scrollbar-width: none;
+}
+
+.prompt::-webkit-scrollbar,
+.instructions::-webkit-scrollbar,
+.node.output .text::-webkit-scrollbar,
+.md pre::-webkit-scrollbar {
+  display: none;
+}
+
+/* Long tokens must wrap rather than widen the node. */
+.md { overflow-wrap: break-word; }
