@@ -11,7 +11,8 @@ import { useGraphActions } from "./context";
 export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
   const { removeNode: onDelete, setSkipped } = useGraphActions();
   const skipped = !!data.skipped;
-  // A detached artifact is history: still on the canvas, but out of the current flow.
+  // A detached artifact is history: still on the canvas, but out of the current flow. With a
+  // tool in the chain the artifact hangs off the tool, so tool edges count here.
   const attached = useStore((s) => s.edges.some((e) => e.source === id || e.target === id));
   const stamp = new Date(data.createdAt).toLocaleTimeString();
   const tokens = data.usage
@@ -44,6 +45,32 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
         </div>
         <CopyButton text={data.text} title="Copy output" />
       </div>
+      {/* One row per thing: a call's arguments, then each URL it produced. */}
+      {(data.toolCalls ?? [])
+        .flatMap((call) => [
+          ...(call.detail ? [{ name: call.name, text: call.detail, href: undefined }] : []),
+          ...(call.urls ?? []).map((url) => ({ name: call.name, text: url, href: url })),
+        ])
+        .map((row, i) => (
+          <div className="call" key={i}>
+            <span className="call-name" title={row.name}>
+              {row.name}
+            </span>
+            <div className="field">
+              <div className="call-detail nodrag nowheel">
+                {row.href ? (
+                  <a href={row.href} target="_blank" rel="noreferrer noopener" title={row.href}>
+                    {row.text.replace(/^https?:\/\//, "")}
+                  </a>
+                ) : (
+                  <span className="call-args">{row.text}</span>
+                )}
+              </div>
+              <CopyButton text={row.text} title={row.href ? "Copy URL" : "Copy arguments"} />
+            </div>
+          </div>
+        ))}
+
       {tokens && <footer className="dim tokens">{tokens}</footer>}
 
       <Handle type="source" position={Position.Bottom} />

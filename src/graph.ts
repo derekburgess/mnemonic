@@ -1,5 +1,5 @@
-import type { GraphEdge, GraphNode, InputNode, OutputData, OutputNode } from "./types";
-import { isInput, isOutput } from "./types";
+import type { GraphEdge, GraphNode, InputNode, OutputData, OutputNode, ToolNode } from "./types";
+import { isInput, isOutput, isTool } from "./types";
 
 export const uid = () => crypto.randomUUID();
 
@@ -84,6 +84,27 @@ export function composePrompt(context: ContextBlock[], prompt: string): string {
   return `${blocks}\n\n${prompt}`;
 }
 
+/**
+ * The tools wired to a step. Tool nodes are capabilities, not context: they carry no text and
+ * take part in no scheduling, so the edge direction carries no meaning and either is accepted.
+ */
+export function resolveTools(inputId: string, nodes: GraphNode[], edges: GraphEdge[]): ToolNode[] {
+  const map = new Map(nodes.map((n) => [n.id, n]));
+  const seen = new Set<string>();
+
+  return edges
+    .flatMap((e) => {
+      if (e.target === inputId) return [map.get(e.source)];
+      if (e.source === inputId) return [map.get(e.target)];
+      return [];
+    })
+    .filter((n): n is ToolNode => {
+      if (!n || !isTool(n) || n.data.skipped || seen.has(n.id)) return false;
+      seen.add(n.id);
+      return true;
+    });
+}
+
 /** The system prompt: the role, phrased as one, followed by the step's own instructions. */
 export function composeSystem(role?: string, instructions?: string): string | undefined {
   const parts = [role?.trim() ? `Your role is: ${role.trim()}` : "", instructions?.trim() ?? ""];
@@ -106,11 +127,17 @@ export function commitRun(
 ): { nodes: GraphNode[]; edges: GraphEdge[]; outputIds: string[] } {
   const map = byId(nodes);
 
+  // With tools attached the flow runs step -> tool -> artifact, so an artifact this step is
+  // currently feeding may hang off one of its tools rather than off the step itself.
+  const tools = resolveTools(producer.id, nodes, edges);
+  const toolIds = new Set(tools.map((t) => t.id));
+  const feedsArtifact = (e: GraphEdge) => e.source === producer.id || toolIds.has(e.source);
+
   const activeOutputIds = new Set(
     edges
-      .filter((e) => e.source === producer.id)
+      .filter(feedsArtifact)
       .map((e) => map.get(e.target))
-      .filter((n): n is OutputNode => !!n && isOutput(n))
+      .filter((n): n is OutputNode => !!n && isOutput(n) && n.data.sourceId === producer.id)
       .map((n) => n.id),
   );
 
@@ -139,7 +166,7 @@ export function commitRun(
 
   const stale = new Set([...inherited, ...prewired].map((e) => e.id));
   const kept = edges.filter(
-    (e) => !stale.has(e.id) && !(e.source === producer.id && activeOutputIds.has(e.target)),
+    (e) => !stale.has(e.id) && !(feedsArtifact(e) && activeOutputIds.has(e.target)),
   );
 
   const migrated: GraphEdge[] = [...inherited, ...prewired].map((e) => ({
@@ -152,7 +179,13 @@ export function commitRun(
     nodes: [...nodes, ...outputs],
     edges: [
       ...kept,
-      ...outputs.map((o) => ({ id: uid(), source: producer.id, target: o.id })),
+      // The artifact hangs off the tools when there are any, so the graph reads as a chain
+      // rather than a triangle of step -> tool, step -> artifact, tool -> artifact.
+      ...outputs.flatMap((o) =>
+        tools.length
+          ? tools.map((t) => ({ id: uid(), source: t.id, target: o.id }))
+          : [{ id: uid(), source: producer.id, target: o.id }],
+      ),
       ...migrated,
     ],
     outputIds: outputs.map((o) => o.id),

@@ -13,14 +13,24 @@ import {
   type IsValidConnection,
 } from "@xyflow/react";
 
-import { fetchModels, runStep } from "./api";
-import { commitRun, composePrompt, composeSystem, resolveContext, topoOrder, uid } from "./graph";
+import { fetchModels, runStep, toolSpec } from "./api";
+import { commitRun, composePrompt, composeSystem, resolveContext, resolveTools, topoOrder, uid } from "./graph";
 import { GraphActionsContext } from "./nodes/context";
 import { InputNodeView } from "./nodes/InputNodeView";
+import { ToolNodeView } from "./nodes/ToolNodeView";
 import { OutputNodeView } from "./nodes/OutputNodeView";
-import { isInput, isOutput, type GraphEdge, type GraphNode, type InputData, type InputNode } from "./types";
+import {
+  isInput,
+  isOutput,
+  isTool,
+  type GraphEdge,
+  type GraphNode,
+  type InputData,
+  type InputNode,
+  type ToolData,
+} from "./types";
 
-const nodeTypes = { step: InputNodeView, artifact: OutputNodeView };
+const nodeTypes = { step: InputNodeView, artifact: OutputNodeView, tool: ToolNodeView };
 const STORAGE_KEY = "mnemonic.graph.v1";
 const DEFAULT_MODEL = "gpt-5";
 export const MAX_OUTPUTS = 8;
@@ -53,6 +63,15 @@ function migrateNode(n: GraphNode): GraphNode {
   return isInput(typed) && typeof typed.data.outputs !== "number"
     ? { ...typed, data: { ...typed.data, outputs: 1 } }
     : typed;
+}
+
+function newTool(index: number, position: { x: number; y: number }): GraphNode {
+  return {
+    id: uid(),
+    type: "tool",
+    position,
+    data: { label: `Tool ${index}`, kind: "web_search", contextSize: "medium" },
+  } as GraphNode;
 }
 
 function loadSnapshot(): Snapshot | null {
@@ -118,6 +137,15 @@ function Canvas() {
     [setNodes],
   );
 
+  const updateTool = useCallback(
+    (id: string, patch: Partial<ToolData>) => {
+      setNodes((current) =>
+        current.map((n) => (n.id === id && isTool(n) ? { ...n, data: { ...n.data, ...patch } } : n)),
+      );
+    },
+    [setNodes],
+  );
+
   const setSkipped = useCallback(
     (id: string, value: boolean) => {
       setNodes((current) =>
@@ -153,11 +181,18 @@ function Canvas() {
       const context = resolveContext(id, working.nodes, working.edges);
       const input = composePrompt(context, producer.data.prompt);
       const instructions = composeSystem(producer.data.role, producer.data.instructions);
+      const tools = resolveTools(id, working.nodes, working.edges).map(toolSpec);
 
       const count = Math.min(MAX_OUTPUTS, Math.max(1, producer.data.outputs ?? 1));
       const settled = await Promise.allSettled(
         Array.from({ length: count }, () =>
-          runStep({ model: producer.data.model, effort: producer.data.effort, input, instructions }),
+          runStep({
+            model: producer.data.model,
+            effort: producer.data.effort,
+            input,
+            instructions,
+            tools,
+          }),
         ),
       );
 
@@ -176,6 +211,7 @@ function Canvas() {
             effort: producer.data.effort,
             text: result.text,
             usage: result.usage,
+            toolCalls: result.toolCalls,
           })),
         );
         working = patchStatus({ nodes: committed.nodes, edges: committed.edges }, id, {
@@ -256,6 +292,13 @@ function Canvas() {
     });
   }, [models, setNodes]);
 
+  const addTool = useCallback(() => {
+    setNodes((current) => {
+      const count = current.filter(isTool).length;
+      return [...current, newTool(count + 1, { x: 640 + count * 60, y: 80 + count * 40 })];
+    });
+  }, [setNodes]);
+
   const clearOutputs = useCallback(() => {
     const keep = new Set(live.current.nodes.filter((n) => !isOutput(n)).map((n) => n.id));
     publish({
@@ -271,6 +314,9 @@ function Canvas() {
       const source = nodes.find((n) => n.id === conn.source);
       const target = nodes.find((n) => n.id === conn.target);
       if (!source || !target || source.id === target.id) return false;
+      // A tool attaches to a step, or to an artifact as provenance; direction is meaningless.
+      if (isTool(source)) return isInput(target) || isOutput(target);
+      if (isTool(target)) return isInput(source) || isOutput(source);
       return !(isOutput(source) && isOutput(target));
     },
     [nodes],
@@ -346,48 +392,62 @@ function Canvas() {
     [publish],
   );
 
+  /** The step Next would run: first in topological order that has not been stepped yet. */
+  const currentId = useMemo(() => {
+    const { order } = topoOrder(nodes, edges);
+    return order.find((nodeId) => !stepped.includes(nodeId)) ?? null;
+  }, [nodes, edges, stepped]);
+
   const actions = useMemo(
-    () => ({ models, updateInput, runOne, removeNode, setSkipped }),
-    [models, updateInput, runOne, removeNode, setSkipped],
+    () => ({ models, currentId, updateInput, updateTool, runOne, removeNode, setSkipped }),
+    [models, currentId, updateInput, updateTool, runOne, removeNode, setSkipped],
   );
-  const total = nodes.filter((n) => isInput(n) && !n.data.skipped).length;
 
   return (
     <GraphActionsContext.Provider value={actions}>
       <div className="app">
         <header className="toolbar">
-          <span className="brand">mnemonic</span>
-          <div className="spacer" />
-          <button onClick={addStep}>+ Step</button>
-          <button className="tinted tint-ok" onClick={runNext} disabled={running}>
-            Next
-          </button>
-          <button className="primary" onClick={runAll} disabled={running}>
-            {running ? "Running…" : "Run"}
-          </button>
-          <button className="tinted tint-warn" onClick={() => setStepped([])} disabled={running}>
-            Reset
-          </button>
-          <span className="progress">
-            {stepped.length}/{total} stepped
-          </span>
-          <div className="spacer" />
-          <button className="tinted tint-err" onClick={clearOutputs} disabled={running}>
-            Clear outputs
-          </button>
-          <button onClick={exportGraph}>Export</button>
-          <label className="file">
-            Import
-            <input
-              type="file"
-              accept="application/json"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) importGraph(f);
-                e.target.value = "";
-              }}
-            />
-          </label>
+          <div className="bar-left">
+            <span className="brand">
+              mnemonic
+              <span className="tagline">| A visual context and orchestration graph</span>
+            </span>
+          </div>
+
+          <div className="bar-center">
+            <button onClick={addStep}>+ Step</button>
+            <button onClick={addTool}>+ Tool</button>
+            <span className="gap" />
+            <button className="tinted tint-ok" onClick={runNext} disabled={running}>
+              Next
+            </button>
+            <button className="primary" onClick={runAll} disabled={running}>
+              {running ? "Running…" : "Run"}
+            </button>
+            <button className="tinted tint-warn" onClick={() => setStepped([])} disabled={running}>
+              Reset
+            </button>
+            <span className="gap" />
+            <button className="tinted tint-err" onClick={clearOutputs} disabled={running}>
+              Clear outputs
+            </button>
+          </div>
+
+          <div className="bar-right">
+            <button onClick={exportGraph}>Export</button>
+            <label className="file">
+              Import
+              <input
+                type="file"
+                accept="application/json"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) importGraph(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          </div>
         </header>
 
         {notice && (
@@ -417,7 +477,9 @@ function Canvas() {
             zoomable
             bgColor="var(--panel)"
             maskColor="rgba(15, 17, 21, 0.72)"
-            nodeColor={(n) => (isInput(n as GraphNode) ? "#6ea8fe" : "#3a4150")}
+            nodeColor={(n) =>
+              isInput(n as GraphNode) ? "#6ea8fe" : isTool(n as GraphNode) ? "#c69cf0" : "#3a4150"
+            }
             nodeStrokeWidth={0}
           />
         </ReactFlow>

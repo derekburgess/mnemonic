@@ -1,9 +1,12 @@
 import { createContext, useContext } from "react";
-import type { InputData } from "../types";
+import type { InputData, ToolData } from "../types";
 
 export type GraphActions = {
   models: string[];
+  /** The step Next would run, highlighted on the canvas. */
+  currentId: string | null;
   updateInput: (id: string, patch: Partial<InputData>) => void;
+  updateTool: (id: string, patch: Partial<ToolData>) => void;
   setSkipped: (id: string, value: boolean) => void;
   runOne: (id: string) => void;
   removeNode: (id: string) => void;

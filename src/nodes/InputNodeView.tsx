@@ -9,12 +9,14 @@ const EFFORTS: Effort[] = ["off", "minimal", "low", "medium", "high"];
 const MAX_OUTPUTS = 8;
 
 export function InputNodeView({ id, data }: NodeProps<InputNode>) {
-  const { models, updateInput: onChange, runOne: onRun, removeNode: onDelete, setSkipped } = useGraphActions();
+  const { models, currentId, updateInput: onChange, runOne: onRun, removeNode: onDelete, setSkipped } =
+    useGraphActions();
   const busy = data.status === "running";
   const skipped = !!data.skipped;
+  const current = currentId === id;
 
   return (
-    <div className={`node input status-${data.status}${skipped ? " skipped" : ""}`}>
+    <div className={`node input${current ? " current" : ""} status-${data.status}${skipped ? " skipped" : ""}`}>
       <Handle type="target" position={Position.Top} />
 
       <header className="node-head">
@@ -24,7 +26,6 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
           onChange={(e) => onChange(id, { label: e.target.value })}
           aria-label="Step name"
         />
-        {busy && <span className="spinner" role="status" aria-label="Running" />}
         <SkipToggle on={skipped} onChange={(v) => setSkipped(id, v)} title="Skip this step when running" />
         <DeleteButton onClick={() => onDelete(id)} title="Delete step" />
       </header>
@@ -113,7 +114,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
       {data.error && <p className="error">{data.error}</p>}
 
       <button className="run tinted tint-ok nodrag" onClick={() => onRun(id)} disabled={busy || skipped}>
-        Run
+        {busy ? <span className="spinner" role="status" aria-label="Running" /> : "Run"}
       </button>
 
       <Handle type="source" position={Position.Bottom} />

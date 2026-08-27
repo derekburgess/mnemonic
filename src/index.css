@@ -34,8 +34,11 @@ body {
 
 /* ---------- toolbar ---------- */
 
+/* Three columns rather than flex spacers: the equal 1fr flanks put the centre group in the
+   middle of the toolbar, not the middle of whatever space the sides left over. */
 .toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
@@ -43,9 +46,33 @@ body {
   border-bottom: 1px solid var(--line);
 }
 
-.brand { font-weight: 600; letter-spacing: 0.04em; margin-right: 6px; }
-.toolbar .spacer { flex: 1; }
-.progress { color: var(--dim); font-variant-numeric: tabular-nums; }
+.bar-left,
+.bar-center,
+.bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.bar-right { justify-content: flex-end; }
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.brand .tagline { color: var(--dim); font-weight: 400; letter-spacing: 0; }
+
+/* The tagline is the first thing to go when the toolbar gets tight. */
+@media (max-width: 1180px) {
+  .brand .tagline { display: none; }
+}
+.toolbar .gap { flex: none; width: 10px; }
 
 button, .file {
   background: var(--panel-2);
@@ -108,6 +135,12 @@ button.tinted:hover:not(:disabled) {
   flex-direction: column;
   gap: 8px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+/* Up next for Next/Run. A running or failed step outranks it, so those follow. */
+.node.current {
+  border-color: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-soft), 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 
 .node.status-running { border-color: var(--accent); }
@@ -220,7 +253,7 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 .instructions {
   display: block;
   width: 100%;
-  min-width: 200px;
+  min-width: var(--field-w);
   min-height: 54px;
   padding-right: 34px;
   resize: both;
@@ -231,7 +264,7 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 .prompt {
   display: block;
   width: 100%;
-  min-width: 200px;
+  min-width: var(--field-w);
   min-height: 76px;
   padding-right: 34px;
   resize: both;
@@ -239,7 +272,17 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   line-height: 1.45;
 }
 
-.node .run { width: 100%; }
+.node .run {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 30px;
+}
+.node .run .spinner {
+  border-color: color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+}
 .node .error {
   margin: 0;
   padding: 7px 9px;
@@ -253,8 +296,11 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 }
 
 .node.output .text {
-  width: var(--field-w);
-  min-width: 200px;
+  width: 100%;
+  min-width: var(--field-w);
+  /* Rendered markdown would otherwise report its longest line as this element's intrinsic
+     width and stretch the node; containment makes the width independent of the content. */
+  contain: inline-size;
   min-height: 34px;
   /* A definite default height: content past it scrolls, and the grip can still drag past it.
      A max-height would cap the grip too, which is what made these nodes run away. */
@@ -490,3 +536,96 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 
 /* Long tokens must wrap rather than widen the node. */
 .md { overflow-wrap: break-word; }
+
+/* ---------- tool nodes ---------- */
+
+:root { --tool: #c69cf0; }
+
+.node.tool { border-color: color-mix(in srgb, var(--tool) 40%, var(--line)); }
+.node.tool .label:focus { border-color: var(--tool); }
+.node.tool .react-flow__handle { background: var(--tool); }
+
+/* MCP tool picker */
+.picker {
+  max-height: 132px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  scrollbar-width: none;
+}
+.picker::-webkit-scrollbar { display: none; }
+
+.pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+.pick input { accent-color: var(--tool); }
+
+.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+
+/* One row per tool call: the name labels it, the arguments sit in their own field. */
+.call {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  contain: inline-size;
+}
+
+.call-name {
+  flex: 0 0 auto;
+  max-width: 40%;
+  padding-top: 7px;
+  font-size: 11px;
+  color: var(--tool);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.call .field { flex: 1 1 auto; min-width: 0; }
+
+.call-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  min-height: 30px;
+  padding: 5px 34px 5px 6px;
+  overflow: auto;
+  resize: vertical;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.45;
+  cursor: text;
+  user-select: text;
+  scrollbar-width: none;
+}
+
+.call-args {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+/* Sources and citations, clickable straight out of the artifact. */
+.call-detail a {
+  color: var(--accent);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.call-detail a:hover { text-decoration: underline; }
+.call-detail::-webkit-scrollbar { display: none; }

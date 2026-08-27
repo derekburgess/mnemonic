@@ -54,6 +54,47 @@ Be terse. British spelling.
 Either may be left empty; if both are, no system prompt is sent at all. These are step parameters,
 not context — they are not affected by wiring and never appear in a downstream artifact.
 
+## Tool nodes
+
+A third node kind. Tools are **capabilities, not context**: wiring a tool to a step means "this
+step may call this tool". Because tools carry no text and no ordering, the edge direction is
+meaningless and either one works - drag down from a step to its tool, or up from a tool to a step. They carry no text, produce no artifacts,
+and take no part in scheduling. Skipping one withholds it from its steps. Whatever the model
+actually invoked is recorded on the artifact the step produced.
+
+With a tool attached the flow reads as a chain - `step -> tool -> artifact` - rather than the step
+feeding the artifact directly. Without tools it stays `step -> artifact`.
+
+| Kind | Runs where | Notes |
+| --- | --- | --- |
+| Web search | OpenAI, server-side | Context size, plus optional allowed-domain filter |
+| MCP | This proxy | Any streamable-HTTP MCP server, localhost included |
+| Custom | This proxy, in `node:vm` | Your own JS, with `args` in scope |
+
+### MCP
+
+We are the MCP client. The proxy connects to the server, lists its tools for the picker, and
+advertises the ones you select to the model as ordinary function tools; calls come back here and we
+invoke them over MCP. That is why **private and localhost servers work** - OpenAI never connects to
+your server, so it does not need to be publicly reachable. Tool names are namespaced
+`mcp_<label>_<tool>` so two servers can expose the same name.
+
+### Custom
+
+The body runs with `args` in scope and whatever it returns becomes the tool result. `fetch`, `URL`
+and `console` are available.
+
+```js
+const res = await fetch(`https://api.example.com/q?s=${args.query}`);
+return await res.json();
+```
+
+> **`node:vm` is not a security boundary.** Custom tools run in this proxy's process with a 5s
+> timeout. That is fine for code you wrote on your own machine; never expose this to input you do
+> not control. Run each call in an isolated child process if that changes.
+
+The model may make several rounds of tool calls; the loop stops after 6.
+
 ## The graph is stateless
 
 Nothing is cached on a node. The edges *are* the program: a run derives everything from the graph
