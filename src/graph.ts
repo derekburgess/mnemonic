@@ -3,6 +3,47 @@ import { isInput, isOutput, isTool } from "./types";
 
 export const uid = () => crypto.randomUUID();
 
+/** Fallback footprint for a node React Flow has not measured yet. */
+const NODE_SIZE = { width: 300, height: 240 };
+const GAP = 28;
+
+export type Box = { x: number; y: number; w: number; h: number };
+
+export const boxOf = (n: GraphNode): Box => ({
+  x: n.position.x,
+  y: n.position.y,
+  w: n.measured?.width ?? NODE_SIZE.width,
+  h: n.measured?.height ?? NODE_SIZE.height,
+});
+
+/**
+ * The first spot at or below-right of `desired` that clears everything in `taken`. Scans across
+ * then wraps down, so a new node lands beside its neighbours rather than on top of them.
+ */
+export function freeSpot(
+  desired: { x: number; y: number },
+  taken: Box[],
+  size = NODE_SIZE,
+): { x: number; y: number } {
+  const hits = (x: number, y: number) =>
+    taken.some(
+      (b) =>
+        x < b.x + b.w + GAP &&
+        x + size.width + GAP > b.x &&
+        y < b.y + b.h + GAP &&
+        y + size.height + GAP > b.y,
+    );
+
+  for (let row = 0; row < 30; row++) {
+    for (let col = 0; col < 12; col++) {
+      const x = desired.x + col * (size.width + GAP);
+      const y = desired.y + row * (size.height + GAP);
+      if (!hits(x, y)) return { x, y };
+    }
+  }
+  return desired;
+}
+
 const byId = (nodes: GraphNode[]) => new Map(nodes.map((n) => [n.id, n]));
 
 /**
@@ -148,19 +189,26 @@ export function commitRun(
   });
   const inherited = edges.filter((e) => activeOutputIds.has(e.source));
 
-  const siblings = nodes.filter((n) => isOutput(n) && n.data.sourceId === producer.id).length;
+  // Artifacts land under the step, fanning across into whatever space is actually free.
+  const taken = nodes.map(boxOf);
+  const below = { x: producer.position.x, y: producer.position.y + boxOf(producer).h + GAP };
   const createdAt = Date.now();
-  const outputs: OutputNode[] = results.map((result, i) => ({
-    id: uid(),
-    type: "artifact",
-    position: { x: producer.position.x + (siblings + i) * 330, y: producer.position.y + 260 },
-    data: {
-      ...result,
-      sourceId: producer.id,
-      sourceLabel: producer.data.label,
-      createdAt,
-    },
-  }));
+
+  const outputs: OutputNode[] = results.map((result) => {
+    const position = freeSpot(below, taken);
+    taken.push({ x: position.x, y: position.y, w: NODE_SIZE.width, h: NODE_SIZE.height });
+    return {
+      id: uid(),
+      type: "artifact",
+      position,
+      data: {
+        ...result,
+        sourceId: producer.id,
+        sourceLabel: producer.data.label,
+        createdAt,
+      },
+    };
+  });
   // A fan-out has no single successor, so the chain follows the first sibling by default.
   const heir = outputs[0].id;
 

@@ -31,6 +31,7 @@ body {
 }
 
 .app { display: flex; flex-direction: column; height: 100vh; }
+.canvas { flex: 1; min-height: 0; }
 
 /* ---------- toolbar ---------- */
 
@@ -283,9 +284,13 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   border-color: color-mix(in srgb, currentColor 30%, transparent);
   border-top-color: currentColor;
 }
+/* Takes the node's width and whatever height the message needs. Containment keeps a long
+   single-line API error from driving the node's width. */
 .node .error {
   margin: 0;
-  padding: 7px 9px;
+  padding: 5px 6px;
+  width: 100%;
+  contain: inline-size;
   color: var(--err);
   font-size: 12px;
   line-height: 1.45;
@@ -293,6 +298,8 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   border: 1px solid var(--err);
   border-radius: 6px;
   overflow-wrap: anywhere;
+  cursor: text;
+  user-select: text;
 }
 
 .node.output .text {

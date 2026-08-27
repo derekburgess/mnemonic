@@ -22,7 +22,10 @@ export type RunResponse = {
 
 export type McpTool = { name: string; description: string; inputSchema: Record<string, unknown> };
 
-export async function fetchMcpTools(serverUrl: string, authorization?: string): Promise<McpTool[]> {
+export async function fetchMcpTools(
+  serverUrl: string,
+  authorization?: string,
+): Promise<{ tools: McpTool[]; resolvedUrl: string }> {
   const res = await fetch("/api/mcp/tools", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -30,7 +33,7 @@ export async function fetchMcpTools(serverUrl: string, authorization?: string): 
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? `request failed (${res.status})`);
-  return body.tools ?? [];
+  return { tools: body.tools ?? [], resolvedUrl: body.resolvedUrl ?? serverUrl };
 }
 
 /** Flatten a tool node into the shape the proxy expects. */

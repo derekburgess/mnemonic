@@ -9,12 +9,23 @@ import {
   reconnectEdge,
   useEdgesState,
   useNodesState,
+  useReactFlow,
   type Connection,
   type IsValidConnection,
 } from "@xyflow/react";
 
 import { fetchModels, runStep, toolSpec } from "./api";
-import { commitRun, composePrompt, composeSystem, resolveContext, resolveTools, topoOrder, uid } from "./graph";
+import {
+  boxOf,
+  commitRun,
+  composePrompt,
+  composeSystem,
+  freeSpot,
+  resolveContext,
+  resolveTools,
+  topoOrder,
+  uid,
+} from "./graph";
 import { GraphActionsContext } from "./nodes/context";
 import { InputNodeView } from "./nodes/InputNodeView";
 import { ToolNodeView } from "./nodes/ToolNodeView";
@@ -98,6 +109,8 @@ function Canvas() {
   const [stepped, setStepped] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const { screenToFlowPosition } = useReactFlow();
+  const wrapper = useRef<HTMLDivElement>(null);
 
   // The run loop awaits between steps, so it threads a working snapshot through by hand
   // rather than reading React state that has not committed yet.
@@ -285,19 +298,30 @@ function Canvas() {
     setRunning(false);
   }, [executeNode, running, stepped]);
 
+  /** Centre of what the user is currently looking at, in canvas coordinates. */
+  const viewportSpot = useCallback(() => {
+    const rect = wrapper.current?.getBoundingClientRect();
+    const centre = rect
+      ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+      : { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+    const flow = screenToFlowPosition(centre);
+    return { x: flow.x - 150, y: flow.y - 120 };
+  }, [screenToFlowPosition]);
+
   const addStep = useCallback(() => {
     setNodes((current) => {
       const count = current.filter(isInput).length;
-      return [...current, newInput(models[0] ?? DEFAULT_MODEL, count + 1, { x: 260 + count * 60, y: 80 + count * 40 })];
+      const position = freeSpot(viewportSpot(), current.map(boxOf));
+      return [...current, newInput(models[0] ?? DEFAULT_MODEL, count + 1, position)];
     });
-  }, [models, setNodes]);
+  }, [models, setNodes, viewportSpot]);
 
   const addTool = useCallback(() => {
     setNodes((current) => {
       const count = current.filter(isTool).length;
-      return [...current, newTool(count + 1, { x: 640 + count * 60, y: 80 + count * 40 })];
+      return [...current, newTool(count + 1, freeSpot(viewportSpot(), current.map(boxOf)))];
     });
-  }, [setNodes]);
+  }, [setNodes, viewportSpot]);
 
   const clearOutputs = useCallback(() => {
     const keep = new Set(live.current.nodes.filter((n) => !isOutput(n)).map((n) => n.id));
@@ -456,33 +480,35 @@ function Canvas() {
           </div>
         )}
 
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          onReconnectStart={onReconnectStart}
-          onReconnect={onReconnect}
-          onReconnectEnd={onReconnectEnd}
-          isValidConnection={isValidConnection}
-          nodeTypes={nodeTypes}
-          fitView
-          proOptions={{ hideAttribution: false }}
-        >
-          <Background gap={20} />
-          <Controls />
-          <MiniMap
-            pannable
-            zoomable
-            bgColor="var(--panel)"
-            maskColor="rgba(15, 17, 21, 0.72)"
-            nodeColor={(n) =>
-              isInput(n as GraphNode) ? "#6ea8fe" : isTool(n as GraphNode) ? "#c69cf0" : "#3a4150"
-            }
-            nodeStrokeWidth={0}
-          />
-        </ReactFlow>
+        <div className="canvas" ref={wrapper}>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onReconnectStart={onReconnectStart}
+            onReconnect={onReconnect}
+            onReconnectEnd={onReconnectEnd}
+            isValidConnection={isValidConnection}
+            nodeTypes={nodeTypes}
+            fitView
+            proOptions={{ hideAttribution: false }}
+          >
+            <Background gap={20} />
+            <Controls />
+            <MiniMap
+              pannable
+              zoomable
+              bgColor="var(--panel)"
+              maskColor="rgba(15, 17, 21, 0.72)"
+              nodeColor={(n) =>
+                isInput(n as GraphNode) ? "#6ea8fe" : isTool(n as GraphNode) ? "#c69cf0" : "#3a4150"
+              }
+              nodeStrokeWidth={0}
+            />
+          </ReactFlow>
+        </div>
       </div>
     </GraphActionsContext.Provider>
   );

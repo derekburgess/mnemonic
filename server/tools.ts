@@ -1,5 +1,6 @@
 import vm from "node:vm";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 /** A tool node as the browser describes it. */
@@ -20,32 +21,94 @@ export const CODE_TIMEOUT_MS = 5000;
 const mcpToolName = (label: string, tool: string) =>
   `mcp_${label}_${tool}`.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
 
+/** Where servers conventionally mount MCP when the URL given is just a host. */
+const MOUNT_PATHS = ["/mcp", "/sse", "/mcp/", "/sse/"];
+
+/** Addresses a server binds to but which are not valid destinations to connect to. */
+const BIND_ONLY: Record<string, string> = { "0.0.0.0": "127.0.0.1", "[::]": "[::1]", "::": "[::1]" };
+
+/**
+ * Servers print the address they bound to ("Uvicorn running on http://0.0.0.0:8765"), which is
+ * the natural thing to paste. 0.0.0.0 means "all interfaces" rather than a host, and sending it
+ * as a Host header trips the DNS-rebinding checks in FastMCP and friends, which answer 421.
+ */
+function normaliseHost(url: URL): URL {
+  const replacement = BIND_ONLY[url.hostname];
+  if (!replacement) return url;
+  const fixed = new URL(url.toString());
+  fixed.hostname = replacement;
+  return fixed;
+}
+
+function candidateUrls(serverUrl: string): URL[] {
+  const url = normaliseHost(new URL(serverUrl));
+  if (url.pathname !== "/" && url.pathname !== "") return [url];
+  // A bare host almost never serves MCP at the root, so try the usual mounts too.
+  return [url, ...MOUNT_PATHS.map((path) => new URL(path, url))];
+}
+
+/**
+ * Connects with whichever HTTP transport the server actually speaks, at whichever path it is
+ * mounted on. Streamable HTTP is the current transport; servers on the older HTTP+SSE one
+ * answer a POST with 404, which is a signal to retry rather than a reason to give up.
+ */
+async function connectMcp(
+  serverUrl: string,
+  authorization?: string,
+): Promise<{ client: Client; url: string }> {
+  const requestInit = authorization ? { headers: { Authorization: authorization } } : undefined;
+  const newClient = () => new Client({ name: "mnemonic", version: "0.1.0" }, { capabilities: {} });
+  const failures: string[] = [];
+
+  for (const url of candidateUrls(serverUrl)) {
+    for (const kind of ["streamable", "sse"] as const) {
+      try {
+        // Always a fresh client: a failed connect has already torn its transport down.
+        const client = newClient();
+        const transport =
+          kind === "streamable"
+            ? new StreamableHTTPClientTransport(url, { requestInit })
+            : new SSEClientTransport(url, { requestInit });
+        await client.connect(transport);
+        return { client, url: url.toString() };
+      } catch (err) {
+        failures.push(`${url.pathname} (${kind}): ${(err as Error).message.slice(0, 120)}`);
+      }
+    }
+  }
+
+  throw new Error(failures.join("; "));
+}
+
 async function withMcpClient<T>(
   serverUrl: string,
   authorization: string | undefined,
   fn: (client: Client) => Promise<T>,
 ): Promise<T> {
-  const transport = new StreamableHTTPClientTransport(new URL(serverUrl), {
-    requestInit: authorization ? { headers: { Authorization: authorization } } : undefined,
-  });
-  const client = new Client({ name: "mnemonic", version: "0.1.0" }, { capabilities: {} });
+  const { client } = await connectMcp(serverUrl, authorization);
   try {
-    await client.connect(transport);
     return await fn(client);
   } finally {
     await client.close().catch(() => {});
   }
 }
 
+/** Also reports the URL that actually worked, so the UI can correct the one you typed. */
 export async function listMcpTools(serverUrl: string, authorization?: string) {
-  return withMcpClient(serverUrl, authorization, async (client) => {
+  const { client, url } = await connectMcp(serverUrl, authorization);
+  try {
     const { tools } = await client.listTools();
-    return tools.map((t) => ({
-      name: t.name,
-      description: t.description ?? "",
-      inputSchema: t.inputSchema as Record<string, unknown>,
-    }));
-  });
+    return {
+      resolvedUrl: url,
+      tools: tools.map((t) => ({
+        name: t.name,
+        description: t.description ?? "",
+        inputSchema: t.inputSchema as Record<string, unknown>,
+      })),
+    };
+  } finally {
+    await client.close().catch(() => {});
+  }
 }
 
 /** JSON Schema the Responses API will accept for a function tool. */
@@ -81,7 +144,7 @@ export async function buildTools(specs: ToolSpec[]): Promise<{ tools: unknown[];
     if (spec.kind === "mcp") {
       // We are the MCP client, so private and localhost servers work; OpenAI only ever sees
       // ordinary function tools that call back into this proxy.
-      const available = await listMcpTools(spec.serverUrl, spec.authorization);
+      const { tools: available } = await listMcpTools(spec.serverUrl, spec.authorization);
       const wanted = spec.selectedTools?.length
         ? available.filter((t) => spec.selectedTools!.includes(t.name))
         : available;

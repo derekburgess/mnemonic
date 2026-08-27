@@ -68,14 +68,15 @@ feeding the artifact directly. Without tools it stays `step -> artifact`.
 | Kind | Runs where | Notes |
 | --- | --- | --- |
 | Web search | OpenAI, server-side | Context size, plus optional allowed-domain filter |
-| MCP | This proxy | Any streamable-HTTP MCP server, localhost included |
+| MCP | This proxy | Streamable-HTTP or SSE servers, localhost included |
 | Custom | This proxy, in `node:vm` | Your own JS, with `args` in scope |
 
 ### MCP
 
 We are the MCP client. The proxy connects to the server, lists its tools for the picker, and
 advertises the ones you select to the model as ordinary function tools; calls come back here and we
-invoke them over MCP. That is why **private and localhost servers work** - OpenAI never connects to
+invoke them over MCP. Streamable HTTP is tried first and the older HTTP+SSE transport second, so
+either style of server works - point at whatever URL the server prints (`.../mcp` or `.../sse`). That is why **private and localhost servers work** - OpenAI never connects to
 your server, so it does not need to be publicly reachable. Tool names are namespaced
 `mcp_<label>_<tool>` so two servers can expose the same name.
 

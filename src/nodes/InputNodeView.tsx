@@ -111,7 +111,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         </div>
       </label>
 
-      {data.error && <p className="error">{data.error}</p>}
+      {data.error && <p className="error nodrag">{data.error}</p>}
 
       <button className="run tinted tint-ok nodrag" onClick={() => onRun(id)} disabled={busy || skipped}>
         {busy ? <span className="spinner" role="status" aria-label="Running" /> : "Run"}

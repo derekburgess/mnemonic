@@ -25,7 +25,10 @@ export function ToolNodeView({ id, data }: NodeProps<ToolNode>) {
     setLoading(true);
     setError(null);
     try {
-      setMcpTools(await fetchMcpTools(data.serverUrl ?? "", data.authorization));
+      const { tools, resolvedUrl } = await fetchMcpTools(data.serverUrl ?? "", data.authorization);
+      setMcpTools(tools);
+      // If the server turned out to be mounted elsewhere, keep the URL that actually worked.
+      if (resolvedUrl !== data.serverUrl) updateTool(id, { serverUrl: resolvedUrl });
     } catch (err) {
       setError((err as Error).message);
       setMcpTools(null);
@@ -193,7 +196,7 @@ export function ToolNodeView({ id, data }: NodeProps<ToolNode>) {
         </>
       )}
 
-      {error && <p className="error">{error}</p>}
+      {error && <p className="error nodrag">{error}</p>}
 
       <Handle type="source" position={Position.Bottom} />
     </div>

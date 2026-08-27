@@ -48,7 +48,8 @@ app.post("/api/mcp/tools", async (req, res) => {
     return res.status(400).json({ error: "serverUrl is required" });
   }
   try {
-    res.json({ tools: await listMcpTools(serverUrl, authorization || undefined) });
+    const { tools, resolvedUrl } = await listMcpTools(serverUrl, authorization || undefined);
+    res.json({ tools, resolvedUrl });
   } catch (err) {
     res.status(502).json({ error: `could not reach MCP server: ${(err as Error).message}` });
   }
