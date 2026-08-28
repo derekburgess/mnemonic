@@ -1,25 +1,32 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { Effort, InputNode } from "../types";
+import { Icon } from "../icons";
 import { CopyButton } from "./CopyButton";
 import { DeleteButton } from "./DeleteButton";
 import { SkipToggle } from "./SkipToggle";
 import { useGraphActions } from "./context";
+import { useFieldWidth } from "./useFieldWidth";
 
 const EFFORTS: Effort[] = ["off", "minimal", "low", "medium", "high"];
 const MAX_OUTPUTS = 8;
 
 export function InputNodeView({ id, data }: NodeProps<InputNode>) {
-  const { models, currentId, updateInput: onChange, runOne: onRun, removeNode: onDelete, setSkipped } =
+  const { models, currentId, runOrder, updateInput: onChange, runOne: onRun, removeNode: onDelete, setSkipped } =
     useGraphActions();
+  const place = runOrder.indexOf(id);
   const busy = data.status === "running";
   const skipped = !!data.skipped;
   const current = currentId === id;
+  const { field } = useFieldWidth();
 
   return (
     <div className={`node input${current ? " current" : ""} status-${data.status}${skipped ? " skipped" : ""}`}>
-      <Handle type="target" position={Position.Top} />
+      <Handle type="target" position={Position.Left} />
 
       <header className="node-head">
+        <span className="place" title={place < 0 ? "Not scheduled" : `Runs ${place + 1} of ${runOrder.length}`}>
+          {place < 0 ? "–" : place + 1}
+        </span>
         <input
           className="label nodrag"
           value={data.label}
@@ -91,6 +98,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         Instructions (System Prompt + Role)
         <div className="field">
           <textarea
+            {...field()}
             className="instructions nodrag nowheel"
             value={data.instructions ?? ""}
             onChange={(e) => onChange(id, { instructions: e.target.value })}
@@ -103,6 +111,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         Input
         <div className="field">
           <textarea
+            {...field()}
             className="prompt nodrag nowheel"
             value={data.prompt}
             onChange={(e) => onChange(id, { prompt: e.target.value })}
@@ -114,10 +123,16 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
       {data.error && <p className="error nodrag">{data.error}</p>}
 
       <button className="run tinted tint-ok nodrag" onClick={() => onRun(id)} disabled={busy || skipped}>
-        {busy ? <span className="spinner" role="status" aria-label="Running" /> : "Run"}
+        {busy ? (
+          <span className="spinner" role="status" aria-label="Running" />
+        ) : (
+          <>
+            <Icon name="play" /> Run
+          </>
+        )}
       </button>
 
-      <Handle type="source" position={Position.Bottom} />
+      <Handle type="source" position={Position.Right} />
     </div>
   );
 }

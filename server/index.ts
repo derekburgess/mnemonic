@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import OpenAI from "openai";
 import { buildTools, listMcpTools, type ToolSpec } from "./tools.js";
+import { deleteRun, getRun, listRuns, recordStep } from "./trace.js";
 
 dotenv.config();
 
@@ -26,15 +27,37 @@ function getClient(): OpenAI {
 /** Models we fall back to when the /models listing is unavailable. */
 const FALLBACK_MODELS = ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4o", "gpt-4o-mini"];
 
-/** The listing includes embeddings, audio, image and moderation models; keep the text ones. */
-const isTextModel = (id: string) =>
-  /^(gpt-|o[1345](-|$)|chatgpt-)/.test(id) &&
-  !/(embedding|audio|realtime|transcribe|tts|image|moderation|search|dall-e)/.test(id);
+/**
+ * The API has no notion of a deprecated model — /v1/models returns everything the account can
+ * reach. So: drop other modalities and purpose-built variants, collapse dated snapshots into
+ * their alias, and order by release date so current models come first.
+ */
+const OTHER_MODALITIES =
+  /(embedding|audio|realtime|transcribe|tts|image|moderation|dall-e|whisper|sora|live-)/;
+const SPECIAL_PURPOSE = /(codex|deep-research|search-api|search-preview|instruct|-16k)/;
+const DATED = /-(\d{4}-\d{2}-\d{2}|\d{4})$/;
+
+function usableModels(models: { id: string; created?: number }[]): string[] {
+  const candidates = models.filter(
+    ({ id }) =>
+      /^(gpt-|o[1345](-|$)|chat)/.test(id) && !OTHER_MODALITIES.test(id) && !SPECIAL_PURPOSE.test(id),
+  );
+
+  // A dated snapshot is redundant when its alias is also offered; keep the alias.
+  const aliases = new Set(candidates.map((m) => m.id));
+  return candidates
+    .filter(({ id }) => {
+      const base = id.replace(DATED, "");
+      return base === id || !aliases.has(base);
+    })
+    .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
+    .map((m) => m.id);
+}
 
 app.get("/api/models", async (_req, res) => {
   try {
     const list = await getClient().models.list();
-    const ids = list.data.map((m) => m.id).filter(isTextModel).sort();
+    const ids = usableModels(list.data);
     res.json({ models: ids.length ? ids : FALLBACK_MODELS });
   } catch (err) {
     console.warn("[mnemonic] model listing failed, serving fallback list:", (err as Error).message);
@@ -59,10 +82,47 @@ app.post("/api/mcp/tools", async (req, res) => {
 const MAX_TOOL_ROUNDS = 6;
 
 app.post("/api/run", async (req, res) => {
-  const { model, effort, input, instructions, tools: toolSpecs } = req.body ?? {};
+  const { model, effort, input, instructions, tools: toolSpecs, trace } = req.body ?? {};
   if (typeof model !== "string" || typeof input !== "string" || !input.trim()) {
     return res.status(400).json({ error: "model and a non-empty input are required" });
   }
+
+  const startedMs = Date.now();
+  /** Every request/response pair in the tool loop, kept verbatim for the trace. */
+  const rounds: unknown[] = [];
+
+  const save = async (status: "ok" | "error", extra: Record<string, unknown>) => {
+    if (!trace?.runId) return;
+    try {
+      await recordStep({
+        execId: trace.execId ?? `${trace.runId}-${trace.seq ?? 0}`,
+        runId: trace.runId,
+        kind: trace.kind ?? "run",
+        seq: trace.seq ?? 0,
+        nodeId: trace.nodeId ?? "",
+        label: trace.label ?? "",
+        requestedModel: model,
+        effort: effort ?? "off",
+        startedMs,
+        finishedMs: Date.now(),
+        status,
+        systemPrompt: typeof instructions === "string" ? instructions : null,
+        inputPrompt: input,
+        context: trace.context ?? null,
+        tools: toolSpecs ?? [],
+        rounds,
+        servedModel: null,
+        error: null,
+        toolCalls: null,
+        outputText: null,
+        usage: null,
+        ...extra,
+      });
+    } catch (err) {
+      // A trace failure must never take a run down with it.
+      console.error("[mnemonic] trace write failed:", (err as Error).message);
+    }
+  };
 
   try {
     const client = getClient();
@@ -77,7 +137,18 @@ app.post("/api/run", async (req, res) => {
     };
 
     let conversation: unknown[] = [{ role: "user", content: input }];
-    let response = await client.responses.create({ ...base, input: conversation } as never);
+    const call = async (payload: Record<string, unknown>) => {
+      const started = Date.now();
+      const result = await client.responses.create(payload as never);
+      rounds.push({
+        request: payload,
+        response: { output: result.output, usage: result.usage, model: result.model },
+        ms: Date.now() - started,
+      });
+      return result;
+    };
+
+    let response = await call({ ...base, input: conversation });
 
     const toolCalls: { name: string; detail?: string; urls?: string[] }[] = [];
     const uniq = (urls: (string | null | undefined)[]) => [...new Set(urls.filter((u): u is string => !!u))];
@@ -135,7 +206,7 @@ app.post("/api/run", async (req, res) => {
         });
       }
 
-      response = await client.responses.create({ ...base, input: conversation } as never);
+      response = await call({ ...base, input: conversation });
     }
 
     // Whatever the answer actually cites, gathered from the final message's annotations.
@@ -154,18 +225,53 @@ app.post("/api/run", async (req, res) => {
     );
     if (cited.length) toolCalls.push({ name: "citations", urls: cited });
 
-    res.json({
+    const payload = {
       text: response.output_text ?? "",
       model: response.model ?? model,
       usage: { input: usedIn, output: usedOut },
       ...(toolCalls.length ? { toolCalls } : {}),
+    };
+
+    await save("ok", {
+      servedModel: payload.model,
+      outputText: payload.text,
+      toolCalls,
+      usage: payload.usage,
     });
+
+    res.json(payload);
   } catch (err) {
     const e = err as { status?: number; message?: string };
     console.error("[mnemonic] run failed:", e.message);
+    await save("error", { error: e.message ?? "request failed" });
     res.status(e.status && e.status >= 400 && e.status < 600 ? e.status : 500).json({
       error: e.message ?? "request failed",
     });
+  }
+});
+
+app.get("/api/trace/runs", async (req, res) => {
+  try {
+    res.json({ runs: await listRuns(Number(req.query.limit) || 100) });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.get("/api/trace/runs/:runId", async (req, res) => {
+  try {
+    res.json({ steps: await getRun(req.params.runId) });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.delete("/api/trace/runs/:runId", async (req, res) => {
+  try {
+    await deleteRun(req.params.runId);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
   }
 });
 

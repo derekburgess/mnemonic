@@ -17,6 +17,18 @@ export type ToolSpec =
 
 export const CODE_TIMEOUT_MS = 5000;
 
+/**
+ * The MCP SDK defaults to a 60s request timeout, which is short for tools that do real work --
+ * a 60-second packet capture or a long embedding run times out on our side and the model is
+ * told the tool failed. The clock resets whenever the server reports progress, with a hard
+ * ceiling so a genuinely hung tool still ends.
+ */
+const MCP_CALL_OPTIONS = {
+  timeout: 300_000,
+  resetTimeoutOnProgress: true,
+  maxTotalTimeout: 900_000,
+} as const;
+
 /** MCP tool names are namespaced so two servers can expose the same tool name. */
 const mcpToolName = (label: string, tool: string) =>
   `mcp_${label}_${tool}`.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
@@ -160,7 +172,11 @@ export async function buildTools(specs: ToolSpec[]): Promise<{ tools: unknown[];
         });
         handlers.set(name, async (args) => {
           const result = await withMcpClient(spec.serverUrl, spec.authorization, (client) =>
-            client.callTool({ name: tool.name, arguments: (args ?? {}) as Record<string, unknown> }),
+            client.callTool(
+              { name: tool.name, arguments: (args ?? {}) as Record<string, unknown> },
+              undefined,
+              MCP_CALL_OPTIONS,
+            ),
           );
           return JSON.stringify(result.content ?? result);
         });

@@ -5,6 +5,7 @@ import {
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
+  MarkerType,
   addEdge,
   reconnectEdge,
   useEdgesState,
@@ -15,6 +16,8 @@ import {
 } from "@xyflow/react";
 
 import { fetchModels, runStep, toolSpec } from "./api";
+import { Icon } from "./icons";
+import { TracePanel } from "./TracePanel";
 import {
   boxOf,
   commitRun,
@@ -42,6 +45,9 @@ import {
 } from "./types";
 
 const nodeTypes = { step: InputNodeView, artifact: OutputNodeView, tool: ToolNodeView };
+
+/** Edges are directed and that direction decides run order, so every edge shows an arrowhead. */
+const MARKER = { type: MarkerType.ArrowClosed, width: 18, height: 18, color: "#8b93a3" };
 const STORAGE_KEY = "mnemonic.graph.v1";
 const DEFAULT_MODEL = "gpt-5";
 export const MAX_OUTPUTS = 8;
@@ -107,8 +113,11 @@ function Canvas() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<GraphEdge>(seed.edges);
   const [models, setModels] = useState<string[]>([DEFAULT_MODEL]);
   const [stepped, setStepped] = useState<string[]>([]);
+  const steppedRef = useRef<string[]>([]);
+  const abort = useRef<AbortController | null>(null);
   const [running, setRunning] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [traceOpen, setTraceOpen] = useState(false);
   const { screenToFlowPosition } = useReactFlow();
   const wrapper = useRef<HTMLDivElement>(null);
 
@@ -118,6 +127,10 @@ function Canvas() {
   useEffect(() => {
     live.current = { nodes, edges };
   }, [nodes, edges]);
+
+  useEffect(() => {
+    steppedRef.current = stepped;
+  }, [stepped]);
 
   useEffect(() => {
     fetchModels().then(setModels);
@@ -178,7 +191,7 @@ function Canvas() {
 
   /** Execute a single input node against a working snapshot and return the snapshot it produced. */
   const executeNode = useCallback(
-    async (snap: Snapshot, id: string): Promise<Snapshot> => {
+    async (snap: Snapshot, id: string, trace?: { runId: string; kind: "run" | "next" | "step"; seq: number }): Promise<Snapshot> => {
       const producer = snap.nodes.find((n) => n.id === id);
       if (!producer || !isInput(producer) || producer.data.skipped) return snap;
 
@@ -199,20 +212,37 @@ function Canvas() {
       const count = Math.min(MAX_OUTPUTS, Math.max(1, producer.data.outputs ?? 1));
       const settled = await Promise.allSettled(
         Array.from({ length: count }, () =>
-          runStep({
-            model: producer.data.model,
-            effort: producer.data.effort,
-            input,
-            instructions,
-            tools,
-          }),
+          runStep(
+            {
+              model: producer.data.model,
+              effort: producer.data.effort,
+              input,
+              instructions,
+              tools,
+              ...(trace
+                ? {
+                    trace: {
+                      ...trace,
+                      execId: uid(),
+                      nodeId: id,
+                      label: producer.data.label,
+                      context,
+                    },
+                  }
+                : {}),
+            },
+            abort.current?.signal,
+          ),
         ),
       );
 
       const done = settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
       const failed = settled.flatMap((r) => (r.status === "rejected" ? [r.reason as Error] : []));
 
-      if (!done.length) {
+      const cancelled = failed.some((f) => f.message === "cancelled");
+      if (cancelled) {
+        working = patchStatus(working, id, { status: "idle", error: undefined });
+      } else if (!done.length) {
         working = patchStatus(working, id, { status: "error", error: failed[0]?.message ?? "run failed" });
       } else {
         const committed = commitRun(
@@ -245,11 +275,17 @@ function Canvas() {
   const runOne = useCallback(
     async (id: string) => {
       if (running) return;
+      abort.current = new AbortController();
       setRunning(true);
       setNotice(null);
-      await executeNode(live.current, id);
-      setStepped((s) => (s.includes(id) ? s : [...s, id]));
-      setRunning(false);
+      try {
+        await executeNode(live.current, id, { runId: uid(), kind: "step", seq: 0 });
+        setStepped((s) => (s.includes(id) ? s : [...s, id]));
+      } catch (err) {
+        setNotice(`Run failed: ${(err as Error).message}`);
+      } finally {
+        setRunning(false);
+      }
     },
     [executeNode, running],
   );
@@ -266,16 +302,24 @@ function Canvas() {
       return;
     }
 
+    abort.current = new AbortController();
     setRunning(true);
     setNotice(null);
     setStepped([]);
 
-    let snap = live.current;
-    for (const id of order) {
-      snap = await executeNode(snap, id);
-      setStepped((s) => [...s, id]);
+    try {
+      const runId = uid();
+      let snap = live.current;
+      for (const [seq, id] of order.entries()) {
+        if (abort.current?.signal.aborted) break;
+        snap = await executeNode(snap, id, { runId, kind: "run", seq });
+        setStepped((s) => [...s, id]);
+      }
+    } catch (err) {
+      setNotice(`Run failed: ${(err as Error).message}`);
+    } finally {
+      setRunning(false);
     }
-    setRunning(false);
   }, [executeNode, running]);
 
   const runNext = useCallback(async () => {
@@ -285,18 +329,28 @@ function Canvas() {
       setNotice(`Cycle detected — ${cycle.length} step(s) can never become ready. Break the loop and retry.`);
       return;
     }
-    const next = order.find((id) => !stepped.includes(id));
+    const next = order.find((id) => !steppedRef.current.includes(id));
     if (!next) {
       setNotice(order.length ? "End of graph. Reset to step through again." : "Nothing to run — add a step first.");
       return;
     }
 
+    abort.current = new AbortController();
     setRunning(true);
     setNotice(null);
-    await executeNode(live.current, next);
-    setStepped((s) => [...s, next]);
-    setRunning(false);
-  }, [executeNode, running, stepped]);
+    try {
+      await executeNode(live.current, next, {
+        runId: uid(),
+        kind: "next",
+        seq: steppedRef.current.length,
+      });
+      setStepped((s) => [...s, next]);
+    } catch (err) {
+      setNotice(`Run failed: ${(err as Error).message}`);
+    } finally {
+      setRunning(false);
+    }
+  }, [executeNode, running]);
 
   /** Centre of what the user is currently looking at, in canvas coordinates. */
   const viewportSpot = useCallback(() => {
@@ -322,6 +376,26 @@ function Canvas() {
       return [...current, newTool(count + 1, freeSpot(viewportSpot(), current.map(boxOf)))];
     });
   }, [setNodes, viewportSpot]);
+
+  /**
+   * Back to the top of the graph: the cursor, and the per-step run state with it. Never
+   * disabled — it is also the way out of a run that is taking too long or has wedged.
+   */
+  const resetRun = useCallback(() => {
+    abort.current?.abort();
+    abort.current = null;
+    setRunning(false);
+    setStepped([]);
+    steppedRef.current = [];
+    setNotice(null);
+    setNodes((current) =>
+      current.map((n) =>
+        isInput(n) && (n.data.status !== "idle" || n.data.error)
+          ? { ...n, data: { ...n.data, status: "idle" as const, error: undefined } }
+          : n,
+      ),
+    );
+  }, [setNodes]);
 
   const clearOutputs = useCallback(() => {
     const keep = new Set(live.current.nodes.filter((n) => !isOutput(n)).map((n) => n.id));
@@ -373,6 +447,24 @@ function Canvas() {
     reconnected.current = false;
   }, []);
 
+  /**
+   * Reversing an edge by dragging means moving the source end specifically, which is easy to get
+   * wrong; a double-click flips it outright.
+   */
+  const onEdgeDoubleClick = useCallback(
+    (_event: React.MouseEvent, edge: GraphEdge) => {
+      const flipped = { source: edge.target, target: edge.source, sourceHandle: null, targetHandle: null };
+      if (!isValidConnection(flipped)) {
+        setNotice("That edge cannot point the other way.");
+        return;
+      }
+      setEdges((current) =>
+        current.map((e) => (e.id === edge.id ? { ...e, source: edge.target, target: edge.source } : e)),
+      );
+    },
+    [isValidConnection, setEdges],
+  );
+
   const onReconnect = useCallback(
     (oldEdge: GraphEdge, conn: Connection) => {
       reconnected.current = true;
@@ -416,15 +508,22 @@ function Canvas() {
     [publish],
   );
 
-  /** The step Next would run: first in topological order that has not been stepped yet. */
-  const currentId = useMemo(() => {
-    const { order } = topoOrder(nodes, edges);
-    return order.find((nodeId) => !stepped.includes(nodeId)) ?? null;
-  }, [nodes, edges, stepped]);
+  // Applied at render rather than on creation, so edges made anywhere - by hand, by a run, or
+  // loaded from an older graph - all show direction, and the marker stays out of exported JSON.
+  const shownEdges = useMemo(() => edges.map((e) => ({ ...e, markerEnd: MARKER })), [edges]);
+
+  /** The schedule: edges decide it, position only breaks ties between independent steps. */
+  const runOrder = useMemo(() => topoOrder(nodes, edges).order, [nodes, edges]);
+
+  /** The step Next would run: first in that order that has not been stepped yet. */
+  const currentId = useMemo(
+    () => runOrder.find((nodeId) => !stepped.includes(nodeId)) ?? null,
+    [runOrder, stepped],
+  );
 
   const actions = useMemo(
-    () => ({ models, currentId, updateInput, updateTool, runOne, removeNode, setSkipped }),
-    [models, currentId, updateInput, updateTool, runOne, removeNode, setSkipped],
+    () => ({ models, currentId, runOrder, updateInput, updateTool, runOne, removeNode, setSkipped }),
+    [models, currentId, runOrder, updateInput, updateTool, runOne, removeNode, setSkipped],
   );
 
   return (
@@ -439,25 +538,30 @@ function Canvas() {
           </div>
 
           <div className="bar-center">
-            <button onClick={addStep}>+ Step</button>
-            <button onClick={addTool}>+ Tool</button>
+            <button onClick={addStep}>
+              <Icon name="page" /> Step
+            </button>
+            <button onClick={addTool}>
+              <Icon name="gear" /> Tool
+            </button>
             <span className="gap" />
             <button className="tinted tint-ok" onClick={runNext} disabled={running}>
-              Next
+              <Icon name="forward" /> Next
             </button>
             <button className="primary" onClick={runAll} disabled={running}>
-              {running ? "Running…" : "Run"}
+              <Icon name="play" /> {running ? "Running…" : "Run"}
             </button>
-            <button className="tinted tint-warn" onClick={() => setStepped([])} disabled={running}>
-              Reset
+            <button className="tinted tint-warn" onClick={resetRun}>
+              <Icon name="refresh" /> Reset
             </button>
             <span className="gap" />
             <button className="tinted tint-err" onClick={clearOutputs} disabled={running}>
-              Clear outputs
+              <Icon name="trash" /> Clear outputs
             </button>
           </div>
 
           <div className="bar-right">
+            <button onClick={() => setTraceOpen(true)}>Trace</button>
             <button onClick={exportGraph}>Export</button>
             <label className="file">
               Import
@@ -480,34 +584,39 @@ function Canvas() {
           </div>
         )}
 
-        <div className="canvas" ref={wrapper}>
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onReconnectStart={onReconnectStart}
-            onReconnect={onReconnect}
-            onReconnectEnd={onReconnectEnd}
-            isValidConnection={isValidConnection}
-            nodeTypes={nodeTypes}
-            fitView
-            proOptions={{ hideAttribution: false }}
-          >
-            <Background gap={20} />
-            <Controls />
-            <MiniMap
-              pannable
-              zoomable
-              bgColor="var(--panel)"
-              maskColor="rgba(15, 17, 21, 0.72)"
-              nodeColor={(n) =>
-                isInput(n as GraphNode) ? "#6ea8fe" : isTool(n as GraphNode) ? "#c69cf0" : "#3a4150"
-              }
-              nodeStrokeWidth={0}
-            />
-          </ReactFlow>
+        <div className="workspace">
+          <div className="canvas" ref={wrapper}>
+            <ReactFlow
+              nodes={nodes}
+              edges={shownEdges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onEdgeDoubleClick={onEdgeDoubleClick}
+              onReconnectStart={onReconnectStart}
+              onReconnect={onReconnect}
+              onReconnectEnd={onReconnectEnd}
+              isValidConnection={isValidConnection}
+              nodeTypes={nodeTypes}
+              fitView
+              proOptions={{ hideAttribution: false }}
+            >
+              <Background gap={20} />
+              <Controls />
+              <MiniMap
+                pannable
+                zoomable
+                bgColor="var(--panel)"
+                maskColor="rgba(15, 17, 21, 0.72)"
+                nodeColor={(n) =>
+                  isInput(n as GraphNode) ? "#6ea8fe" : isTool(n as GraphNode) ? "#c69cf0" : "#3a4150"
+                }
+                nodeStrokeWidth={0}
+              />
+            </ReactFlow>
+          </div>
+
+          {traceOpen && <TracePanel onClose={() => setTraceOpen(false)} />}
         </div>
       </div>
     </GraphActionsContext.Provider>

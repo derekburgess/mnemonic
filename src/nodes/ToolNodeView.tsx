@@ -2,10 +2,12 @@ import { useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { fetchMcpTools, type McpTool } from "../api";
 import type { ToolKind, ToolNode } from "../types";
+import { Icon } from "../icons";
 import { CopyButton } from "./CopyButton";
 import { DeleteButton } from "./DeleteButton";
 import { SkipToggle } from "./SkipToggle";
 import { useGraphActions } from "./context";
+import { useFieldWidth } from "./useFieldWidth";
 
 const KINDS: { value: ToolKind; label: string }[] = [
   { value: "web_search", label: "Web search" },
@@ -16,6 +18,7 @@ const KINDS: { value: ToolKind; label: string }[] = [
 export function ToolNodeView({ id, data }: NodeProps<ToolNode>) {
   const { updateTool, removeNode, setSkipped } = useGraphActions();
   const skipped = !!data.skipped;
+  const { field } = useFieldWidth();
 
   const [mcpTools, setMcpTools] = useState<McpTool[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -46,7 +49,7 @@ export function ToolNodeView({ id, data }: NodeProps<ToolNode>) {
 
   return (
     <div className={`node tool${skipped ? " skipped" : ""}`}>
-      <Handle type="target" position={Position.Top} />
+      <Handle type="target" position={Position.Left} />
 
       <header className="node-head">
         <input
@@ -128,7 +131,7 @@ export function ToolNodeView({ id, data }: NodeProps<ToolNode>) {
           </label>
 
           <button className="nodrag" onClick={loadMcpTools} disabled={loading || !data.serverUrl}>
-            {loading ? "Connecting…" : mcpTools ? "Reload tools" : "Load tools"}
+            <Icon name="gear" /> {loading ? "Connecting…" : mcpTools ? "Refresh tools" : "List tools"}
           </button>
 
           {mcpTools && (
@@ -136,7 +139,7 @@ export function ToolNodeView({ id, data }: NodeProps<ToolNode>) {
               <span>
                 Tools ({(data.selectedTools ?? []).length || "all"} of {mcpTools.length} selected)
               </span>
-              <div className="picker nodrag nowheel">
+              <div {...field()} className="picker nodrag nowheel">
                 {mcpTools.map((t) => (
                   <label key={t.name} className="pick" title={t.description}>
                     <input
@@ -175,6 +178,7 @@ export function ToolNodeView({ id, data }: NodeProps<ToolNode>) {
             Parameters (JSON Schema)
             <div className="field">
               <textarea
+                {...field()}
                 className="instructions nodrag nowheel"
                 value={data.fnParameters ?? ""}
                 onChange={(e) => updateTool(id, { fnParameters: e.target.value })}
@@ -186,6 +190,7 @@ export function ToolNodeView({ id, data }: NodeProps<ToolNode>) {
             Code — `args` is in scope, return a value
             <div className="field">
               <textarea
+                {...field()}
                 className="prompt code nodrag nowheel"
                 value={data.fnCode ?? ""}
                 onChange={(e) => updateTool(id, { fnCode: e.target.value })}
@@ -198,7 +203,7 @@ export function ToolNodeView({ id, data }: NodeProps<ToolNode>) {
 
       {error && <p className="error nodrag">{error}</p>}
 
-      <Handle type="source" position={Position.Bottom} />
+      <Handle type="source" position={Position.Right} />
     </div>
   );
 }

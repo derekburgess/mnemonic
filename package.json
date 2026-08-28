@@ -12,6 +12,7 @@
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@duckdb/node-api": "^1.5.5-r.4",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@xyflow/react": "^12.11.5",
     "cors": "^2.8.6",

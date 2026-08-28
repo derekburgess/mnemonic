@@ -31,7 +31,8 @@ body {
 }
 
 .app { display: flex; flex-direction: column; height: 100vh; }
-.canvas { flex: 1; min-height: 0; }
+.workspace { flex: 1; display: flex; min-height: 0; }
+.canvas { flex: 1; min-width: 0; min-height: 0; }
 
 /* ---------- toolbar ---------- */
 
@@ -76,6 +77,10 @@ body {
 .toolbar .gap { flex: none; width: 10px; }
 
 button, .file {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   background: var(--panel-2);
   color: var(--text);
   border: 1px solid var(--line);
@@ -176,6 +181,9 @@ button.tinted:hover:not(:disabled) {
 .label:focus { border-color: var(--accent); outline: none; }
 
 .dim { color: var(--dim); font-size: 11px; }
+
+/* Icons sit on the text baseline-ish and never shrink when a label wraps. */
+.glyph { flex: none; }
 .tokens { font-variant-numeric: tabular-nums; }
 
 .spinner {
@@ -350,14 +358,16 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   border: 2px solid var(--bg);
   border-radius: 50%;
 }
-.react-flow__handle-top { top: -5px; }
-.react-flow__handle-bottom { bottom: -5px; }
+.react-flow__handle-left { left: -5px; }
+.react-flow__handle-right { right: -5px; }
 .react-flow__handle:hover,
 .react-flow__handle.connecting { background: var(--accent); }
 .react-flow__edge-path { stroke: var(--dim); stroke-width: 1.6; }
 /* Widen the grab target so an endpoint is easy to catch and drag off. */
 .react-flow__edge .react-flow__edge-interaction { stroke-width: 18; }
 .react-flow__edge:hover .react-flow__edge-path { stroke: var(--text); }
+.react-flow__arrowhead { fill: var(--dim); }
+.react-flow__edge:hover .react-flow__arrowhead { fill: var(--text); }
 .react-flow__edge.selected .react-flow__edge-path { stroke: var(--accent); }
 
 /* ---------- canvas panels ---------- */
@@ -530,6 +540,7 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 .prompt,
 .instructions,
 .node.output .text,
+.call-detail,
 .md pre {
   scrollbar-width: none;
 }
@@ -537,6 +548,7 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 .prompt::-webkit-scrollbar,
 .instructions::-webkit-scrollbar,
 .node.output .text::-webkit-scrollbar,
+.call-detail::-webkit-scrollbar,
 .md pre::-webkit-scrollbar {
   display: none;
 }
@@ -553,12 +565,18 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 .node.tool .react-flow__handle { background: var(--tool); }
 
 /* MCP tool picker */
+/* Sized and resized like the text fields: a long tool list scrolls rather than growing the node. */
 .picker {
-  max-height: 132px;
-  overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  width: 100%;
+  min-width: var(--field-w);
+  contain: inline-size;
+  height: 132px;
+  min-height: 40px;
+  overflow: auto;
+  resize: both;
   padding: 5px 6px;
   background: var(--panel-2);
   border: 1px solid var(--line);
@@ -569,12 +587,15 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 
 .pick {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   font-size: 12px;
+  line-height: 1.45;
   color: var(--text);
   cursor: pointer;
+  overflow-wrap: anywhere;
 }
+.pick input { flex: none; margin-top: 3px; }
 .pick input { accent-color: var(--tool); }
 
 .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
@@ -582,15 +603,14 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 /* One row per tool call: the name labels it, the arguments sit in their own field. */
 .call {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
-  contain: inline-size;
 }
 
+/* A definite column so every argument field starts and ends in the same place whatever the tool
+   is called, and so a long name cannot stretch the node. */
 .call-name {
-  flex: 0 0 auto;
-  max-width: 40%;
-  padding-top: 7px;
+  flex: 0 0 150px;
   font-size: 11px;
   color: var(--tool);
   white-space: nowrap;
@@ -598,19 +618,38 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   text-overflow: ellipsis;
 }
 
-.call .field { flex: 1 1 auto; min-width: 0; }
+/*
+ * The wrapper resizes, not the field inside it. The copy button is positioned against this
+ * wrapper, so anything else lets the two diverge mid-drag and strands the button outside the
+ * field. The field is width:100% of it and therefore always exactly as wide.
+ */
+.call .field {
+  flex: 1 1 auto;
+  min-width: calc(var(--field-w) - 156px);
+  overflow: hidden;
+  resize: horizontal;
+}
 
+
+/*
+ * Built like every other content field: full width, a 34px copy gutter, containment so the
+ * content cannot stretch the node, and a definite min-width floor. It is 36px tall because that
+ * is exactly what centres the shared 24px copy button sitting at `top: 6px`.
+ *
+ * Dragging the grip widens the node, and every other row - being width:100% - lands on the same
+ * width, so the rows stay equal. The floor is the width a row has in a base-width node
+ * (--field-w less the name column and gap), so one cannot be dragged shorter than its
+ * neighbours either.
+ */
 .call-detail {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
   width: 100%;
   min-width: 0;
-  height: 30px;
-  min-height: 30px;
-  padding: 5px 34px 5px 6px;
-  overflow: auto;
-  resize: vertical;
+  contain: inline-size;
+  height: 36px;
+  padding: 0 34px 0 6px;
+  overflow: hidden;
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -622,8 +661,11 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 }
 
 .call-args {
+  min-width: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Sources and citations, clickable straight out of the artifact. */
@@ -636,3 +678,206 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 }
 .call-detail a:hover { text-decoration: underline; }
 .call-detail::-webkit-scrollbar { display: none; }
+
+/* ---------- run order ---------- */
+
+/* Position in the schedule, so the queue is legible without running anything. */
+.place {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  line-height: 1;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.node.current .place {
+  background: var(--ok-soft);
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+/* ---------- trace ---------- */
+
+/* Docked beside the canvas rather than over it, so the graph stays visible while reading. */
+.trace-panel {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  overflow: hidden;
+  text-align: left;
+}
+
+/* The panel's own left edge is the drag handle; it only shows itself on hover. */
+.trace-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 7px;
+  z-index: 1;
+  cursor: col-resize;
+}
+.trace-grip::after {
+  content: "";
+  position: absolute;
+  inset: 0 2px;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+.trace-grip:hover::after { background: var(--accent); }
+
+/* Keeps the cursor consistent and stops text selecting while dragging. */
+body.resizing-col { cursor: col-resize; user-select: none; }
+
+.trace-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.trace-head .spacer { flex: 1; }
+/* Icon-only controls: square, with the glyph centred by the shared button flex rule. */
+.trace-head button,
+.trace-run-head > .tinted {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.trace-list { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px 16px; scrollbar-width: none; }
+.trace-list::-webkit-scrollbar { display: none; }
+
+.trace-run {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: var(--panel-2);
+}
+
+.trace-run-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 2px; }
+
+/* Accordion rows: a bare button so the whole row is the hit target. */
+.trace-toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  /* Beats the shared button rule, which centres its contents for icon+label buttons. */
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--text);
+  min-width: 0;
+}
+.trace-toggle:hover { background: rgba(255, 255, 255, 0.04); border-color: transparent; }
+.trace-toggle .dim { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.caret {
+  flex: none;
+  width: 12px;
+  color: var(--dim);
+  transition: transform 0.12s ease;
+}
+.caret.open { transform: rotate(90deg); }
+
+.trace-when { flex: none; font-variant-numeric: tabular-nums; font-size: 12px; }
+
+.badge-kind {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.trace-errors {
+  flex: none;
+  color: var(--err);
+  font-size: 11px;
+}
+
+.trace-steps { padding: 0 8px 8px 14px; }
+
+.trace-step {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  margin-top: 6px;
+  background: var(--panel);
+}
+.trace-step > .trace-toggle { width: 100%; }
+.trace-step strong { flex: none; font-size: 13px; }
+
+.trace-step-body { padding: 4px 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+
+.trace-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 6px 12px;
+  margin: 2px 0 6px;
+}
+.trace-facts div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.trace-facts dt { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+.trace-facts dd { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+
+.trace-section { border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); }
+.trace-section > summary {
+  padding: 6px 9px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  user-select: none;
+}
+.trace-section > summary:hover { color: var(--text); }
+.trace-body { padding: 0 9px 9px; display: flex; flex-direction: column; gap: 6px; }
+
+.trace-block .copy { background: var(--bg); }
+
+.trace-pre {
+  margin: 0;
+  padding: 8px 34px 8px 8px;
+  max-height: 260px;
+  overflow: auto;
+  /* Hidden, not disabled: still scrolls, and leaves the corner clear for the copy button. */
+  scrollbar-width: none;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.trace-pre::-webkit-scrollbar { display: none; }
+
+.trace-error {
+  color: var(--err);
+  background: var(--err-soft);
+  border-color: var(--err);
+}

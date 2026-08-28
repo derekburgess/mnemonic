@@ -34,8 +34,10 @@ export function freeSpot(
         y + size.height + GAP > b.y,
     );
 
-  for (let row = 0; row < 30; row++) {
-    for (let col = 0; col < 12; col++) {
+  // Column-major: the flow runs left to right, so alternatives stack downward before spilling
+  // further right into the next step's space.
+  for (let col = 0; col < 12; col++) {
+    for (let row = 0; row < 30; row++) {
       const x = desired.x + col * (size.width + GAP);
       const y = desired.y + row * (size.height + GAP);
       if (!hits(x, y)) return { x, y };
@@ -47,29 +49,49 @@ export function freeSpot(
 const byId = (nodes: GraphNode[]) => new Map(nodes.map((n) => [n.id, n]));
 
 /**
- * Which input nodes must run before this one. An input depends on another input either
- * directly (a pre-wired input -> input edge) or through one of its output artifacts.
+ * Which input nodes must run before this one.
+ *
+ * Dependencies follow directed paths, walking back through whatever sits in between: an
+ * artifact resolves to the step that produced it, and a tool is walked straight through, so
+ * `step -> tool -> step` orders those steps just as `step -> step` does.
  *
  * Skipped steps never run, so they are neither scheduled nor waited on — depending on one
  * would otherwise deadlock its dependents and read as a false cycle.
  */
 export function inputDependencies(nodes: GraphNode[], edges: GraphEdge[]): Map<string, Set<string>> {
   const map = byId(nodes);
+  const incoming = new Map<string, string[]>();
+  for (const e of edges) incoming.set(e.target, [...(incoming.get(e.target) ?? []), e.source]);
+
   const deps = new Map<string, Set<string>>();
   for (const n of nodes) if (isInput(n) && !n.data.skipped) deps.set(n.id, new Set());
 
-  for (const e of edges) {
-    const target = map.get(e.target);
-    const source = map.get(e.source);
-    if (!target || !source || !isInput(target)) continue;
+  for (const [id, set] of deps) {
+    const seen = new Set<string>([id]);
+    const queue = [...(incoming.get(id) ?? [])];
 
-    if (isInput(source)) {
-      if (!source.data.skipped) deps.get(target.id)?.add(source.id);
-    } else if (isOutput(source)) {
-      const producer = map.get(source.data.sourceId);
-      if (producer && isInput(producer) && !producer.data.skipped) {
-        deps.get(target.id)?.add(producer.id);
+    while (queue.length) {
+      const sourceId = queue.shift()!;
+      if (seen.has(sourceId)) continue;
+      seen.add(sourceId);
+
+      const source = map.get(sourceId);
+      if (!source) continue;
+
+      if (isInput(source)) {
+        if (!source.data.skipped) set.add(source.id);
+        // A step is the end of the walk: its own dependencies are its business.
+        continue;
       }
+
+      if (isOutput(source)) {
+        const producer = map.get(source.data.sourceId);
+        if (producer && isInput(producer) && !producer.data.skipped) set.add(producer.id);
+        continue;
+      }
+
+      // A tool contributes no ordering of its own; keep walking through it.
+      queue.push(...(incoming.get(sourceId) ?? []));
     }
   }
   return deps;
@@ -81,17 +103,14 @@ export function topoOrder(nodes: GraphNode[], edges: GraphEdge[]): { order: stri
   const remaining = new Map([...deps].map(([id, set]) => [id, new Set(set)]));
   const order: string[] = [];
 
-  // Stable ordering: among equally-ready nodes, run the topmost-then-leftmost first.
-  const position = new Map(nodes.map((n) => [n.id, n.position]));
+  // Steps with no ordering between them run in the order they were created. Canvas position
+  // deliberately plays no part: dragging a node about should never resequence a run.
+  const created = new Map(nodes.map((n, i) => [n.id, i]));
   const ready = () =>
     [...remaining]
       .filter(([, d]) => d.size === 0)
       .map(([id]) => id)
-      .sort((a, b) => {
-        const pa = position.get(a)!;
-        const pb = position.get(b)!;
-        return pa.y - pb.y || pa.x - pb.x;
-      });
+      .sort((a, b) => created.get(a)! - created.get(b)!);
 
   for (let next = ready(); next.length; next = ready()) {
     const id = next[0];
@@ -168,11 +187,28 @@ export function commitRun(
 ): { nodes: GraphNode[]; edges: GraphEdge[]; outputIds: string[] } {
   const map = byId(nodes);
 
-  // With tools attached the flow runs step -> tool -> artifact, so an artifact this step is
-  // currently feeding may hang off one of its tools rather than off the step itself.
-  const tools = resolveTools(producer.id, nodes, edges);
-  const toolIds = new Set(tools.map((t) => t.id));
-  const feedsArtifact = (e: GraphEdge) => e.source === producer.id || toolIds.has(e.source);
+  // Tools the step flows *into* (step -> tool, transitively). These sit between the step and
+  // its artifact, so the artifact hangs off them and anything they feed is really consuming
+  // this step's output rather than sharing its tool.
+  const forwardTools: string[] = [];
+  const walked = new Set<string>([producer.id]);
+  const queue = [producer.id];
+  while (queue.length) {
+    const from = queue.shift()!;
+    for (const e of edges) {
+      if (e.source !== from || walked.has(e.target)) continue;
+      const node = map.get(e.target);
+      if (!node || !isTool(node) || node.data.skipped) continue;
+      walked.add(e.target);
+      forwardTools.push(e.target);
+      queue.push(e.target);
+    }
+  }
+
+  // Anything downstream of the step hangs off the last thing in that chain.
+  const anchors = forwardTools.length ? forwardTools : [producer.id];
+  const chain = new Set([producer.id, ...forwardTools]);
+  const feedsArtifact = (e: GraphEdge) => chain.has(e.source);
 
   const activeOutputIds = new Set(
     edges
@@ -182,20 +218,23 @@ export function commitRun(
       .map((n) => n.id),
   );
 
-  // Pre-wired input -> input edges materialise into output -> input once there is an artifact.
+  // Pre-wiring materialises once there is an artifact: a step (or a tool it flows into) that
+  // points straight at another step gets that edge re-pointed at the new artifact, so
+  // `step -> tool -> step` becomes `step -> tool -> artifact -> step`.
   const prewired = edges.filter((e) => {
     const t = map.get(e.target);
-    return e.source === producer.id && !!t && isInput(t);
+    return chain.has(e.source) && !!t && isInput(t);
   });
   const inherited = edges.filter((e) => activeOutputIds.has(e.source));
 
-  // Artifacts land under the step, fanning across into whatever space is actually free.
+  // Artifacts land beside the step, fanning down into whatever space is free. Existing nodes
+  // are never moved to make room — a run should not rearrange the canvas under you.
   const taken = nodes.map(boxOf);
-  const below = { x: producer.position.x, y: producer.position.y + boxOf(producer).h + GAP };
+  const beside = { x: producer.position.x + boxOf(producer).w + GAP, y: producer.position.y };
   const createdAt = Date.now();
 
   const outputs: OutputNode[] = results.map((result) => {
-    const position = freeSpot(below, taken);
+    const position = freeSpot(beside, taken);
     taken.push({ x: position.x, y: position.y, w: NODE_SIZE.width, h: NODE_SIZE.height });
     return {
       id: uid(),
@@ -227,13 +266,9 @@ export function commitRun(
     nodes: [...nodes, ...outputs],
     edges: [
       ...kept,
-      // The artifact hangs off the tools when there are any, so the graph reads as a chain
+      // The artifact hangs off the end of the step's tool chain, so the graph reads as a chain
       // rather than a triangle of step -> tool, step -> artifact, tool -> artifact.
-      ...outputs.flatMap((o) =>
-        tools.length
-          ? tools.map((t) => ({ id: uid(), source: t.id, target: o.id }))
-          : [{ id: uid(), source: producer.id, target: o.id }],
-      ),
+      ...outputs.flatMap((o) => anchors.map((a) => ({ id: uid(), source: a, target: o.id }))),
       ...migrated,
     ],
     outputIds: outputs.map((o) => o.id),
