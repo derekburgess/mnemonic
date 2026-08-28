@@ -1,9 +1,11 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import type { Effort, InputNode } from "../types";
+import type { Effort, InputNode, ToolConfig } from "../types";
 import { Icon } from "../icons";
+import { uid } from "../graph";
 import { CopyButton } from "./CopyButton";
 import { DeleteButton } from "./DeleteButton";
 import { SkipToggle } from "./SkipToggle";
+import { ToolEditor } from "./ToolEditor";
 import { useGraphActions } from "./context";
 import { useFieldWidth } from "./useFieldWidth";
 
@@ -18,6 +20,11 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
   const skipped = !!data.skipped;
   const current = currentId === id;
   const { field } = useFieldWidth();
+
+  const tools = data.tools ?? [];
+  const setTools = (next: ToolConfig[]) => onChange(id, { tools: next });
+  const patchTool = (toolId: string, patch: Partial<ToolConfig>) =>
+    setTools(tools.map((t) => (t.id === toolId ? { ...t, ...patch } : t)));
 
   return (
     <div className={`node input${current ? " current" : ""} status-${data.status}${skipped ? " skipped" : ""}`}>
@@ -119,6 +126,39 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
           <CopyButton text={data.prompt} title="Copy input" />
         </div>
       </label>
+
+      <div className="tools">
+        <div className="tools-head">
+          <span>Tools ({tools.length})</span>
+          <button
+            className="nodrag add-tool"
+            title="Add a tool"
+            aria-label="Add a tool"
+            onClick={() =>
+              setTools([
+                ...tools,
+                {
+                  id: uid(),
+                  label: `Tool ${tools.length + 1}`,
+                  kind: "web_search",
+                  contextSize: "medium",
+                },
+              ])
+            }
+          >
+            <Icon name="plus" />
+          </button>
+        </div>
+
+        {tools.map((tool) => (
+          <ToolEditor
+            key={tool.id}
+            tool={tool}
+            onChange={(patch) => patchTool(tool.id, patch)}
+            onRemove={() => setTools(tools.filter((t) => t.id !== tool.id))}
+          />
+        ))}
+      </div>
 
       {data.error && <p className="error nodrag">{data.error}</p>}
 

@@ -32,7 +32,7 @@ run history.
 
 ## The model
 
-There are three kinds of node: **steps**, **artifacts** and **tools**.
+There are two kinds of node: **steps** and **artifacts**.
 
 **Input nodes** are the steps. Each holds a model, a thinking level (`reasoning_effort`), an
 **Output N** fan-out count, a **Role**, **Instructions**, and its own input text.
@@ -52,7 +52,7 @@ overwritten, they accumulate on the canvas as a visible history.
 
 ### Skip
 
-Every node kind has a **Skip** toggle. Skipping keeps the node on the canvas with its wiring
+Both node kinds have a **Skip** toggle. Skipping keeps the node on the canvas with its wiring
 intact, but takes it out of play:
 
 - a skipped **step** is not scheduled by `Run` or `Next`, and its own Run button is disabled;
@@ -75,24 +75,16 @@ Be terse. British spelling.
 Either may be left empty; if both are, no system prompt is sent at all. These are step parameters,
 not context — they are not affected by wiring and never appear in a downstream artifact.
 
-## Tool nodes
+## Tools
 
-A third node kind. Tools are **capabilities, not context**: wiring a tool to a step means "this
-step may call this tool". Because tools carry no text and no ordering, the edge direction is
-meaningless and either direction attaches it. They carry no text, produce no artifacts, and take
-no part in scheduling. Skipping one withholds it from its steps. Whatever the model actually
-invoked is recorded on the artifact the step produced.
+Tools belong to a step, listed under its Input field — add as many as you like, each collapsible
+and individually skippable. They are **capabilities, not context**: they carry no text, produce no
+artifacts, and take no part in scheduling, so they never appear on the canvas or affect the run
+order. Whatever the model actually invoked is recorded on the artifact the step produced.
 
-With a tool attached the flow reads as a chain rather than the step feeding the artifact directly.
-Pre-wire the shape you want and the first run materialises the artifact into the middle of it:
-
-```
-before a run:   [Step 1] -> [Tool] -> [Step 2]
-after a run:    [Step 1] -> [Tool] -> (Artifact) -> [Step 2]
-```
-
-Only tools the step flows *into* (`step -> tool`) sit in that chain. A tool pointing at a step
-(`tool -> step`) is an upstream capability, and the artifact hangs off the step itself.
+They were once nodes wired into a step. Folding them into the step removed a node kind, three edge
+rules and the chain-rewiring they required, for no loss of capability. Graphs saved with tool nodes
+are migrated on load: each tool is adopted by the steps it was wired to, and its edges dropped.
 
 | Kind | Runs where | Notes |
 | --- | --- | --- |
@@ -169,8 +161,6 @@ an older context as the live branch, drag an edge from that output node into a s
 | output → input | context: that artifact's text is fed to the step |
 | input → output | provenance: marks which artifact is that step's current one |
 | input → input | pre-wiring: resolves into `output → input` once the upstream step first runs |
-| input ↔ tool | attaches a capability to a step; either direction attaches it |
-| tool → output | provenance, created by a run when a tool sits in the chain |
 | output → output | rejected — carries no context |
 
 Edges are drawn with arrowheads because **direction decides run order**. To edit one: drag either
@@ -182,15 +172,16 @@ output nodes on the first pass.
 
 ## Controls
 
-Run order comes from the edges. Dependencies follow directed paths and walk through whatever sits
-in between, so `step -> tool -> step` orders those steps exactly as `step -> step` does. Steps with
+Run order comes from the edges: a step depends on another when an artifact of that step feeds it,
+or when a pre-wired `step -> step` edge does. Steps with
 no ordering between them run in the order they were created; canvas position never affects the
 schedule, so dragging a node about cannot resequence a run. Each step shows its place in the queue
-on its header.
+on its header, and the step that would run next is ringed in green. To step through by hand, use a
+step's own Run button.
 
 - **Run** — topological pass over every step. Cycles are detected and reported instead of hanging.
-- **Next** — executes only the next ready step, so you can watch context accumulate hop by hop.
-- **Reset** — moves the step cursor back to the start without discarding any outputs.
+- **Reset** — clears the run state and puts the cursor back at the first step, without discarding
+  any outputs. It is never disabled, so it also cancels a run that is taking too long.
 - **Clear outputs** — removes every artifact, leaving the steps and their wiring.
 - **Export / Import** — round-trips the graph as JSON. The canvas also autosaves to `localStorage`.
 
@@ -199,7 +190,7 @@ on its header.
 Every step execution is written to a DuckDB database at `data/mnemonic.duckdb`, independently of
 the canvas. Clearing outputs, deleting nodes or starting a fresh graph leaves the history intact.
 
-**Trace** in the toolbar opens a panel beside the canvas: an accordion of runs, steps within each
+**Trace Logs** in the toolbar opens a panel beside the canvas: an accordion of runs, steps within each
 run, and per step the full record —
 
 - when it ran, how long it took, the model asked for and the dated snapshot actually served
@@ -227,6 +218,6 @@ server/trace.ts   DuckDB schema, writes and queries for the run history
 src/graph.ts      the engine — topological order, context resolution, run commits
 src/types.ts      node and edge shapes
 src/App.tsx       canvas, toolbar, run loop
-src/nodes/        node views
+src/nodes/        node views and the inline tool editor
 src/TracePanel.tsx  the trace accordion
 ```

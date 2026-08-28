@@ -1,4 +1,4 @@
-import type { Effort, ToolCallRecord, ToolNode } from "./types";
+import type { Effort, ToolCallRecord, ToolConfig } from "./types";
 
 const FALLBACK_MODELS = ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4o", "gpt-4o-mini"];
 
@@ -36,9 +36,8 @@ export async function fetchMcpTools(
   return { tools: body.tools ?? [], resolvedUrl: body.resolvedUrl ?? serverUrl };
 }
 
-/** Flatten a tool node into the shape the proxy expects. */
-export function toolSpec(node: ToolNode): Record<string, unknown> {
-  const d = node.data;
+/** Flatten a step's tool into the shape the proxy expects. */
+export function toolSpec(d: ToolConfig): Record<string, unknown> {
   if (d.kind === "web_search") {
     return { kind: "web_search", contextSize: d.contextSize, allowedDomains: d.allowedDomains };
   }

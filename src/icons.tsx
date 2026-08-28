@@ -13,12 +13,6 @@ const PATHS: Record<string, React.ReactNode> = {
     </>
   ),
   play: <path d="M6 3.5 20 12 6 20.5z" />,
-  forward: (
-    <>
-      <path d="M2 5.5 11 12 2 18.5z" />
-      <path d="M13 5.5 22 12l-9 6.5z" />
-    </>
-  ),
   refresh: (
     <>
       <path d="M3 12a9 9 0 1 0 2.64-6.36L3 8" />
@@ -26,6 +20,27 @@ const PATHS: Record<string, React.ReactNode> = {
     </>
   ),
   close: <path d="M6 6l12 12M18 6L6 18" />,
+  plus: <path d="M12 5v14M5 12h14" />,
+  list: (
+    <>
+      <path d="M8 6h13M8 12h13M8 18h13" />
+      <path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01" />
+    </>
+  ),
+  download: (
+    <>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M12 15V3" />
+    </>
+  ),
+  upload: (
+    <>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="m7 8 5-5 5 5" />
+      <path d="M12 3v12" />
+    </>
+  ),
   trash: (
     <>
       <path d="M3 6h18" />

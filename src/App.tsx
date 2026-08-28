@@ -31,20 +31,18 @@ import {
 } from "./graph";
 import { GraphActionsContext } from "./nodes/context";
 import { InputNodeView } from "./nodes/InputNodeView";
-import { ToolNodeView } from "./nodes/ToolNodeView";
 import { OutputNodeView } from "./nodes/OutputNodeView";
 import {
   isInput,
   isOutput,
-  isTool,
   type GraphEdge,
   type GraphNode,
   type InputData,
   type InputNode,
-  type ToolData,
+  type ToolConfig,
 } from "./types";
 
-const nodeTypes = { step: InputNodeView, artifact: OutputNodeView, tool: ToolNodeView };
+const nodeTypes = { step: InputNodeView, artifact: OutputNodeView };
 
 /** Edges are directed and that direction decides run order, so every edge shows an arrowhead. */
 const MARKER = { type: MarkerType.ArrowClosed, width: 18, height: 18, color: "#8b93a3" };
@@ -82,13 +80,40 @@ function migrateNode(n: GraphNode): GraphNode {
     : typed;
 }
 
-function newTool(index: number, position: { x: number; y: number }): GraphNode {
+/**
+ * Tools used to be nodes wired to a step. Fold each one into the steps it was attached to and
+ * drop it, so an existing graph keeps its configured tools rather than losing them.
+ */
+function migrateToolNodes({ nodes, edges }: Snapshot): Snapshot {
+  const toolNodes = nodes.filter((n) => (n.type as string) === "tool");
+  if (!toolNodes.length) return { nodes, edges };
+
+  const toolIds = new Set(toolNodes.map((n) => n.id));
+  const attachedTo = (toolId: string) =>
+    edges
+      .filter((e) => e.source === toolId || e.target === toolId)
+      .map((e) => (e.source === toolId ? e.target : e.source))
+      .filter((other) => !toolIds.has(other));
+
+  const adopted = new Map<string, ToolConfig[]>();
+  for (const tool of toolNodes) {
+    const config = { id: tool.id, ...(tool.data as unknown as Omit<ToolConfig, "id">) };
+    for (const stepId of new Set(attachedTo(tool.id))) {
+      adopted.set(stepId, [...(adopted.get(stepId) ?? []), config]);
+    }
+  }
+
   return {
-    id: uid(),
-    type: "tool",
-    position,
-    data: { label: `Tool ${index}`, kind: "web_search", contextSize: "medium" },
-  } as GraphNode;
+    nodes: nodes
+      .filter((n) => !toolIds.has(n.id))
+      .map((n) =>
+        isInput(n) && adopted.has(n.id)
+          ? { ...n, data: { ...n.data, tools: [...(n.data.tools ?? []), ...adopted.get(n.id)!] } }
+          : n,
+      ),
+    // Edges that touched a tool carried no context, so they simply go.
+    edges: edges.filter((e) => !toolIds.has(e.source) && !toolIds.has(e.target)),
+  };
 }
 
 function loadSnapshot(): Snapshot | null {
@@ -97,7 +122,7 @@ function loadSnapshot(): Snapshot | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed?.nodes) || !Array.isArray(parsed?.edges)) return null;
-    return { ...parsed, nodes: parsed.nodes.map(migrateNode) } as Snapshot;
+    return migrateToolNodes({ ...parsed, nodes: parsed.nodes.map(migrateNode) } as Snapshot);
   } catch {
     return null;
   }
@@ -163,15 +188,6 @@ function Canvas() {
     [setNodes],
   );
 
-  const updateTool = useCallback(
-    (id: string, patch: Partial<ToolData>) => {
-      setNodes((current) =>
-        current.map((n) => (n.id === id && isTool(n) ? { ...n, data: { ...n.data, ...patch } } : n)),
-      );
-    },
-    [setNodes],
-  );
-
   const setSkipped = useCallback(
     (id: string, value: boolean) => {
       setNodes((current) =>
@@ -207,7 +223,7 @@ function Canvas() {
       const context = resolveContext(id, working.nodes, working.edges);
       const input = composePrompt(context, producer.data.prompt);
       const instructions = composeSystem(producer.data.role, producer.data.instructions);
-      const tools = resolveTools(id, working.nodes, working.edges).map(toolSpec);
+      const tools = resolveTools(producer).map(toolSpec);
 
       const count = Math.min(MAX_OUTPUTS, Math.max(1, producer.data.outputs ?? 1));
       const settled = await Promise.allSettled(
@@ -322,36 +338,6 @@ function Canvas() {
     }
   }, [executeNode, running]);
 
-  const runNext = useCallback(async () => {
-    if (running) return;
-    const { order, cycle } = topoOrder(live.current.nodes, live.current.edges);
-    if (cycle.length) {
-      setNotice(`Cycle detected — ${cycle.length} step(s) can never become ready. Break the loop and retry.`);
-      return;
-    }
-    const next = order.find((id) => !steppedRef.current.includes(id));
-    if (!next) {
-      setNotice(order.length ? "End of graph. Reset to step through again." : "Nothing to run — add a step first.");
-      return;
-    }
-
-    abort.current = new AbortController();
-    setRunning(true);
-    setNotice(null);
-    try {
-      await executeNode(live.current, next, {
-        runId: uid(),
-        kind: "next",
-        seq: steppedRef.current.length,
-      });
-      setStepped((s) => [...s, next]);
-    } catch (err) {
-      setNotice(`Run failed: ${(err as Error).message}`);
-    } finally {
-      setRunning(false);
-    }
-  }, [executeNode, running]);
-
   /** Centre of what the user is currently looking at, in canvas coordinates. */
   const viewportSpot = useCallback(() => {
     const rect = wrapper.current?.getBoundingClientRect();
@@ -369,13 +355,6 @@ function Canvas() {
       return [...current, newInput(models[0] ?? DEFAULT_MODEL, count + 1, position)];
     });
   }, [models, setNodes, viewportSpot]);
-
-  const addTool = useCallback(() => {
-    setNodes((current) => {
-      const count = current.filter(isTool).length;
-      return [...current, newTool(count + 1, freeSpot(viewportSpot(), current.map(boxOf)))];
-    });
-  }, [setNodes, viewportSpot]);
 
   /**
    * Back to the top of the graph: the cursor, and the per-step run state with it. Never
@@ -412,9 +391,6 @@ function Canvas() {
       const source = nodes.find((n) => n.id === conn.source);
       const target = nodes.find((n) => n.id === conn.target);
       if (!source || !target || source.id === target.id) return false;
-      // A tool attaches to a step, or to an artifact as provenance; direction is meaningless.
-      if (isTool(source)) return isInput(target) || isOutput(target);
-      if (isTool(target)) return isInput(source) || isOutput(source);
       return !(isOutput(source) && isOutput(target));
     },
     [nodes],
@@ -497,7 +473,7 @@ function Canvas() {
         try {
           const parsed = JSON.parse(text);
           if (!Array.isArray(parsed?.nodes) || !Array.isArray(parsed?.edges)) throw new Error("bad shape");
-          publish({ nodes: parsed.nodes.map(migrateNode), edges: parsed.edges });
+          publish(migrateToolNodes({ nodes: parsed.nodes.map(migrateNode), edges: parsed.edges }));
           setStepped([]);
           setNotice(null);
         } catch {
@@ -522,8 +498,8 @@ function Canvas() {
   );
 
   const actions = useMemo(
-    () => ({ models, currentId, runOrder, updateInput, updateTool, runOne, removeNode, setSkipped }),
-    [models, currentId, runOrder, updateInput, updateTool, runOne, removeNode, setSkipped],
+    () => ({ models, currentId, runOrder, updateInput, runOne, removeNode, setSkipped }),
+    [models, currentId, runOrder, updateInput, runOne, removeNode, setSkipped],
   );
 
   return (
@@ -539,15 +515,9 @@ function Canvas() {
 
           <div className="bar-center">
             <button onClick={addStep}>
-              <Icon name="page" /> Step
-            </button>
-            <button onClick={addTool}>
-              <Icon name="gear" /> Tool
+              <Icon name="page" /> Add Step
             </button>
             <span className="gap" />
-            <button className="tinted tint-ok" onClick={runNext} disabled={running}>
-              <Icon name="forward" /> Next
-            </button>
             <button className="primary" onClick={runAll} disabled={running}>
               <Icon name="play" /> {running ? "Running…" : "Run"}
             </button>
@@ -561,10 +531,14 @@ function Canvas() {
           </div>
 
           <div className="bar-right">
-            <button onClick={() => setTraceOpen(true)}>Trace</button>
-            <button onClick={exportGraph}>Export</button>
+            <button onClick={() => setTraceOpen(true)}>
+              <Icon name="list" /> Trace Logs
+            </button>
+            <button onClick={exportGraph}>
+              <Icon name="download" /> Export
+            </button>
             <label className="file">
-              Import
+              <Icon name="upload" /> Import
               <input
                 type="file"
                 accept="application/json"
@@ -608,9 +582,7 @@ function Canvas() {
                 zoomable
                 bgColor="var(--panel)"
                 maskColor="rgba(15, 17, 21, 0.72)"
-                nodeColor={(n) =>
-                  isInput(n as GraphNode) ? "#6ea8fe" : isTool(n as GraphNode) ? "#c69cf0" : "#3a4150"
-                }
+                nodeColor={(n) => (isInput(n as GraphNode) ? "#6ea8fe" : "#3a4150")}
                 nodeStrokeWidth={0}
               />
             </ReactFlow>

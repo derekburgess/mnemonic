@@ -1,5 +1,5 @@
-import type { GraphEdge, GraphNode, InputNode, OutputData, OutputNode, ToolNode } from "./types";
-import { isInput, isOutput, isTool } from "./types";
+import type { GraphEdge, GraphNode, InputNode, OutputData, OutputNode, ToolConfig } from "./types";
+import { isInput, isOutput } from "./types";
 
 export const uid = () => crypto.randomUUID();
 
@@ -51,9 +51,8 @@ const byId = (nodes: GraphNode[]) => new Map(nodes.map((n) => [n.id, n]));
 /**
  * Which input nodes must run before this one.
  *
- * Dependencies follow directed paths, walking back through whatever sits in between: an
- * artifact resolves to the step that produced it, and a tool is walked straight through, so
- * `step -> tool -> step` orders those steps just as `step -> step` does.
+ * An artifact resolves to the step that produced it, so `step -> artifact -> step` orders those
+ * steps just as a pre-wired `step -> step` does.
  *
  * Skipped steps never run, so they are neither scheduled nor waited on — depending on one
  * would otherwise deadlock its dependents and read as a false cycle.
@@ -67,31 +66,16 @@ export function inputDependencies(nodes: GraphNode[], edges: GraphEdge[]): Map<s
   for (const n of nodes) if (isInput(n) && !n.data.skipped) deps.set(n.id, new Set());
 
   for (const [id, set] of deps) {
-    const seen = new Set<string>([id]);
-    const queue = [...(incoming.get(id) ?? [])];
-
-    while (queue.length) {
-      const sourceId = queue.shift()!;
-      if (seen.has(sourceId)) continue;
-      seen.add(sourceId);
-
+    for (const sourceId of incoming.get(id) ?? []) {
       const source = map.get(sourceId);
       if (!source) continue;
 
       if (isInput(source)) {
         if (!source.data.skipped) set.add(source.id);
-        // A step is the end of the walk: its own dependencies are its business.
-        continue;
-      }
-
-      if (isOutput(source)) {
+      } else if (isOutput(source)) {
         const producer = map.get(source.data.sourceId);
         if (producer && isInput(producer) && !producer.data.skipped) set.add(producer.id);
-        continue;
       }
-
-      // A tool contributes no ordering of its own; keep walking through it.
-      queue.push(...(incoming.get(sourceId) ?? []));
     }
   }
   return deps;
@@ -144,25 +128,9 @@ export function composePrompt(context: ContextBlock[], prompt: string): string {
   return `${blocks}\n\n${prompt}`;
 }
 
-/**
- * The tools wired to a step. Tool nodes are capabilities, not context: they carry no text and
- * take part in no scheduling, so the edge direction carries no meaning and either is accepted.
- */
-export function resolveTools(inputId: string, nodes: GraphNode[], edges: GraphEdge[]): ToolNode[] {
-  const map = new Map(nodes.map((n) => [n.id, n]));
-  const seen = new Set<string>();
-
-  return edges
-    .flatMap((e) => {
-      if (e.target === inputId) return [map.get(e.source)];
-      if (e.source === inputId) return [map.get(e.target)];
-      return [];
-    })
-    .filter((n): n is ToolNode => {
-      if (!n || !isTool(n) || n.data.skipped || seen.has(n.id)) return false;
-      seen.add(n.id);
-      return true;
-    });
+/** The tools a step will offer the model on this run. */
+export function resolveTools(step: InputNode): ToolConfig[] {
+  return (step.data.tools ?? []).filter((t) => !t.skipped);
 }
 
 /** The system prompt: the role, phrased as one, followed by the step's own instructions. */
@@ -187,43 +155,19 @@ export function commitRun(
 ): { nodes: GraphNode[]; edges: GraphEdge[]; outputIds: string[] } {
   const map = byId(nodes);
 
-  // Tools the step flows *into* (step -> tool, transitively). These sit between the step and
-  // its artifact, so the artifact hangs off them and anything they feed is really consuming
-  // this step's output rather than sharing its tool.
-  const forwardTools: string[] = [];
-  const walked = new Set<string>([producer.id]);
-  const queue = [producer.id];
-  while (queue.length) {
-    const from = queue.shift()!;
-    for (const e of edges) {
-      if (e.source !== from || walked.has(e.target)) continue;
-      const node = map.get(e.target);
-      if (!node || !isTool(node) || node.data.skipped) continue;
-      walked.add(e.target);
-      forwardTools.push(e.target);
-      queue.push(e.target);
-    }
-  }
-
-  // Anything downstream of the step hangs off the last thing in that chain.
-  const anchors = forwardTools.length ? forwardTools : [producer.id];
-  const chain = new Set([producer.id, ...forwardTools]);
-  const feedsArtifact = (e: GraphEdge) => chain.has(e.source);
-
   const activeOutputIds = new Set(
     edges
-      .filter(feedsArtifact)
+      .filter((e) => e.source === producer.id)
       .map((e) => map.get(e.target))
-      .filter((n): n is OutputNode => !!n && isOutput(n) && n.data.sourceId === producer.id)
+      .filter((n): n is OutputNode => !!n && isOutput(n))
       .map((n) => n.id),
   );
 
-  // Pre-wiring materialises once there is an artifact: a step (or a tool it flows into) that
-  // points straight at another step gets that edge re-pointed at the new artifact, so
-  // `step -> tool -> step` becomes `step -> tool -> artifact -> step`.
+  // Pre-wiring materialises once there is an artifact: a step pointing straight at another step
+  // gets that edge re-pointed at the new artifact.
   const prewired = edges.filter((e) => {
     const t = map.get(e.target);
-    return chain.has(e.source) && !!t && isInput(t);
+    return e.source === producer.id && !!t && isInput(t);
   });
   const inherited = edges.filter((e) => activeOutputIds.has(e.source));
 
@@ -253,7 +197,7 @@ export function commitRun(
 
   const stale = new Set([...inherited, ...prewired].map((e) => e.id));
   const kept = edges.filter(
-    (e) => !stale.has(e.id) && !(feedsArtifact(e) && activeOutputIds.has(e.target)),
+    (e) => !stale.has(e.id) && !(e.source === producer.id && activeOutputIds.has(e.target)),
   );
 
   const migrated: GraphEdge[] = [...inherited, ...prewired].map((e) => ({
@@ -266,9 +210,7 @@ export function commitRun(
     nodes: [...nodes, ...outputs],
     edges: [
       ...kept,
-      // The artifact hangs off the end of the step's tool chain, so the graph reads as a chain
-      // rather than a triangle of step -> tool, step -> artifact, tool -> artifact.
-      ...outputs.flatMap((o) => anchors.map((a) => ({ id: uid(), source: a, target: o.id }))),
+      ...outputs.map((o) => ({ id: uid(), source: producer.id, target: o.id })),
       ...migrated,
     ],
     outputIds: outputs.map((o) => o.id),

@@ -560,9 +560,59 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 
 :root { --tool: #c69cf0; }
 
-.node.tool { border-color: color-mix(in srgb, var(--tool) 40%, var(--line)); }
-.node.tool .label:focus { border-color: var(--tool); }
-.node.tool .react-flow__handle { background: var(--tool); }
+/* Tools live inside their step now: a stack of collapsible editors under the input field. */
+.tools { display: flex; flex-direction: column; gap: 6px; }
+
+.tools-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--dim);
+}
+/* Same square and resting colour as the delete icon; accent rather than red on hover,
+   since adding is not destructive. */
+.add-tool {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--dim);
+}
+.add-tool:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+
+.tool {
+  border: 1px solid color-mix(in srgb, var(--tool) 35%, var(--line));
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+.tool.skipped { opacity: 0.55; }
+.tool.skipped:hover { opacity: 0.85; }
+
+.tool-head { display: flex; align-items: center; gap: 4px; padding: 4px 6px 4px 2px; }
+
+.tool-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 2px;
+  background: none;
+  border: none;
+}
+.tool-toggle:hover { border-color: transparent; }
+.tool-toggle .label { flex: 0 1 auto; min-width: 40px; color: var(--tool); }
+.tool-toggle .dim { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.tool-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 8px 8px;
+}
 
 /* MCP tool picker */
 /* Sized and resized like the text fields: a long tool list scrolls rather than growing the node. */
