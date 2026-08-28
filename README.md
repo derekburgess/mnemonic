@@ -43,8 +43,8 @@ modalities (audio, image, realtime…) and purpose-built variants (codex, deep-r
 dropped, dated snapshots are collapsed into their alias, and what is left is ordered newest first.
 
 `Output N` generates N candidates from the same prompt in parallel, as N sibling artifacts. The
-producer wires to all of them; any downstream chain follows the first. Rewire to whichever candidate
-you prefer and re-run to continue from it. If some generations fail the step still commits the ones
+step wires to all of them, and so does anything downstream - a following step receives every
+candidate as context, not just one. Delete or unwire the ones you do not want. If some generations fail the step still commits the ones
 that succeeded and reports how many did not.
 
 **Output nodes** are immutable artifacts. Every run produces a *new* output node — outputs are never
@@ -77,8 +77,8 @@ not context — they are not affected by wiring and never appear in a downstream
 
 ## Tools
 
-Tools belong to a step, listed under its Input field — add as many as you like, each collapsible
-and individually skippable. They are **capabilities, not context**: they carry no text, produce no
+Tools belong to a step, listed under its Input field — add as many as you like, each collapsible.
+Skipping the step withholds all of them. They are **capabilities, not context**: they carry no text, produce no
 artifacts, and take no part in scheduling, so they never appear on the canvas or affect the run
 order. Whatever the model actually invoked is recorded on the artifact the step produced.
 

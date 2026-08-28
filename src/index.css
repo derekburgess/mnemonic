@@ -14,6 +14,8 @@
 
   --node-w: 300px;
   --node-pad: 10px;
+  /* One size for the content of every field in a node. */
+  --field-font: 11px;
   /* the width a field fills inside a base-width node */
   --field-w: calc(var(--node-w) - 2 * var(--node-pad) - 2px);
 
@@ -238,6 +240,8 @@ button.tinted:hover:not(:disabled) {
   padding: 0;
   color: var(--dim);
 }
+/* .icon is declared after .tinted, so it has to hand the colour back. */
+.icon.tinted { color: var(--tint); }
 .icon:hover:not(:disabled) { color: var(--err); border-color: var(--err); }
 
 .row { display: flex; gap: 8px; }
@@ -253,11 +257,11 @@ select, textarea, .line {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 5px 6px;
-  font: inherit;
+  font-family: inherit;
+  font-size: var(--field-font);
 }
 select, .line { width: 100%; }
 select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline: none; }
-.line { font-size: 13px; }
 
 .instructions {
   display: block;
@@ -266,7 +270,6 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   min-height: 54px;
   padding-right: 34px;
   resize: both;
-  font-size: 13px;
   line-height: 1.45;
 }
 
@@ -277,7 +280,6 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   min-height: 76px;
   padding-right: 34px;
   resize: both;
-  font-size: 13px;
   line-height: 1.45;
 }
 
@@ -300,7 +302,7 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   width: 100%;
   contain: inline-size;
   color: var(--err);
-  font-size: 12px;
+  font-size: var(--field-font);
   line-height: 1.45;
   background: var(--err-soft);
   border: 1px solid var(--err);
@@ -322,7 +324,7 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   height: 260px;
   overflow: auto;
   resize: both;
-  font-size: 13px;
+  font-size: var(--field-font);
   line-height: 1.45;
   background: var(--panel-2);
   color: var(--text);
@@ -352,14 +354,15 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 
 /* Handles ride the node's own border rather than a wrapper box around it. */
 .react-flow__handle {
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
   background: var(--dim);
   border: 2px solid var(--bg);
   border-radius: 50%;
 }
-.react-flow__handle-left { left: -5px; }
-.react-flow__handle-right { right: -5px; }
+/* Half the handle, so it still straddles the node's border. */
+.react-flow__handle-left { left: -7px; }
+.react-flow__handle-right { right: -7px; }
 .react-flow__handle:hover,
 .react-flow__handle.connecting { background: var(--accent); }
 .react-flow__edge-path { stroke: var(--dim); stroke-width: 1.6; }
@@ -434,13 +437,17 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   transition: background 0.14s ease, border-color 0.14s ease;
 }
 
+/*
+ * Track is 34x18 with a 1px border, so the knob sits in a 32x16 box. A 12px knob inset by 2px
+ * leaves an even 2px all round, and travels 32 - 12 - 2 - 2 = 16px to sit flush at the far end.
+ */
 .skip .track::after {
   content: "";
   position: absolute;
-  top: 1px;
-  left: 1px;
-  width: 14px;
-  height: 14px;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: var(--dim);
   transition: transform 0.14s ease, background 0.14s ease;
@@ -476,13 +483,13 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 
 .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
   margin: 12px 0 6px;
-  font-size: 12px;
+  font-size: var(--field-font);
   font-weight: 650;
   line-height: 1.35;
   color: var(--text);
 }
-.md h1 { font-size: 14px; }
-.md h2 { font-size: 13px; }
+.md h1 { font-size: 13px; }
+.md h2 { font-size: 12px; }
 
 .md ul, .md ol { padding-left: 18px; }
 .md li { margin: 2px 0; }
@@ -499,7 +506,7 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   background: var(--bg);
   border: 1px solid var(--line);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
+  font-size: 10px;
   overflow-wrap: anywhere;
 }
 
@@ -527,7 +534,7 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 
 .md hr { margin: 10px 0; border: none; border-top: 1px solid var(--line); }
 
-.md table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.md table { width: 100%; border-collapse: collapse; font-size: 10px; }
 .md th, .md td { padding: 4px 6px; border: 1px solid var(--line); text-align: left; }
 .md th { background: var(--bg); font-weight: 650; }
 
@@ -587,9 +594,6 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   border-radius: 6px;
   background: var(--panel-2);
 }
-.tool.skipped { opacity: 0.55; }
-.tool.skipped:hover { opacity: 0.85; }
-
 .tool-head { display: flex; align-items: center; gap: 4px; padding: 4px 6px 4px 2px; }
 
 .tool-toggle {
@@ -639,7 +643,7 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--field-font);
   line-height: 1.45;
   color: var(--text);
   cursor: pointer;
@@ -648,7 +652,7 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 .pick input { flex: none; margin-top: 3px; }
 .pick input { accent-color: var(--tool); }
 
-.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--field-font); }
 
 /* One row per tool call: the name labels it, the arguments sit in their own field. */
 .call {
@@ -661,7 +665,7 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
    is called, and so a long name cannot stretch the node. */
 .call-name {
   flex: 0 0 150px;
-  font-size: 11px;
+  font-size: var(--field-font);
   color: var(--tool);
   white-space: nowrap;
   overflow: hidden;
@@ -703,7 +707,7 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: 6px;
-  font-size: 11px;
+  font-size: var(--field-font);
   line-height: 1.45;
   cursor: text;
   user-select: text;

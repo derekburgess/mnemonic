@@ -4,7 +4,6 @@ import type { ToolConfig, ToolKind } from "../types";
 import { Icon } from "../icons";
 import { CopyButton } from "./CopyButton";
 import { DeleteButton } from "./DeleteButton";
-import { SkipToggle } from "./SkipToggle";
 import { useFieldWidth } from "./useFieldWidth";
 
 const KINDS: { value: ToolKind; label: string }[] = [
@@ -54,15 +53,8 @@ export function ToolEditor({
     });
   };
 
-  const summary =
-    tool.kind === "mcp"
-      ? tool.serverUrl || "no server"
-      : tool.kind === "custom"
-        ? tool.fnName || "unnamed function"
-        : "web search";
-
   return (
-    <div className={`tool${tool.skipped ? " skipped" : ""}`}>
+    <div className="tool">
       <header className="tool-head">
         <button className="tool-toggle nodrag" onClick={() => setOpen((v) => !v)}>
           <span className={`caret${open ? " open" : ""}`}>›</span>
@@ -73,13 +65,7 @@ export function ToolEditor({
             onChange={(e) => onChange({ label: e.target.value })}
             aria-label="Tool name"
           />
-          <span className="dim">{summary}</span>
         </button>
-        <SkipToggle
-          on={!!tool.skipped}
-          onChange={(v) => onChange({ skipped: v })}
-          title="Withhold this tool from the model"
-        />
         <DeleteButton onClick={onRemove} title="Remove tool" />
       </header>
 

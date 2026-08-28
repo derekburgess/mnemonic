@@ -241,12 +241,17 @@ export function TracePanel({ onClose }: { onClose: () => void }) {
       />
 
       <header className="trace-head">
-        <strong>Trace</strong>
+        <strong>Trace Logs</strong>
         <div className="spacer" />
-        <button onClick={load} title="Reload runs" aria-label="Reload runs">
+        <button
+          className="tinted tint-warn"
+          onClick={load}
+          title="Refresh trace logs"
+          aria-label="Refresh trace logs"
+        >
           <Icon name="refresh" />
         </button>
-        <button onClick={onClose} title="Close" aria-label="Close">
+        <button className="tinted tint-err" onClick={onClose} title="Close" aria-label="Close">
           <Icon name="close" />
         </button>
       </header>

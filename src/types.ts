@@ -29,8 +29,6 @@ export type ToolConfig = {
   id: string;
   label: string;
   kind: ToolKind;
-  /** Kept on the step but withheld from the model. */
-  skipped?: boolean;
   /** web_search */
   contextSize?: "low" | "medium" | "high";
   allowedDomains?: string;

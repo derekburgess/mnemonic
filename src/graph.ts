@@ -128,9 +128,9 @@ export function composePrompt(context: ContextBlock[], prompt: string): string {
   return `${blocks}\n\n${prompt}`;
 }
 
-/** The tools a step will offer the model on this run. */
+/** The tools a step will offer the model on this run. Skipping the step withholds them all. */
 export function resolveTools(step: InputNode): ToolConfig[] {
-  return (step.data.tools ?? []).filter((t) => !t.skipped);
+  return step.data.tools ?? [];
 }
 
 /** The system prompt: the role, phrased as one, followed by the step's own instructions. */
@@ -192,19 +192,18 @@ export function commitRun(
       },
     };
   });
-  // A fan-out has no single successor, so the chain follows the first sibling by default.
-  const heir = outputs[0].id;
-
   const stale = new Set([...inherited, ...prewired].map((e) => e.id));
   const kept = edges.filter(
     (e) => !stale.has(e.id) && !(e.source === producer.id && activeOutputIds.has(e.target)),
   );
 
-  const migrated: GraphEdge[] = [...inherited, ...prewired].map((e) => ({
-    ...e,
-    id: uid(),
-    source: heir,
-  }));
+  // Every sibling of a fan-out feeds the same consumers, so a downstream step sees all N
+  // candidates rather than only the first. Targets are collapsed to a set first, or re-running
+  // an N-way fan-out would multiply the edges each time.
+  const consumers = [...new Set([...inherited, ...prewired].map((e) => e.target))];
+  const migrated: GraphEdge[] = outputs.flatMap((o) =>
+    consumers.map((target) => ({ id: uid(), source: o.id, target })),
+  );
 
   return {
     nodes: [...nodes, ...outputs],
