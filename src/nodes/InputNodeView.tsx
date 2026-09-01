@@ -11,6 +11,12 @@ import { useFieldWidth } from "./useFieldWidth";
 
 const EFFORTS: Effort[] = ["off", "minimal", "low", "medium", "high"];
 const MAX_OUTPUTS = 8;
+const ROUND_CHOICES = [1, 2, 4, 6, 8, 12, 16, 20, 30, 50];
+const DEFAULT_ROUNDS = 12;
+/** Seconds, rendered compactly once past a minute. */
+const TIMEOUT_CHOICES = [30, 60, 120, 300, 600, 900, 1800, 3600];
+const DEFAULT_TIMEOUT_SEC = 300;
+const asDuration = (sec: number) => (sec < 60 ? `${sec}s` : `${sec / 60}m`);
 
 export function InputNodeView({ id, data }: NodeProps<InputNode>) {
   const { models, currentId, runOrder, updateInput: onChange, runOne: onRun, removeNode: onDelete, setSkipped } =
@@ -92,6 +98,37 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         </label>
       </div>
 
+      <div className="row">
+        <label title="How many times the model may come back asking for more tools. One turn may contain several calls.">
+          Max Tool Turns
+          <select
+            className="nodrag"
+            value={data.maxRounds ?? DEFAULT_ROUNDS}
+            onChange={(e) => onChange(id, { maxRounds: Number(e.target.value) })}
+          >
+            {ROUND_CHOICES.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label title="Budget for the whole step: every round plus the tools they call">
+          Timeout
+          <select
+            className="nodrag"
+            value={data.timeoutSec ?? DEFAULT_TIMEOUT_SEC}
+            onChange={(e) => onChange(id, { timeoutSec: Number(e.target.value) })}
+          >
+            {TIMEOUT_CHOICES.map((n) => (
+              <option key={n} value={n}>
+                {asDuration(n)}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
       <label className="stack">
         Role
         <input
@@ -167,7 +204,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
           <span className="spinner" role="status" aria-label="Running" />
         ) : (
           <>
-            <Icon name="play" /> Run
+            <Icon name="play" /> Run step
           </>
         )}
       </button>

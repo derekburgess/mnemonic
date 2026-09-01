@@ -13,6 +13,7 @@ const PATHS: Record<string, React.ReactNode> = {
     </>
   ),
   play: <path d="M6 3.5 20 12 6 20.5z" />,
+  stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
   refresh: (
     <>
       <path d="M3 12a9 9 0 1 0 2.64-6.36L3 8" />
@@ -21,6 +22,12 @@ const PATHS: Record<string, React.ReactNode> = {
   ),
   close: <path d="M6 6l12 12M18 6L6 18" />,
   plus: <path d="M12 5v14M5 12h14" />,
+  pencil: (
+    <>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+    </>
+  ),
   list: (
     <>
       <path d="M8 6h13M8 12h13M8 18h13" />

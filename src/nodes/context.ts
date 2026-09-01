@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { InputData } from "../types";
+import type { InputData, OutputData } from "../types";
 
 export type GraphActions = {
   models: string[];
@@ -8,6 +8,7 @@ export type GraphActions = {
   /** Step ids in the order they will run, so each node can show its place in the queue. */
   runOrder: string[];
   updateInput: (id: string, patch: Partial<InputData>) => void;
+  updateOutput: (id: string, patch: Partial<OutputData>) => void;
   setSkipped: (id: string, value: boolean) => void;
   runOne: (id: string) => void;
   removeNode: (id: string) => void;

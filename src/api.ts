@@ -48,6 +48,7 @@ export function toolSpec(d: ToolConfig): Record<string, unknown> {
       serverUrl: d.serverUrl ?? "",
       authorization: d.authorization,
       selectedTools: d.selectedTools ?? [],
+      timeoutSec: d.timeoutSec,
     };
   }
   return {
@@ -56,7 +57,39 @@ export function toolSpec(d: ToolConfig): Record<string, unknown> {
     fnDescription: d.fnDescription,
     fnParameters: d.fnParameters,
     fnCode: d.fnCode,
+    timeoutSec: d.timeoutSec,
   };
+}
+
+export type Provider = "openai" | "compatible";
+
+export type PlatformSettings = {
+  /** Where the key in use came from; the key itself never leaves the server. */
+  keySource: "panel" | "env" | "none";
+  baseUrl: string;
+  provider: Provider;
+  hasPanelKey: boolean;
+};
+
+export async function fetchSettings(): Promise<PlatformSettings> {
+  const res = await fetch("/api/settings");
+  if (!res.ok) throw new Error(`could not load settings (${res.status})`);
+  return res.json();
+}
+
+export async function saveSettings(patch: {
+  apiKey?: string;
+  baseUrl?: string;
+  provider?: Provider;
+}): Promise<PlatformSettings> {
+  const res = await fetch("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `could not save settings (${res.status})`);
+  return body;
 }
 
 export type TraceMeta = {
@@ -118,8 +151,8 @@ export async function deleteTraceRun(runId: string): Promise<void> {
   if (!res.ok) throw new Error(`could not delete run (${res.status})`);
 }
 
-/** A reasoning model with tools can legitimately take minutes; past this it is hung. */
-const RUN_TIMEOUT_MS = 300_000;
+/** Used when a step does not set its own budget. */
+export const DEFAULT_STEP_TIMEOUT_SEC = 300;
 
 export async function runStep(
   args: {
@@ -128,12 +161,15 @@ export async function runStep(
     input: string;
     instructions?: string;
     tools?: Record<string, unknown>[];
+    maxRounds?: number;
+    timeoutSec?: number;
     trace?: TraceMeta;
   },
   signal?: AbortSignal,
 ): Promise<RunResponse> {
   // Without a deadline a hung request would leave the UI stuck in its running state forever.
-  const timeout = AbortSignal.timeout(RUN_TIMEOUT_MS);
+  const budgetSec = args.timeoutSec ?? DEFAULT_STEP_TIMEOUT_SEC;
+  const timeout = AbortSignal.timeout(budgetSec * 1000);
   const merged = signal ? AbortSignal.any([signal, timeout]) : timeout;
 
   let res: Response;
@@ -147,7 +183,9 @@ export async function runStep(
   } catch (err) {
     if (signal?.aborted) throw new Error("cancelled");
     if ((err as Error).name === "TimeoutError") {
-      throw new Error(`no response after ${RUN_TIMEOUT_MS / 1000}s`);
+      throw new Error(
+        `The step hit its ${budgetSec}s timeout. Raise "Timeout" if it legitimately takes longer.`,
+      );
     }
     throw err;
   }

@@ -6,6 +6,11 @@ import { CopyButton } from "./CopyButton";
 import { DeleteButton } from "./DeleteButton";
 import { useFieldWidth } from "./useFieldWidth";
 
+/** Seconds. MCP tools can do real work; custom code is yours and should be quick. */
+const TIMEOUT_CHOICES = [5, 15, 30, 60, 120, 300, 600, 900, 1800];
+const DEFAULT_TIMEOUT: Partial<Record<ToolKind, number>> = { mcp: 300, custom: 5 };
+const asDuration = (sec: number) => (sec < 60 ? `${sec}s` : `${sec / 60}m`);
+
 const KINDS: { value: ToolKind; label: string }[] = [
   { value: "web_search", label: "Web search" },
   { value: "mcp", label: "MCP" },
@@ -107,6 +112,22 @@ export function ToolEditor({
               ))}
             </select>
           </label>
+          {tool.kind !== "web_search" && (
+            <label title="How long one invocation of this tool may take">
+              Timeout
+              <select
+                className="nodrag"
+                value={tool.timeoutSec ?? DEFAULT_TIMEOUT[tool.kind]}
+                onChange={(e) => onChange({ timeoutSec: Number(e.target.value) })}
+              >
+                {TIMEOUT_CHOICES.map((n) => (
+                  <option key={n} value={n}>
+                    {asDuration(n)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
         <label className="stack">
           Allowed domains (comma separated, blank for any)

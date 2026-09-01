@@ -4,6 +4,8 @@ import dotenv from "dotenv";
 import OpenAI from "openai";
 import { buildTools, listMcpTools, type ToolSpec } from "./tools.js";
 import { deleteRun, getRun, listRuns, recordStep } from "./trace.js";
+import { readSettings, resolveCredentials, writeSettings, type Provider } from "./settings.js";
+import { TIMEOUT_MESSAGE, runChat, runResponses } from "./providers.js";
 
 dotenv.config();
 
@@ -12,16 +14,22 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "4mb" }));
 
-const MISSING_KEY = "OPENAI_API_KEY is not set. Copy .env.example to .env, add your key, and restart.";
+const MISSING_KEY = "No API key set. Add one in Settings, or put OPENAI_API_KEY in .env.";
 
-if (!process.env.OPENAI_API_KEY) console.warn(`[mnemonic] ${MISSING_KEY}`);
+if (resolveCredentials().source === "none") console.warn(`[mnemonic] ${MISSING_KEY}`);
 
-// Constructed lazily: the SDK throws on a missing key, and the UI is still worth serving
-// so the graph can be built and inspected before a key is in place.
-let cached: OpenAI | null = null;
+// Constructed lazily and rebuilt whenever the credentials change: the SDK throws on a missing
+// key, and the UI is still worth serving so the graph can be built before a key is in place.
+let cached: { client: OpenAI; signature: string } | null = null;
 function getClient(): OpenAI {
-  if (!process.env.OPENAI_API_KEY) throw Object.assign(new Error(MISSING_KEY), { status: 401 });
-  return (cached ??= new OpenAI({ apiKey: process.env.OPENAI_API_KEY }));
+  const { apiKey, baseUrl } = resolveCredentials();
+  if (!apiKey) throw Object.assign(new Error(MISSING_KEY), { status: 401 });
+
+  const signature = `${apiKey}::${baseUrl ?? ""}`;
+  if (cached?.signature !== signature) {
+    cached = { client: new OpenAI({ apiKey, ...(baseUrl ? { baseURL: baseUrl } : {}) }), signature };
+  }
+  return cached.client;
 }
 
 /** Models we fall back to when the /models listing is unavailable. */
@@ -54,10 +62,39 @@ function usableModels(models: { id: string; created?: number }[]): string[] {
     .map((m) => m.id);
 }
 
+/** The key itself is never sent back to the browser, only whether one is configured. */
+app.get("/api/settings", (_req, res) => {
+  const { source, baseUrl, provider } = resolveCredentials();
+  res.json({ keySource: source, baseUrl: baseUrl ?? "", provider, hasPanelKey: !!readSettings().apiKey });
+});
+
+app.post("/api/settings", (req, res) => {
+  const { apiKey, baseUrl, provider } = req.body ?? {};
+  if (apiKey !== undefined && typeof apiKey !== "string") {
+    return res.status(400).json({ error: "apiKey must be a string" });
+  }
+  try {
+    writeSettings({
+      ...(apiKey !== undefined ? { apiKey } : {}),
+      ...(baseUrl !== undefined ? { baseUrl: String(baseUrl) } : {}),
+      ...(provider !== undefined ? { provider: provider as Provider } : {}),
+    });
+    const { source, baseUrl: url, provider: p } = resolveCredentials();
+    res.json({ keySource: source, baseUrl: url ?? "", provider: p, hasPanelKey: !!readSettings().apiKey });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 app.get("/api/models", async (_req, res) => {
   try {
     const list = await getClient().models.list();
-    const ids = usableModels(list.data);
+    // Another provider's catalogue is its own; curating it against OpenAI's naming would
+    // throw away everything it offers.
+    const ids =
+      resolveCredentials().provider === "compatible"
+        ? list.data.map((m) => m.id).sort()
+        : usableModels(list.data);
     res.json({ models: ids.length ? ids : FALLBACK_MODELS });
   } catch (err) {
     console.warn("[mnemonic] model listing failed, serving fallback list:", (err as Error).message);
@@ -78,11 +115,9 @@ app.post("/api/mcp/tools", async (req, res) => {
   }
 });
 
-/** A tool-calling run can bounce a few times before the model settles on an answer. */
-const MAX_TOOL_ROUNDS = 6;
-
 app.post("/api/run", async (req, res) => {
-  const { model, effort, input, instructions, tools: toolSpecs, trace } = req.body ?? {};
+  const { model, effort, input, instructions, tools: toolSpecs, maxRounds, timeoutSec, trace } =
+    req.body ?? {};
   if (typeof model !== "string" || typeof input !== "string" || !input.trim()) {
     return res.status(400).json({ error: "model and a non-empty input are required" });
   }
@@ -126,122 +161,50 @@ app.post("/api/run", async (req, res) => {
 
   try {
     const client = getClient();
+    const { provider } = resolveCredentials();
     const { tools, dispatch } = await buildTools((toolSpecs ?? []) as ToolSpec[]);
 
-    const base = {
+    // The browser has its own deadline, but the server needs one too or an abandoned run keeps
+    // calling the model after the node has given up on it.
+    const budgetSec = typeof timeoutSec === "number" && timeoutSec > 0 ? timeoutSec : 300;
+
+    const run = provider === "compatible" ? runChat : runResponses;
+    const result = await run({
+      signal: AbortSignal.timeout(budgetSec * 1000),
+      client,
       model,
-      ...(typeof instructions === "string" && instructions.trim() ? { instructions } : {}),
-      // Non-reasoning models reject the reasoning block outright, so only send it when asked for.
-      ...(effort && effort !== "off" ? { reasoning: { effort } } : {}),
-      ...(tools.length ? { tools } : {}),
-    };
-
-    let conversation: unknown[] = [{ role: "user", content: input }];
-    const call = async (payload: Record<string, unknown>) => {
-      const started = Date.now();
-      const result = await client.responses.create(payload as never);
-      rounds.push({
-        request: payload,
-        response: { output: result.output, usage: result.usage, model: result.model },
-        ms: Date.now() - started,
-      });
-      return result;
-    };
-
-    let response = await call({ ...base, input: conversation });
-
-    const toolCalls: { name: string; detail?: string; urls?: string[] }[] = [];
-    const uniq = (urls: (string | null | undefined)[]) => [...new Set(urls.filter((u): u is string => !!u))];
-    let usedIn = 0;
-    let usedOut = 0;
-
-    for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-      usedIn += response.usage?.input_tokens ?? 0;
-      usedOut += response.usage?.output_tokens ?? 0;
-
-      for (const item of response.output) {
-        if (item.type !== "web_search_call") continue;
-        // A search reports the query and the sources it turned up; open_page/find_in_page
-        // report the single page they visited.
-        const action = (item as {
-          action?: {
-            type?: string;
-            query?: string;
-            queries?: string[] | null;
-            url?: string | null;
-            sources?: { url?: string }[] | null;
-          };
-        }).action;
-        // `queries` carries every query the model ran; `query` is the deprecated singular.
-        const detail = action?.queries?.length ? action.queries.join(" · ") : action?.query;
-        const urls = uniq([action?.url, ...(action?.sources ?? []).map((src) => src.url)]);
-        toolCalls.push({
-          name: `web_search${action?.type && action.type !== "search" ? `.${action.type}` : ""}`,
-          detail,
-          ...(urls.length ? { urls } : {}),
-        });
-      }
-
-      const calls = response.output.filter((o) => o.type === "function_call");
-      if (!calls.length) break;
-
-      if (round === MAX_TOOL_ROUNDS) {
-        throw new Error(`tool calls did not settle after ${MAX_TOOL_ROUNDS} rounds`);
-      }
-
-      // Reasoning items must be carried forward alongside the calls they belong to.
-      conversation = [...conversation, ...response.output];
-
-      for (const call of calls) {
-        const { name, arguments: args, call_id } = call as unknown as {
-          name: string;
-          arguments: string;
-          call_id: string;
-        };
-        toolCalls.push({ name, detail: args && args !== "{}" ? args : undefined });
-        conversation.push({
-          type: "function_call_output",
-          call_id,
-          output: await dispatch(name, args),
-        });
-      }
-
-      response = await call({ ...base, input: conversation });
-    }
-
-    // Whatever the answer actually cites, gathered from the final message's annotations.
-    const cited = uniq(
-      response.output.flatMap((item) =>
-        item.type === "message"
-          ? item.content.flatMap((part) =>
-              "annotations" in part
-                ? (part.annotations ?? []).map((a) =>
-                    a.type === "url_citation" ? a.url : undefined,
-                  )
-                : [],
-            )
-          : [],
-      ),
-    );
-    if (cited.length) toolCalls.push({ name: "citations", urls: cited });
+      effort,
+      input,
+      instructions: typeof instructions === "string" ? instructions : undefined,
+      tools,
+      dispatch,
+      maxRounds: typeof maxRounds === "number" ? maxRounds : undefined,
+      onRound: (round) => rounds.push(round),
+    });
 
     const payload = {
-      text: response.output_text ?? "",
-      model: response.model ?? model,
-      usage: { input: usedIn, output: usedOut },
-      ...(toolCalls.length ? { toolCalls } : {}),
+      text: result.text,
+      model: result.model,
+      usage: result.usage,
+      ...(result.toolCalls.length ? { toolCalls: result.toolCalls } : {}),
     };
 
     await save("ok", {
       servedModel: payload.model,
       outputText: payload.text,
-      toolCalls,
+      toolCalls: result.toolCalls,
       usage: payload.usage,
     });
 
     res.json(payload);
   } catch (err) {
-    const e = err as { status?: number; message?: string };
+    const e = err as { status?: number; message?: string; name?: string };
+    // The SDK reports its own abort as "Request was aborted."; make every route to a spent
+    // budget report the same thing.
+    if (/abort|timeout/i.test(`${e.name} ${e.message}`)) {
+      e.message = TIMEOUT_MESSAGE;
+      e.status = 504;
+    }
     console.error("[mnemonic] run failed:", e.message);
     await save("error", { error: e.message ?? "request failed" });
     res.status(e.status && e.status >= 400 && e.status < 600 ? e.status : 500).json({

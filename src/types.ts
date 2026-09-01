@@ -14,6 +14,10 @@ export type InputData = {
   prompt: string;
   /** Capabilities this step may call. */
   tools?: ToolConfig[];
+  /** How many times the model may come back asking for more tools before the run gives up. */
+  maxRounds?: number;
+  /** Budget for the whole step: every round plus the tools they call. Seconds. */
+  timeoutSec?: number;
   /** How many artifacts one run of this step generates. */
   outputs: number;
   /** Kept in the graph and wired, but never executed. */
@@ -36,6 +40,8 @@ export type ToolConfig = {
   serverUrl?: string;
   authorization?: string;
   selectedTools?: string[];
+  /** How long one invocation of this tool may take. Seconds. */
+  timeoutSec?: number;
   /** custom */
   fnName?: string;
   fnDescription?: string;
@@ -58,6 +64,8 @@ export type OutputData = {
   /** Kept in the graph and wired, but withheld from downstream context. */
   skipped?: boolean;
   toolCalls?: ToolCallRecord[];
+  /** Set once the text has been changed by hand, so the node stops claiming to be verbatim. */
+  edited?: boolean;
 };
 
 // "input", "output", "default" and "group" are React Flow's own built-in node types; using

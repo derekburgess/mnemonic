@@ -17,6 +17,7 @@ import {
 
 import { fetchModels, runStep, toolSpec } from "./api";
 import { Icon } from "./icons";
+import { SettingsPanel } from "./SettingsPanel";
 import { TracePanel } from "./TracePanel";
 import {
   boxOf,
@@ -39,6 +40,7 @@ import {
   type GraphNode,
   type InputData,
   type InputNode,
+  type OutputData,
   type ToolConfig,
 } from "./types";
 
@@ -49,6 +51,9 @@ const MARKER = { type: MarkerType.ArrowClosed, width: 18, height: 18, color: "#8
 const STORAGE_KEY = "mnemonic.graph.v1";
 const DEFAULT_MODEL = "gpt-5";
 export const MAX_OUTPUTS = 8;
+/** Mirrors DEFAULT_TOOL_ROUNDS on the server. */
+export const DEFAULT_ROUNDS = 12;
+export const DEFAULT_TIMEOUT_SEC = 300;
 
 type Snapshot = { nodes: GraphNode[]; edges: GraphEdge[] };
 
@@ -65,6 +70,8 @@ function newInput(model: string, index: number, position: { x: number; y: number
       instructions: "",
       prompt: "",
       outputs: 1,
+      maxRounds: DEFAULT_ROUNDS,
+      timeoutSec: DEFAULT_TIMEOUT_SEC,
       status: "idle",
     },
   };
@@ -142,7 +149,8 @@ function Canvas() {
   const abort = useRef<AbortController | null>(null);
   const [running, setRunning] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [traceOpen, setTraceOpen] = useState(false);
+  // One side panel at a time; the canvas keeps the rest of the width.
+  const [panel, setPanel] = useState<"trace" | "settings" | null>(null);
   const { screenToFlowPosition } = useReactFlow();
   const wrapper = useRef<HTMLDivElement>(null);
 
@@ -183,6 +191,15 @@ function Canvas() {
     (id: string, patch: Partial<InputData>) => {
       setNodes((current) =>
         current.map((n) => (n.id === id && isInput(n) ? { ...n, data: { ...n.data, ...patch } } : n)),
+      );
+    },
+    [setNodes],
+  );
+
+  const updateOutput = useCallback(
+    (id: string, patch: Partial<OutputData>) => {
+      setNodes((current) =>
+        current.map((n) => (n.id === id && isOutput(n) ? { ...n, data: { ...n.data, ...patch } } : n)),
       );
     },
     [setNodes],
@@ -235,6 +252,8 @@ function Canvas() {
               input,
               instructions,
               tools,
+              maxRounds: producer.data.maxRounds,
+              timeoutSec: producer.data.timeoutSec,
               ...(trace
                 ? {
                     trace: {
@@ -306,6 +325,17 @@ function Canvas() {
     [executeNode, running],
   );
 
+  /**
+   * Aborts the in-flight request and clears the run state a cancelled step would leave. The
+   * controller is deliberately kept: the run loop checks its signal to decide whether to carry
+   * on to the next step, and clearing it would read as "not aborted".
+   */
+  const stopRun = useCallback(() => {
+    abort.current?.abort();
+    setRunning(false);
+    setNotice(null);
+  }, []);
+
   const runAll = useCallback(async () => {
     if (running) return;
     const { order, cycle } = topoOrder(live.current.nodes, live.current.edges);
@@ -318,7 +348,9 @@ function Canvas() {
       return;
     }
 
-    abort.current = new AbortController();
+    // Held locally so a later run replacing abort.current cannot make this loop miss its stop.
+    const controller = new AbortController();
+    abort.current = controller;
     setRunning(true);
     setNotice(null);
     setStepped([]);
@@ -327,7 +359,7 @@ function Canvas() {
       const runId = uid();
       let snap = live.current;
       for (const [seq, id] of order.entries()) {
-        if (abort.current?.signal.aborted) break;
+        if (controller.signal.aborted) break;
         snap = await executeNode(snap, id, { runId, kind: "run", seq });
         setStepped((s) => [...s, id]);
       }
@@ -355,35 +387,6 @@ function Canvas() {
       return [...current, newInput(models[0] ?? DEFAULT_MODEL, count + 1, position)];
     });
   }, [models, setNodes, viewportSpot]);
-
-  /**
-   * Back to the top of the graph: the cursor, and the per-step run state with it. Never
-   * disabled — it is also the way out of a run that is taking too long or has wedged.
-   */
-  const resetRun = useCallback(() => {
-    abort.current?.abort();
-    abort.current = null;
-    setRunning(false);
-    setStepped([]);
-    steppedRef.current = [];
-    setNotice(null);
-    setNodes((current) =>
-      current.map((n) =>
-        isInput(n) && (n.data.status !== "idle" || n.data.error)
-          ? { ...n, data: { ...n.data, status: "idle" as const, error: undefined } }
-          : n,
-      ),
-    );
-  }, [setNodes]);
-
-  const clearOutputs = useCallback(() => {
-    const keep = new Set(live.current.nodes.filter((n) => !isOutput(n)).map((n) => n.id));
-    publish({
-      nodes: live.current.nodes.filter((n) => keep.has(n.id)),
-      edges: live.current.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
-    });
-    setStepped([]);
-  }, [publish]);
 
   /** Outputs feed inputs, inputs feed outputs. Output -> output would carry no context. */
   const isValidConnection = useCallback<IsValidConnection<GraphEdge>>(
@@ -498,8 +501,8 @@ function Canvas() {
   );
 
   const actions = useMemo(
-    () => ({ models, currentId, runOrder, updateInput, runOne, removeNode, setSkipped }),
-    [models, currentId, runOrder, updateInput, runOne, removeNode, setSkipped],
+    () => ({ models, currentId, runOrder, updateInput, updateOutput, runOne, removeNode, setSkipped }),
+    [models, currentId, runOrder, updateInput, updateOutput, runOne, removeNode, setSkipped],
   );
 
   return (
@@ -514,24 +517,23 @@ function Canvas() {
           </div>
 
           <div className="bar-center">
-            <button onClick={addStep}>
+            <button onClick={addStep} disabled={running}>
               <Icon name="page" /> Add Step
             </button>
             <span className="gap" />
-            <button className="primary" onClick={runAll} disabled={running}>
-              <Icon name="play" /> {running ? "Running…" : "Run"}
-            </button>
-            <button className="tinted tint-warn" onClick={resetRun}>
-              <Icon name="refresh" /> Reset
-            </button>
-            <span className="gap" />
-            <button className="tinted tint-err" onClick={clearOutputs} disabled={running}>
-              <Icon name="trash" /> Clear outputs
-            </button>
+            {running ? (
+              <button className="tinted tint-err" onClick={stopRun}>
+                <Icon name="stop" /> Stop
+              </button>
+            ) : (
+              <button className="primary" onClick={runAll}>
+                <Icon name="play" /> Run all
+              </button>
+            )}
           </div>
 
           <div className="bar-right">
-            <button onClick={() => setTraceOpen(true)}>
+            <button onClick={() => setPanel((p) => (p === "trace" ? null : "trace"))}>
               <Icon name="list" /> Trace Logs
             </button>
             <button onClick={exportGraph}>
@@ -549,6 +551,14 @@ function Canvas() {
                 }}
               />
             </label>
+            <button
+              className="icon-only"
+              onClick={() => setPanel((p) => (p === "settings" ? null : "settings"))}
+              title="Settings"
+              aria-label="Settings"
+            >
+              <Icon name="gear" />
+            </button>
           </div>
         </header>
 
@@ -588,7 +598,8 @@ function Canvas() {
             </ReactFlow>
           </div>
 
-          {traceOpen && <TracePanel onClose={() => setTraceOpen(false)} />}
+          {panel === "trace" && <TracePanel onClose={() => setPanel(null)} />}
+          {panel === "settings" && <SettingsPanel onClose={() => setPanel(null)} />}
         </div>
       </div>
     </GraphActionsContext.Provider>

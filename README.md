@@ -19,6 +19,10 @@ npm run dev
 The API key lives only in the local proxy under `server/` and is never bundled into the browser.
 Without one the UI still loads and the graph is fully editable; runs return a clear 401.
 
+The key can also be set in the app: the wrench in the toolbar opens **Settings**, which writes to
+`data/settings.json` (mode 600, gitignored). A key set there takes precedence over `.env`, and the
+browser is only ever told *whether* a key is set, never what it is.
+
 | Script | What it does |
 | --- | --- |
 | `npm run dev` | proxy + UI together, both watching |
@@ -29,6 +33,25 @@ Without one the UI still loads and the graph is fully editable; runs return a cl
 
 Two things are created on first use and are gitignored: `.env`, and `data/mnemonic.duckdb` for the
 run history.
+
+## Providers
+
+Settings picks which API surface the proxy speaks:
+
+| Provider | Endpoint | Use for |
+| --- | --- | --- |
+| **OpenAI** | `/v1/responses` | OpenAI itself |
+| **OpenAI-compatible** | `/v1/chat/completions` | OpenRouter, vLLM, Ollama, LM Studio, Together |
+
+Both are kept because neither is a superset. Function calling is universal, so **MCP tools, custom
+tools, fan-out, ordering and the trace all work identically on either**. What is specific to the
+Responses API is the built-in **web search** tool and the model's **reasoning items** - ask for web
+search on a compatible provider and the run stops with a message saying so, rather than silently
+dropping the tool.
+
+Set the base URL alongside the provider, for example `https://openrouter.ai/api/v1`. The model
+dropdown lists whatever that endpoint offers; OpenAI's catalogue is curated, another provider's is
+listed as-is.
 
 ## The model
 
@@ -119,12 +142,19 @@ return await res.json();
 > timeout. That is fine for code you wrote on your own machine; never expose this to input you do
 > not control. Run each call in an isolated child process if that changes.
 
-The model may make several rounds of tool calls; the loop stops after 6. Each round is one
-request to the model, so a step that made five tool calls records six rounds in the trace - five
-calls plus the final answer.
+### Rounds and timeouts
 
-MCP calls are given a 5 minute timeout (the SDK's own default is 60s, short for tools that do real
-work), reset whenever the server reports progress, with a 15 minute ceiling.
+Each round is one request to the model, so a step that made five tool calls records six rounds in
+the trace - five calls plus the final answer. Two step parameters bound how far that can go:
+
+- **Rounds** (default 12) - how many times the model may come back asking for more tools.
+- **Timeout** (default 5m) - a budget for the whole step: every round plus the tools they call.
+  Enforced on the server as well as in the browser, so an abandoned run stops costing tokens.
+
+Each MCP and custom tool has its own **Timeout** too, since how long a tool needs is a property of
+the tool rather than of the step calling it. MCP defaults to 5 minutes (the SDK's own default is
+60s, short for tools that do real work), reset whenever the server reports progress, with a ceiling
+of three times the budget. Custom code defaults to 5 seconds.
 
 ## The graph is stateless
 

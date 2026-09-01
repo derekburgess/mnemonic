@@ -58,6 +58,15 @@ body {
   gap: 8px;
   min-width: 0;
 }
+
+/* A text button's height comes from its line box; an icon-only one has none, so the toolbar
+   sets the height explicitly and every control matches. */
+.toolbar button,
+.toolbar .file {
+  height: 32px;
+  padding: 0 12px;
+}
+.toolbar .icon-only { width: 32px; padding: 0; }
 .bar-right { justify-content: flex-end; }
 
 .brand {
@@ -225,6 +234,10 @@ button.tinted:hover:not(:disabled) {
   transition: opacity 0.12s ease, color 0.12s ease;
 }
 .field .copy.copied { color: var(--ok); opacity: 1; }
+
+/* Sits to the left of the copy button, clearing its 24px plus a gap. */
+.field .edit-toggle { right: 36px; }
+.field .edit-toggle.editing { color: var(--accent); opacity: 1; }
 .field:hover .copy,
 .field .copy:focus-visible { opacity: 1; }
 .field .copy:hover:not(:disabled) { color: var(--text); }
@@ -312,6 +325,8 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   user-select: text;
 }
 
+textarea.text { font-family: inherit; resize: both; }
+
 .node.output .text {
   width: 100%;
   min-width: var(--field-w);
@@ -330,7 +345,7 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: 6px;
-  padding: 5px 34px 5px 6px;
+  padding: 5px 64px 5px 6px;
   cursor: text;
   user-select: text;
 }
@@ -654,6 +669,20 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 
 .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--field-font); }
 
+/* The call list folds away: the count stays visible so a run's tool use is never hidden. */
+.calls-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  padding: 3px 4px;
+  background: none;
+  border: none;
+  color: var(--dim);
+  font-size: var(--field-font);
+}
+.calls-toggle:hover { color: var(--text); border-color: transparent; }
+
 /* One row per tool call: the name labels it, the arguments sit in their own field. */
 .call {
   display: flex;
@@ -759,6 +788,37 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
 }
 
 /* ---------- trace ---------- */
+
+/* A panel with no width of its own, for anything that does not need to be dragged wider. */
+.side-panel {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: 360px;
+  min-height: 0;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  overflow: hidden;
+  text-align: left;
+}
+.side-panel .trace-list { display: flex; flex-direction: column; gap: 10px; }
+
+.settings-actions { display: flex; align-items: center; gap: 8px; }
+
+.settings-note {
+  margin: 4px 0 0;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.settings-note code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+}
 
 /* Docked beside the canvas rather than over it, so the graph stays visible while reading. */
 .trace-panel {

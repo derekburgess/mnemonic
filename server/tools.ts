@@ -6,28 +6,38 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 /** A tool node as the browser describes it. */
 export type ToolSpec =
   | { kind: "web_search"; contextSize?: "low" | "medium" | "high"; allowedDomains?: string }
-  | { kind: "mcp"; label: string; serverUrl: string; authorization?: string; selectedTools?: string[] }
+  | {
+      kind: "mcp";
+      label: string;
+      serverUrl: string;
+      authorization?: string;
+      selectedTools?: string[];
+      timeoutSec?: number;
+    }
   | {
       kind: "custom";
       fnName: string;
       fnDescription?: string;
       fnParameters?: string;
       fnCode?: string;
+      timeoutSec?: number;
     };
 
-export const CODE_TIMEOUT_MS = 5000;
+/** Defaults when a tool does not set its own. Custom code is yours and should be quick. */
+export const DEFAULT_CODE_TIMEOUT_SEC = 5;
+export const DEFAULT_MCP_TIMEOUT_SEC = 300;
 
 /**
  * The MCP SDK defaults to a 60s request timeout, which is short for tools that do real work --
  * a 60-second packet capture or a long embedding run times out on our side and the model is
- * told the tool failed. The clock resets whenever the server reports progress, with a hard
- * ceiling so a genuinely hung tool still ends.
+ * told the tool failed. The clock resets whenever the server reports progress, with a ceiling
+ * of three times the budget so a genuinely hung tool still ends.
  */
-const MCP_CALL_OPTIONS = {
-  timeout: 300_000,
+const mcpCallOptions = (timeoutSec = DEFAULT_MCP_TIMEOUT_SEC) => ({
+  timeout: timeoutSec * 1000,
   resetTimeoutOnProgress: true,
-  maxTotalTimeout: 900_000,
-} as const;
+  maxTotalTimeout: timeoutSec * 3000,
+});
 
 /** MCP tool names are namespaced so two servers can expose the same tool name. */
 const mcpToolName = (label: string, tool: string) =>
@@ -175,7 +185,7 @@ export async function buildTools(specs: ToolSpec[]): Promise<{ tools: unknown[];
             client.callTool(
               { name: tool.name, arguments: (args ?? {}) as Record<string, unknown> },
               undefined,
-              MCP_CALL_OPTIONS,
+              mcpCallOptions(spec.timeoutSec),
             ),
           );
           return JSON.stringify(result.content ?? result);
@@ -203,7 +213,7 @@ export async function buildTools(specs: ToolSpec[]): Promise<{ tools: unknown[];
     });
 
     handlers.set(spec.fnName, async (args) => {
-      const result = await runUserCode(spec.fnCode ?? "", args);
+      const result = await runUserCode(spec.fnCode ?? "", args, spec.timeoutSec);
       return typeof result === "string" ? result : JSON.stringify(result ?? null);
     });
   }
@@ -231,16 +241,34 @@ export async function buildTools(specs: ToolSpec[]): Promise<{ tools: unknown[];
  * Runs a custom tool body with `args` in scope. node:vm is NOT a security boundary — this is
  * for code you wrote yourself on your own machine, never for untrusted input.
  */
-async function runUserCode(code: string, args: unknown): Promise<unknown> {
-  const context = vm.createContext({ args, console, fetch, URL, TextDecoder, TextEncoder });
+async function runUserCode(code: string, args: unknown, timeoutSec?: number): Promise<unknown> {
+  const budget = (timeoutSec ?? DEFAULT_CODE_TIMEOUT_SEC) * 1000;
+  // A fresh vm context has the JS built-ins but none of Node's globals, so timers and fetch
+  // have to be handed in explicitly or any async tool body fails on `setTimeout is not defined`.
+  const context = vm.createContext({
+    args,
+    console,
+    fetch,
+    URL,
+    URLSearchParams,
+    TextDecoder,
+    TextEncoder,
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+    queueMicrotask,
+    structuredClone,
+    AbortController,
+  });
   // The vm timeout only covers synchronous execution, so an async body is raced separately.
   const started = vm.runInContext(`(async () => {\n${code}\n})()`, context, {
-    timeout: CODE_TIMEOUT_MS,
+    timeout: budget,
   }) as Promise<unknown>;
 
   let timer: NodeJS.Timeout;
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`tool code exceeded ${CODE_TIMEOUT_MS}ms`)), CODE_TIMEOUT_MS);
+    timer = setTimeout(() => reject(new Error(`tool code exceeded ${budget}ms`)), budget);
   });
 
   try {
