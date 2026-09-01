@@ -1,5 +1,6 @@
 import type OpenAI from "openai";
 import type { Dispatch } from "./tools.js";
+import { resolveLinks, type ResolvedLink } from "./links.js";
 
 /**
  * How many times the model may come back asking for more tools. Agentic sequences legitimately
@@ -9,6 +10,41 @@ import type { Dispatch } from "./tools.js";
 export const DEFAULT_TOOL_ROUNDS = 12;
 
 export type ToolCallRecord = { name: string; detail?: string; urls?: string[] };
+
+export type RunFile = { name: string; mime: string; dataUrl: string };
+
+const isImage = (f: RunFile) => f.mime.startsWith("image/");
+const isPdf = (f: RunFile) => f.mime === "application/pdf" || /\.pdf$/i.test(f.name);
+
+/** Anything that is neither an image nor a PDF is inlined as text, which every model accepts. */
+function inlineText(files: RunFile[]): string {
+  return files
+    .filter((f) => !isImage(f) && !isPdf(f))
+    .map((f) => {
+      const base64 = f.dataUrl.slice(f.dataUrl.indexOf(",") + 1);
+      const text = Buffer.from(base64, "base64").toString("utf8").trim();
+      return text ? `<file name="${f.name}">\n${text}\n</file>` : "";
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/**
+ * Base64 payloads would otherwise be written to the trace database once per round. The trace
+ * keeps the shape of the request, not megabytes of the same attachment repeated.
+ */
+function redact(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.startsWith("data:") && value.length > 128
+      ? `${value.slice(0, value.indexOf(",") + 1)}…${value.length} chars elided`
+      : value;
+  }
+  if (Array.isArray(value)) return value.map(redact);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redact(v)]));
+  }
+  return value;
+}
 
 export type RunArgs = {
   client: OpenAI;
@@ -24,6 +60,8 @@ export type RunArgs = {
   maxRounds?: number;
   /** Bounds the whole step, so an abandoned run stops costing tokens here too. */
   signal?: AbortSignal;
+  files?: RunFile[];
+  links?: string[];
 };
 
 export type RunResult = {
@@ -56,6 +94,18 @@ function withDeadline<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
  * The Responses API: OpenAI's own surface. Carries the built-in web_search tool and returns
  * reasoning items, which is why it stays the default rather than being replaced.
  */
+/** Fetched pages become text appended to the input; media is referenced by URL. */
+function linkText(links: ResolvedLink[]): string {
+  return links
+    .filter((l) => l.kind === "text" || l.kind === "error")
+    .map((l) =>
+      l.kind === "error"
+        ? `<link href="${l.url}" error="${l.text}" />`
+        : `<link href="${l.url}">\n${l.text}\n</link>`,
+    )
+    .join("\n\n");
+}
+
 export async function runResponses(args: RunArgs): Promise<RunResult> {
   const { client, model, effort, input, instructions, tools, dispatch, onRound } = args;
   const maxRounds = args.maxRounds ?? DEFAULT_TOOL_ROUNDS;
@@ -72,14 +122,38 @@ export async function runResponses(args: RunArgs): Promise<RunResult> {
     const started = Date.now();
     const result = await client.responses.create(payload as never, { signal: args.signal });
     onRound({
-      request: payload,
+      request: redact(payload),
       response: { output: result.output, usage: result.usage, model: result.model },
       ms: Date.now() - started,
     });
     return result;
   };
 
-  let conversation: unknown[] = [{ role: "user", content: input }];
+  const files = args.files ?? [];
+  const links = args.links?.length ? await resolveLinks(args.links) : [];
+  const text = [input, inlineText(files), linkText(links)].filter(Boolean).join("\n\n");
+
+  const attached = files.filter((f) => isImage(f) || isPdf(f));
+  const linkedMedia = links.filter((l) => l.kind === "image" || l.kind === "pdf");
+
+  const userContent =
+    attached.length || linkedMedia.length
+      ? [
+          { type: "input_text", text },
+          ...attached.map((f) =>
+            isImage(f)
+              ? { type: "input_image", image_url: f.dataUrl, detail: "auto" }
+              : { type: "input_file", filename: f.name, file_data: f.dataUrl },
+          ),
+          ...linkedMedia.map((l) =>
+            l.kind === "image"
+              ? { type: "input_image", image_url: l.dataUrl, detail: "auto" }
+              : { type: "input_file", filename: l.name, file_data: l.dataUrl },
+          ),
+        ]
+      : text;
+
+  let conversation: unknown[] = [{ role: "user", content: userContent }];
   let response = await call({ ...base, input: conversation });
 
   const toolCalls: ToolCallRecord[] = [];
@@ -181,9 +255,29 @@ export async function runChat(args: RunArgs): Promise<RunResult> {
   const maxRounds = args.maxRounds ?? DEFAULT_TOOL_ROUNDS;
 
   const chatTools = tools.length ? asChatTools(tools) : undefined;
+  const files = args.files ?? [];
+  const links = args.links?.length ? await resolveLinks(args.links) : [];
+  const text = [input, inlineText(files), linkText(links)].filter(Boolean).join("\n\n");
+
+  const attached = files.filter((f) => isImage(f) || isPdf(f));
+  const linkedImages = links.filter((l) => l.kind === "image");
+
+  const userContent =
+    attached.length || linkedImages.length
+      ? [
+          { type: "text", text },
+          ...attached.map((f) =>
+            isImage(f)
+              ? { type: "image_url", image_url: { url: f.dataUrl } }
+              : { type: "file", file: { filename: f.name, file_data: f.dataUrl } },
+          ),
+          ...linkedImages.map((l) => ({ type: "image_url", image_url: { url: l.dataUrl } })),
+        ]
+      : text;
+
   const messages: unknown[] = [
     ...(instructions?.trim() ? [{ role: "system", content: instructions }] : []),
-    { role: "user", content: input },
+    { role: "user", content: userContent },
   ];
 
   const base = {
@@ -196,7 +290,7 @@ export async function runChat(args: RunArgs): Promise<RunResult> {
     const started = Date.now();
     const result = await client.chat.completions.create(payload as never, { signal: args.signal });
     onRound({
-      request: payload,
+      request: redact(payload),
       response: { choices: result.choices, usage: result.usage, model: result.model },
       ms: Date.now() - started,
     });

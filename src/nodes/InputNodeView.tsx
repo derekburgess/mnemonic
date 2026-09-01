@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import type { Effort, InputNode, ToolConfig } from "../types";
+import type { Attachment, Effort, InputFile, InputNode, ToolConfig } from "../types";
 import { Icon } from "../icons";
 import { uid } from "../graph";
 import { CopyButton } from "./CopyButton";
@@ -26,6 +26,39 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
   const skipped = !!data.skipped;
   const current = currentId === id;
   const { field } = useFieldWidth();
+
+  const attachments = data.attachments ?? [];
+  const attach = async (files: FileList) => {
+    const read = await Promise.all(
+      [...files].map(async (file) => ({ id: uid(), name: file.name, text: await file.text() })),
+    );
+    onChange(id, { attachments: [...attachments, ...read] as Attachment[] });
+  };
+
+  const files = data.files ?? [];
+  const attachFiles = async (picked: FileList) => {
+    const read = await Promise.all(
+      [...picked].map(
+        (file) =>
+          new Promise<InputFile>((resolve, reject) => {
+            // A data URL keeps the bytes intact for PDFs and images alike.
+            const reader = new FileReader();
+            reader.onload = () =>
+              resolve({
+                id: uid(),
+                name: file.name,
+                mime: file.type || "application/octet-stream",
+                dataUrl: String(reader.result),
+              });
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(file);
+          }),
+      ),
+    );
+    onChange(id, { files: [...files, ...read] });
+  };
+
+  const links = data.links ?? [];
 
   const tools = data.tools ?? [];
   const setTools = (next: ToolConfig[]) => onChange(id, { tools: next });
@@ -129,6 +162,37 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         </label>
       </div>
 
+      <div className="stack">
+        <label className="file nodrag attach">
+          <Icon name="upload" /> Attach skill files (.md)
+          <input
+            type="file"
+            accept=".md,.markdown,.txt,text/markdown,text/plain"
+            multiple
+            onChange={(e) => {
+              if (e.target.files?.length) void attach(e.target.files);
+              e.target.value = "";
+            }}
+          />
+        </label>
+
+        {attachments.map((file) => (
+          <div className="attachment" key={file.id} title={`${file.name} — ${file.text.length} characters`}>
+            <span className="attachment-name">{file.name}</span>
+            <button
+              className="icon tinted tint-err nodrag"
+              onClick={() =>
+                onChange(id, { attachments: attachments.filter((a) => a.id !== file.id) })
+              }
+              title={`Remove ${file.name}`}
+              aria-label={`Remove ${file.name}`}
+            >
+              <Icon name="close" size={11} />
+            </button>
+          </div>
+        ))}
+      </div>
+
       <label className="stack">
         Role
         <input
@@ -150,6 +214,68 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
           <CopyButton text={data.instructions ?? ""} title="Copy instructions" />
         </div>
       </label>
+
+      <div className="stack">
+        <label className="file nodrag attach">
+          <Icon name="upload" /> Attach files (.pdf, .txt, .png, .jpg)
+          <input
+            type="file"
+            accept=".pdf,.txt,.png,.jpg,.jpeg,application/pdf,text/plain,image/png,image/jpeg"
+            multiple
+            onChange={(e) => {
+              if (e.target.files?.length) void attachFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+        </label>
+
+        {files.map((file) => (
+          <div className="attachment" key={file.id} title={`${file.name} — ${file.mime}`}>
+            <span className="attachment-name">{file.name}</span>
+            <button
+              className="icon tinted tint-err nodrag"
+              onClick={() => onChange(id, { files: files.filter((f) => f.id !== file.id) })}
+              title={`Remove ${file.name}`}
+              aria-label={`Remove ${file.name}`}
+            >
+              <Icon name="close" size={11} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="stack">
+        <button
+          className="file nodrag attach"
+          onClick={() => onChange(id, { links: [...links, { id: uid(), url: "" }] })}
+        >
+          <Icon name="plus" /> Add links
+        </button>
+
+        {links.map((link) => (
+          <div className="attachment" key={link.id}>
+            <input
+              className="line nodrag"
+              placeholder="https://…"
+              value={link.url}
+              aria-label="Link URL"
+              onChange={(e) =>
+                onChange(id, {
+                  links: links.map((l) => (l.id === link.id ? { ...l, url: e.target.value } : l)),
+                })
+              }
+            />
+            <button
+              className="icon tinted tint-err nodrag"
+              onClick={() => onChange(id, { links: links.filter((l) => l.id !== link.id) })}
+              title="Remove link"
+              aria-label="Remove link"
+            >
+              <Icon name="close" size={11} />
+            </button>
+          </div>
+        ))}
+      </div>
 
       <label className="stack">
         Input

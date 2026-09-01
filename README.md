@@ -84,6 +84,22 @@ intact, but takes it out of play:
 Dependents of a skipped step still run — they read whatever artifacts already exist. Skipping is how
 you mute a branch, A/B a candidate, or park an expensive step without unwiring anything.
 
+### Attachments and links
+
+A step can carry three kinds of material besides its prompt:
+
+- **Attach skill files (.md)** - inlined into the *system prompt* after the instructions, as
+  standing guidance.
+- **Attach files (.pdf, .txt, .png, .jpg)** - sent with the *input*. PDFs and images go natively
+  (OpenAI extracts a PDF's text and renders its pages), anything else is decoded and inlined.
+- **Add links** - URLs fetched at run time. Pages are converted to readable text; linked images and
+  PDFs are downloaded and sent as content. A link that cannot be fetched is reported to the model
+  in place rather than failing the step.
+
+Links are fetched by the proxy rather than handed to the model as URLs, so private hosts work and
+hosts that refuse unfamiliar clients do not break. File payloads are elided from the trace, which
+keeps the request shape without writing the same megabytes once per round.
+
 ### Role and instructions
 
 `Role` and `Instructions` compose into the step's system prompt, sent as the Responses API's

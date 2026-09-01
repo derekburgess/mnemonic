@@ -15,7 +15,7 @@ import {
   type IsValidConnection,
 } from "@xyflow/react";
 
-import { fetchModels, runStep, toolSpec } from "./api";
+import { fetchGraph, fetchModels, pushGraph, runStep, toolSpec } from "./api";
 import { Icon } from "./icons";
 import { SettingsPanel } from "./SettingsPanel";
 import { TracePanel } from "./TracePanel";
@@ -169,9 +169,6 @@ function Canvas() {
     fetchModels().then(setModels);
   }, []);
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ nodes, edges }));
-  }, [nodes, edges]);
 
   const publish = useCallback(
     (snap: Snapshot) => {
@@ -181,6 +178,47 @@ function Canvas() {
     },
     [setNodes, setEdges],
   );
+
+  /*
+   * DuckDB is the store; localStorage is a write-through cache so an edit is not lost if the
+   * proxy is down, and so the canvas paints immediately on load rather than after a round trip.
+   *
+   * Saving waits for a pause in editing: dragging a node fires a change per frame.
+   */
+  const hydrated = useRef(false);
+
+  useEffect(() => {
+    fetchGraph()
+      .then(async (stored) => {
+        if (stored?.nodes?.length) {
+          publish(
+            migrateToolNodes({
+              nodes: (stored.nodes as GraphNode[]).map(migrateNode),
+              edges: stored.edges as GraphEdge[],
+            }),
+          );
+        } else if (live.current.nodes.length) {
+          // First run against the database: adopt whatever localStorage was holding.
+          await pushGraph(live.current.nodes, live.current.edges).catch(() => {});
+        }
+      })
+      .catch(() => setNotice("Could not reach the graph store; changes are cached locally only."))
+      .finally(() => {
+        hydrated.current = true;
+      });
+  }, [publish]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ nodes, edges }));
+    if (!hydrated.current) return;
+
+    const timer = setTimeout(() => {
+      pushGraph(nodes, edges).catch(() =>
+        setNotice("Could not save to the graph store; changes are cached locally only."),
+      );
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [nodes, edges]);
 
   const patchStatus = (snap: Snapshot, id: string, patch: Partial<InputData>): Snapshot => ({
     ...snap,
@@ -239,7 +277,11 @@ function Canvas() {
 
       const context = resolveContext(id, working.nodes, working.edges);
       const input = composePrompt(context, producer.data.prompt);
-      const instructions = composeSystem(producer.data.role, producer.data.instructions);
+      const instructions = composeSystem(
+        producer.data.role,
+        producer.data.instructions,
+        producer.data.attachments,
+      );
       const tools = resolveTools(producer).map(toolSpec);
 
       const count = Math.min(MAX_OUTPUTS, Math.max(1, producer.data.outputs ?? 1));
@@ -254,6 +296,8 @@ function Canvas() {
               tools,
               maxRounds: producer.data.maxRounds,
               timeoutSec: producer.data.timeoutSec,
+              files: producer.data.files?.map(({ name, mime, dataUrl }) => ({ name, mime, dataUrl })),
+              links: producer.data.links?.map((l) => l.url).filter((url) => url.trim()),
               ...(trace
                 ? {
                     trace: {
@@ -516,11 +560,7 @@ function Canvas() {
             </span>
           </div>
 
-          <div className="bar-center">
-            <button onClick={addStep} disabled={running}>
-              <Icon name="page" /> Add Step
-            </button>
-            <span className="gap" />
+          <div className="bar-right">
             {running ? (
               <button className="tinted tint-err" onClick={stopRun}>
                 <Icon name="stop" /> Stop
@@ -530,9 +570,9 @@ function Canvas() {
                 <Icon name="play" /> Run all
               </button>
             )}
-          </div>
-
-          <div className="bar-right">
+            <button onClick={addStep} disabled={running}>
+              <Icon name="page" /> Add Step
+            </button>
             <button onClick={() => setPanel((p) => (p === "trace" ? null : "trace"))}>
               <Icon name="list" /> Trace Logs
             </button>

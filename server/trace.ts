@@ -72,6 +72,15 @@ export async function db(): Promise<DuckDBConnection> {
       usage_json TEXT
     )`);
 
+  // The canvas lives here too: one row, overwritten on every autosave.
+  await conn.run(`
+    CREATE TABLE IF NOT EXISTS graph (
+      id TEXT PRIMARY KEY,
+      nodes_json TEXT,
+      edges_json TEXT,
+      updated_ms BIGINT
+    )`);
+
   connection = conn;
   return conn;
 }

@@ -38,11 +38,10 @@ body {
 
 /* ---------- toolbar ---------- */
 
-/* Three columns rather than flex spacers: the equal 1fr flanks put the centre group in the
-   middle of the toolbar, not the middle of whatever space the sides left over. */
+/* Two columns: the brand keeps the left, everything actionable sits together on the right. */
 .toolbar {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: 1fr auto;
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
@@ -51,7 +50,6 @@ body {
 }
 
 .bar-left,
-.bar-center,
 .bar-right {
   display: flex;
   align-items: center;
@@ -581,6 +579,38 @@ textarea.text { font-family: inherit; resize: both; }
 /* ---------- tool nodes ---------- */
 
 :root { --tool: #c69cf0; }
+
+/* ---------- attachments ---------- */
+
+.attach { justify-content: flex-start; height: 28px; font-size: var(--field-font); }
+
+/* Just the name (or URL) and its remove button; no surrounding chrome. */
+.attachment {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--field-font);
+}
+
+/* A link row is an editable field rather than a static name. */
+.attachment .line { flex: 1; min-width: 0; border: none; background: none; padding: 2px 0; }
+.attachment .line:focus { border: none; outline: none; }
+
+.attachment-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The button is the only visible control here, so it carries no border either. */
+.attachment .icon {
+  width: 18px;
+  height: 18px;
+  border-color: transparent;
+  background: none;
+}
+.attachment .icon:hover:not(:disabled) { border-color: transparent; }
 
 /* Tools live inside their step now: a stack of collapsible editors under the input field. */
 .tools { display: flex; flex-direction: column; gap: 6px; }

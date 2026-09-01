@@ -61,6 +61,23 @@ export function toolSpec(d: ToolConfig): Record<string, unknown> {
   };
 }
 
+export type StoredGraph = { nodes: unknown[]; edges: unknown[]; updatedMs: number } | null;
+
+export async function fetchGraph(): Promise<StoredGraph> {
+  const res = await fetch("/api/graph");
+  if (!res.ok) throw new Error(`could not load the graph (${res.status})`);
+  return res.json();
+}
+
+export async function pushGraph(nodes: unknown[], edges: unknown[]): Promise<void> {
+  const res = await fetch("/api/graph", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nodes, edges }),
+  });
+  if (!res.ok) throw new Error(`could not save the graph (${res.status})`);
+}
+
 export type Provider = "openai" | "compatible";
 
 export type PlatformSettings = {
@@ -163,6 +180,8 @@ export async function runStep(
     tools?: Record<string, unknown>[];
     maxRounds?: number;
     timeoutSec?: number;
+    files?: { name: string; mime: string; dataUrl: string }[];
+    links?: string[];
     trace?: TraceMeta;
   },
   signal?: AbortSignal,

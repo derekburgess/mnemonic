@@ -1,4 +1,12 @@
-import type { GraphEdge, GraphNode, InputNode, OutputData, OutputNode, ToolConfig } from "./types";
+import type {
+  Attachment,
+  GraphEdge,
+  GraphNode,
+  InputNode,
+  OutputData,
+  OutputNode,
+  ToolConfig,
+} from "./types";
 import { isInput, isOutput } from "./types";
 
 export const uid = () => crypto.randomUUID();
@@ -134,8 +142,20 @@ export function resolveTools(step: InputNode): ToolConfig[] {
 }
 
 /** The system prompt: the role, phrased as one, followed by the step's own instructions. */
-export function composeSystem(role?: string, instructions?: string): string | undefined {
-  const parts = [role?.trim() ? `Your role is: ${role.trim()}` : "", instructions?.trim() ?? ""];
+export function composeSystem(
+  role?: string,
+  instructions?: string,
+  attachments?: Attachment[],
+): string | undefined {
+  const documents = (attachments ?? [])
+    .filter((a) => a.text.trim())
+    .map((a) => `<document name="${a.name}">\n${a.text.trim()}\n</document>`);
+
+  const parts = [
+    role?.trim() ? `Your role is: ${role.trim()}` : "",
+    instructions?.trim() ?? "",
+    ...documents,
+  ];
   const system = parts.filter(Boolean).join("\n\n");
   return system || undefined;
 }

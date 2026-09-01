@@ -11,6 +11,12 @@ export type InputData = {
   /** Folded into the system prompt ahead of the instructions. */
   role?: string;
   instructions?: string;
+  /** Markdown documents appended to the system prompt, after the instructions. */
+  attachments?: Attachment[];
+  /** Files sent with the input: PDFs and images natively, text inlined. */
+  files?: InputFile[];
+  /** URLs fetched at run time and sent with the input. */
+  links?: { id: string; url: string }[];
   prompt: string;
   /** Capabilities this step may call. */
   tools?: ToolConfig[];
@@ -25,6 +31,12 @@ export type InputData = {
   status: NodeStatus;
   error?: string;
 };
+
+/** A markdown file attached to a step, carried into its system prompt as standing guidance. */
+export type Attachment = { id: string; name: string; text: string };
+
+/** A document or image attached to a step, sent as content alongside its input. */
+export type InputFile = { id: string; name: string; mime: string; dataUrl: string };
 
 export type ToolKind = "web_search" | "mcp" | "custom";
 

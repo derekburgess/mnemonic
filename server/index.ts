@@ -5,6 +5,7 @@ import OpenAI from "openai";
 import { buildTools, listMcpTools, type ToolSpec } from "./tools.js";
 import { deleteRun, getRun, listRuns, recordStep } from "./trace.js";
 import { readSettings, resolveCredentials, writeSettings, type Provider } from "./settings.js";
+import { loadGraph, saveGraph } from "./graphstore.js";
 import { TIMEOUT_MESSAGE, runChat, runResponses } from "./providers.js";
 
 dotenv.config();
@@ -116,7 +117,7 @@ app.post("/api/mcp/tools", async (req, res) => {
 });
 
 app.post("/api/run", async (req, res) => {
-  const { model, effort, input, instructions, tools: toolSpecs, maxRounds, timeoutSec, trace } =
+  const { model, effort, input, instructions, tools: toolSpecs, maxRounds, timeoutSec, files, links, trace } =
     req.body ?? {};
   if (typeof model !== "string" || typeof input !== "string" || !input.trim()) {
     return res.status(400).json({ error: "model and a non-empty input are required" });
@@ -179,6 +180,8 @@ app.post("/api/run", async (req, res) => {
       tools,
       dispatch,
       maxRounds: typeof maxRounds === "number" ? maxRounds : undefined,
+      files: Array.isArray(files) ? files : undefined,
+      links: Array.isArray(links) ? links.filter((l: unknown) => typeof l === "string" && l.trim()) : undefined,
       onRound: (round) => rounds.push(round),
     });
 
@@ -210,6 +213,26 @@ app.post("/api/run", async (req, res) => {
     res.status(e.status && e.status >= 400 && e.status < 600 ? e.status : 500).json({
       error: e.message ?? "request failed",
     });
+  }
+});
+
+app.get("/api/graph", async (_req, res) => {
+  try {
+    res.json(await loadGraph());
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.put("/api/graph", async (req, res) => {
+  const { nodes, edges } = req.body ?? {};
+  if (!Array.isArray(nodes) || !Array.isArray(edges)) {
+    return res.status(400).json({ error: "nodes and edges arrays are required" });
+  }
+  try {
+    res.json({ updatedMs: await saveGraph(nodes, edges) });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
   }
 });
 
