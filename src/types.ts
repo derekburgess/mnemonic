@@ -11,6 +11,10 @@ export type InputData = {
   /** Folded into the system prompt ahead of the instructions. */
   role?: string;
   instructions?: string;
+  /** Run this step inside an ephemeral container instead of in the proxy's own process. */
+  sandbox?: boolean;
+  /** Folders on this machine the step lends the model, reachable with the workspace tools. */
+  workspaces?: Workspace[];
   /** Markdown documents appended to the system prompt, after the instructions. */
   attachments?: Attachment[];
   /** Files sent with the input: PDFs and images natively, text inlined. */
@@ -31,6 +35,12 @@ export type InputData = {
   status: NodeStatus;
   error?: string;
 };
+
+/**
+ * A folder on this machine, held as an absolute path. The browser cannot report a real path
+ * for a folder you pick, so the path comes from the proxy's own picker — or is simply typed.
+ */
+export type Workspace = { id: string; path: string };
 
 /** A markdown file attached to a step, carried into its system prompt as standing guidance. */
 export type Attachment = { id: string; name: string; text: string };
@@ -65,6 +75,8 @@ export type ToolConfig = {
 export type ToolCallRecord = { name: string; detail?: string; urls?: string[] };
 
 export type OutputData = {
+  execId?: string;
+  runId?: string;
   /** Which input node produced this artifact. Outputs are immutable records of one run. */
   sourceId: string;
   sourceLabel: string;

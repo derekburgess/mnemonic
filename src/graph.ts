@@ -172,7 +172,11 @@ export function commitRun(
   edges: GraphEdge[],
   producer: InputNode,
   results: RunResult[],
+  options: { append?: boolean } = {},
 ): { nodes: GraphNode[]; edges: GraphEdge[]; outputIds: string[] } {
+  const existing = new Map(nodes.filter(isOutput).filter((n) => n.data.execId).map((n) => [n.data.execId, n.id]));
+  const unique = results.filter((result, i) => !result.execId || (!existing.has(result.execId) && results.findIndex((r) => r.execId === result.execId) === i));
+  if (!unique.length) return { nodes, edges, outputIds: results.map((r) => existing.get(r.execId)!).filter(Boolean) };
   const map = byId(nodes);
 
   const activeOutputIds = new Set(
@@ -197,7 +201,7 @@ export function commitRun(
   const beside = { x: producer.position.x + boxOf(producer).w + GAP, y: producer.position.y };
   const createdAt = Date.now();
 
-  const outputs: OutputNode[] = results.map((result) => {
+  const outputs: OutputNode[] = unique.map((result) => {
     const position = freeSpot(beside, taken);
     taken.push({ x: position.x, y: position.y, w: NODE_SIZE.width, h: NODE_SIZE.height });
     return {
@@ -212,9 +216,9 @@ export function commitRun(
       },
     };
   });
-  const stale = new Set([...inherited, ...prewired].map((e) => e.id));
+  const stale = new Set([...(options.append ? [] : inherited), ...prewired].map((e) => e.id));
   const kept = edges.filter(
-    (e) => !stale.has(e.id) && !(e.source === producer.id && activeOutputIds.has(e.target)),
+    (e) => !stale.has(e.id) && !(!options.append && e.source === producer.id && activeOutputIds.has(e.target)),
   );
 
   // Every sibling of a fan-out feeds the same consumers, so a downstream step sees all N
@@ -232,6 +236,6 @@ export function commitRun(
       ...outputs.map((o) => ({ id: uid(), source: producer.id, target: o.id })),
       ...migrated,
     ],
-    outputIds: outputs.map((o) => o.id),
+    outputIds: results.map((r) => existing.get(r.execId) ?? outputs.find((o) => r.execId ? o.data.execId === r.execId : o.data.text === r.text)?.id).filter((id): id is string => !!id),
   };
 }

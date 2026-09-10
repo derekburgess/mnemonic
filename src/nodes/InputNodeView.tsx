@@ -1,7 +1,12 @@
+import { useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import type { Attachment, Effort, InputFile, InputNode, ToolConfig } from "../types";
+import type { Attachment, Effort, InputFile, InputNode, ToolConfig, Workspace } from "../types";
 import { Icon } from "../icons";
+import { pickFolderNatively, resolveFolder } from "../api";
+import { pickDirectory } from "../pickDirectory";
 import { uid } from "../graph";
+import { SandboxToggle } from "./SandboxToggle";
+import { WorkspaceRow } from "./WorkspaceRow";
 import { CopyButton } from "./CopyButton";
 import { DeleteButton } from "./DeleteButton";
 import { SkipToggle } from "./SkipToggle";
@@ -26,6 +31,81 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
   const skipped = !!data.skipped;
   const current = currentId === id;
   const { field } = useFieldWidth();
+  /** Rows waiting on the proxy to locate the folder the dialog just returned. */
+  const [locating, setLocating] = useState<string[]>([]);
+  /** Rows whose lookup was not conclusive, keyed by row id. */
+  const [notes, setNotes] = useState<Record<string, string>>({});
+
+  const workspaces = data.workspaces ?? [];
+  const setWorkspaces = (next: Workspace[]) => onChange(id, { workspaces: next });
+  // Resolved against current data rather than this render's: the dialog and the lookup after
+  // it both settle long after the click that opened them.
+  const patchWorkspace = (wsId: string, path: string) =>
+    onChange(id, (d) => ({
+      workspaces: (d.workspaces ?? []).map((w) => (w.id === wsId ? { ...w, path } : w)),
+    }));
+
+  const setNote = (wsId: string, note: string) =>
+    setNotes((all) => ({ ...all, [wsId]: note }));
+
+  /**
+   * Opens a folder chooser and fills the row with the folder that came back.
+   *
+   * The desktop's own chooser is asked first, through the proxy: it is the only route that
+   * yields a real path, and it is the same dialog in every browser. Dismissing it changes
+   * nothing, so a fresh row is left empty and can still be typed into.
+   */
+  const browse = async (wsId: string) => {
+    setNote(wsId, "");
+    setLocating((ids) => [...ids, wsId]);
+    try {
+      const native = await pickFolderNatively(workspaces.find((w) => w.id === wsId)?.path);
+      if (native.path) return patchWorkspace(wsId, native.path);
+      if (!native.unavailable) return; // dismissed
+      await browseInBrowser(wsId);
+    } catch {
+      await browseInBrowser(wsId);
+    } finally {
+      setLocating((ids) => ids.filter((i) => i !== wsId));
+    }
+  };
+
+  /**
+   * The fallback, for a proxy with no desktop of its own. The browser's picker never says where
+   * the folder is, so its name and contents go to the proxy to be matched against the real
+   * filesystem — a guess, and labelled as one.
+   */
+  const browseInBrowser = async (wsId: string) => {
+    const picked = await pickDirectory();
+    if (!picked) return;
+
+    // The name is the one thing known for certain, so it goes in immediately and the located
+    // path replaces it a moment later.
+    patchWorkspace(wsId, picked.name);
+    try {
+      const matches = await resolveFolder(picked.name, picked.entries);
+      const [best, second] = matches;
+      if (best) patchWorkspace(wsId, best.path);
+
+      // A tie means the contents could not tell these apart, so the path below is a real
+      // folder that may still be the wrong one. Say so rather than let it read as settled.
+      if (!best) {
+        setNote(wsId, `Could not find "${picked.name}" on this machine. Type its path.`);
+      } else if (second && second.score === best.score) {
+        setNote(wsId, `${matches.length} folders named "${picked.name}" match — check this is the right one.`);
+      }
+    } catch {
+      setNote(wsId, `Could not look up "${picked.name}". Type its path.`);
+    }
+  };
+
+  // The row is created before the dialog opens, so dismissing it still leaves a field behind
+  // rather than undoing the click.
+  const addWorkspace = () => {
+    const ws: Workspace = { id: uid(), path: "" };
+    setWorkspaces([...workspaces, ws]);
+    void browse(ws.id);
+  };
 
   const attachments = data.attachments ?? [];
   const attach = async (files: FileList) => {
@@ -160,6 +240,34 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
             ))}
           </select>
         </label>
+      </div>
+
+      <SandboxToggle on={!!data.sandbox} onChange={(v) => onChange(id, { sandbox: v })} />
+
+      <div className="stack">
+        <button
+          className="file nodrag attach"
+          onClick={addWorkspace}
+          title="Opens your desktop's folder chooser"
+        >
+          <Icon name="folder" /> Add workspace
+        </button>
+
+        {workspaces.map((ws) => (
+          <WorkspaceRow
+            key={ws.id}
+            path={ws.path}
+            busy={locating.includes(ws.id)}
+            note={notes[ws.id] || undefined}
+            onChange={(path) => {
+              // Editing the path by hand answers whatever the lookup was unsure about.
+              patchWorkspace(ws.id, path);
+              setNote(ws.id, "");
+            }}
+            onBrowse={() => void browse(ws.id)}
+            onRemove={() => setWorkspaces(workspaces.filter((w) => w.id !== ws.id))}
+          />
+        ))}
       </div>
 
       <div className="stack">

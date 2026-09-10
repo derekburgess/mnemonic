@@ -1,3 +1,6 @@
+import { GraphSync, type SaveState } from "./graphSync";
+import { rememberExecutions, pendingExecutions, forgetExecutions, cancelPending } from "./pendingExecutions";
+import { reportTraceEvent } from "./traceEvents";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
@@ -15,7 +18,7 @@ import {
   type IsValidConnection,
 } from "@xyflow/react";
 
-import { fetchGraph, fetchModels, pushGraph, runStep, toolSpec } from "./api";
+import { fetchModels, runStep, toolSpec, waitForExecution, cancelExecution, type TraceStep } from "./api";
 import { Icon } from "./icons";
 import { SettingsPanel } from "./SettingsPanel";
 import { TracePanel } from "./TracePanel";
@@ -148,6 +151,7 @@ function Canvas() {
   const steppedRef = useRef<string[]>([]);
   const abort = useRef<AbortController | null>(null);
   const [running, setRunning] = useState(false);
+  const pendingAtMount = useRef(pendingExecutions());
   const [notice, setNotice] = useState<string | null>(null);
   // One side panel at a time; the canvas keeps the rest of the width.
   const [panel, setPanel] = useState<"trace" | "settings" | null>(null);
@@ -170,55 +174,25 @@ function Canvas() {
   }, []);
 
 
+  const sync = useRef<GraphSync | null>(null);
   const publish = useCallback(
     (snap: Snapshot) => {
       live.current = snap;
+      sync.current?.update(snap);
       setNodes(snap.nodes);
       setEdges(snap.edges);
     },
     [setNodes, setEdges],
   );
 
-  /*
-   * DuckDB is the store; localStorage is a write-through cache so an edit is not lost if the
-   * proxy is down, and so the canvas paints immediately on load rather than after a round trip.
-   *
-   * Saving waits for a pause in editing: dragging a node fires a change per frame.
-   */
-  const hydrated = useRef(false);
-
+  const [saveState, setSaveState] = useState<SaveState>({ label: "Checking", ready: false });
   useEffect(() => {
-    fetchGraph()
-      .then(async (stored) => {
-        if (stored?.nodes?.length) {
-          publish(
-            migrateToolNodes({
-              nodes: (stored.nodes as GraphNode[]).map(migrateNode),
-              edges: stored.edges as GraphEdge[],
-            }),
-          );
-        } else if (live.current.nodes.length) {
-          // First run against the database: adopt whatever localStorage was holding.
-          await pushGraph(live.current.nodes, live.current.edges).catch(() => {});
-        }
-      })
-      .catch(() => setNotice("Could not reach the graph store; changes are cached locally only."))
-      .finally(() => {
-        hydrated.current = true;
-      });
+    const writer = new GraphSync(live.current, (snapshot) => publish(migrateToolNodes({ ...snapshot, nodes: snapshot.nodes.map(migrateNode) })), setSaveState);
+    sync.current = writer;
+    void writer.start();
+    return () => writer.stop();
   }, [publish]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ nodes, edges }));
-    if (!hydrated.current) return;
-
-    const timer = setTimeout(() => {
-      pushGraph(nodes, edges).catch(() =>
-        setNotice("Could not save to the graph store; changes are cached locally only."),
-      );
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [nodes, edges]);
+  useEffect(() => { sync.current?.update({ nodes, edges }); }, [nodes, edges]);
 
   const patchStatus = (snap: Snapshot, id: string, patch: Partial<InputData>): Snapshot => ({
     ...snap,
@@ -226,9 +200,13 @@ function Canvas() {
   });
 
   const updateInput = useCallback(
-    (id: string, patch: Partial<InputData>) => {
+    (id: string, patch: Partial<InputData> | ((data: InputData) => Partial<InputData>)) => {
       setNodes((current) =>
-        current.map((n) => (n.id === id && isInput(n) ? { ...n, data: { ...n.data, ...patch } } : n)),
+        current.map((n) =>
+          n.id === id && isInput(n)
+            ? { ...n, data: { ...n.data, ...(typeof patch === "function" ? patch(n.data) : patch) } }
+            : n,
+        ),
       );
     },
     [setNodes],
@@ -285,8 +263,12 @@ function Canvas() {
       const tools = resolveTools(producer).map(toolSpec);
 
       const count = Math.min(MAX_OUTPUTS, Math.max(1, producer.data.outputs ?? 1));
+      const executions = Array.from({ length: count }, () => ({ ...(trace ?? { runId: uid(), kind: "step" as const, seq: 0 }), execId: uid() }));
+      const group = uid();
+      rememberExecutions(executions.map((execution) => ({ ...execution, nodeId: id, label: producer.data.label, effort: producer.data.effort, group,
+        deadline: Date.now() + ((producer.data.timeoutSec || 300) + (producer.data.sandbox ? 720 : 60)) * 1000 })));
       const settled = await Promise.allSettled(
-        Array.from({ length: count }, () =>
+        executions.map((execution) =>
           runStep(
             {
               model: producer.data.model,
@@ -298,11 +280,12 @@ function Canvas() {
               timeoutSec: producer.data.timeoutSec,
               files: producer.data.files?.map(({ name, mime, dataUrl }) => ({ name, mime, dataUrl })),
               links: producer.data.links?.map((l) => l.url).filter((url) => url.trim()),
-              ...(trace
+              workspaces: producer.data.workspaces?.map((w) => w.path).filter((p) => p.trim()),
+              sandbox: producer.data.sandbox,
+              ...(execution
                 ? {
                     trace: {
-                      ...trace,
-                      execId: uid(),
+                      ...execution,
                       nodeId: id,
                       label: producer.data.label,
                       context,
@@ -315,41 +298,120 @@ function Canvas() {
         ),
       );
 
+      const successfulExecutions = executions.filter((_, i) => settled[i].status === "fulfilled");
+      let committedIds: string[] = [];
+      working = live.current;
       const done = settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
       const failed = settled.flatMap((r) => (r.status === "rejected" ? [r.reason as Error] : []));
 
       const cancelled = failed.some((f) => f.message === "cancelled");
       if (cancelled) {
+        successfulExecutions.forEach((execution) => reportTraceEvent(execution, "delivery.cancelled", { reason: "fan-out cancelled before graph commit" }));
         working = patchStatus(working, id, { status: "idle", error: undefined });
       } else if (!done.length) {
         working = patchStatus(working, id, { status: "error", error: failed[0]?.message ?? "run failed" });
       } else {
-        const committed = commitRun(
-          working.nodes,
-          working.edges,
-          producer,
-          done.map((result) => ({
-            model: result.model,
-            effort: producer.data.effort,
-            text: result.text,
-            usage: result.usage,
-            toolCalls: result.toolCalls,
-          })),
-        );
-        working = patchStatus({ nodes: committed.nodes, edges: committed.edges }, id, {
-          status: "done",
-          // A partial fan-out still commits what succeeded, but says what did not.
-          error: failed.length
-            ? `${failed.length} of ${count} generations failed: ${failed[0].message}`
-            : undefined,
-        });
+        try {
+          const committed = commitRun(
+            working.nodes,
+            working.edges,
+            producer,
+            done.map((result, i) => ({
+              execId: successfulExecutions[i]?.execId,
+              runId: successfulExecutions[i]?.runId,
+              model: result.model,
+              effort: producer.data.effort,
+              text: result.text,
+              usage: result.usage,
+              toolCalls: result.toolCalls,
+            })),
+          );
+          committedIds = committed.outputIds;
+          working = patchStatus({ nodes: committed.nodes, edges: committed.edges }, id, {
+            status: "done",
+            // A partial fan-out still commits what succeeded, but says what did not.
+            error: failed.length
+              ? `${failed.length} of ${count} generations failed: ${failed[0].message}`
+              : undefined,
+          });
+        } catch (err) {
+          successfulExecutions.forEach((execution) => reportTraceEvent(execution, "graph.failed", { error: (err as Error).message }));
+          throw err;
+        }
       }
 
-      publish(working);
+      try { publish(working); }
+      catch (err) {
+        successfulExecutions.forEach((execution) => reportTraceEvent(execution, "graph.failed", { error: (err as Error).message }));
+        throw err;
+      }
+      // Cache outputs before removing recovery records, so refresh cannot lose the handoff.
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(working));
+      committedIds.forEach((outputId, i) => reportTraceEvent(successfulExecutions[i], "graph.committed", { outputId }));
+      if (cancelled) forgetExecutions(executions.map((e) => e.execId));
+      else forgetExecutions(executions.filter((_, i) => settled[i].status === "fulfilled" || (settled[i] as PromiseRejectedResult).reason?.terminal).map((e) => e.execId));
       return working;
     },
     [publish],
   );
+
+  const addSavedOutput = useCallback(async (step: TraceStep) => {
+    if (step.status !== "ok") throw new Error("This execution has no completed output.");
+    if (live.current.nodes.some((n) => isOutput(n) && n.data.execId === step.execId)) return;
+    const producer = live.current.nodes.find((n) => n.id === step.nodeId && isInput(n)) as InputNode | undefined;
+    if (!producer) throw new Error("The source step is no longer on this graph.");
+    const committed = commitRun(live.current.nodes, live.current.edges, producer, [{ execId: step.execId, runId: step.runId,
+      model: step.servedModel ?? step.requestedModel, effort: step.effort as InputData["effort"], text: step.outputText ?? "",
+      usage: step.usage ?? undefined, toolCalls: step.toolCalls ?? undefined }], { append: true });
+    publish({ nodes: committed.nodes, edges: committed.edges });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(live.current));
+    forgetExecutions([step.execId]);
+    reportTraceEvent(step, "graph.committed", { outputId: committed.outputIds[0], recovered: true });
+  }, [publish]);
+
+  useEffect(() => {
+    if (!saveState.ready || saveState.label === "Conflict") return;
+    const pending = pendingAtMount.current.filter((entry) => !entry.cancelled);
+    if (!pending.length) return;
+    let stopped = false;
+    const controller = new AbortController();
+    abort.current = controller;
+    setRunning(true);
+    const recover = async () => {
+      const groups = [...new Set(pending.map((entry) => entry.group))];
+      for (const group of groups) {
+        const entries = pending.filter((entry) => entry.group === group);
+        const settled = await Promise.allSettled(entries.map(async (entry) => {
+          if (live.current.nodes.some((n) => isOutput(n) && n.data.execId === entry.execId)) return null;
+          reportTraceEvent(entry, "delivery.recovering", { afterRefresh: true });
+          const result = await waitForExecution(entry, { signal: controller.signal, deadline: Math.max(entry.deadline, Date.now() + 15_000) });
+          return { ...result, execId: entry.execId, runId: entry.runId, effort: entry.effort };
+        }));
+        if (stopped) return;
+        const results = settled.flatMap((s) => s.status === "fulfilled" && s.value ? [s.value] : []);
+        const failures = settled.filter((s) => s.status === "rejected");
+        forgetExecutions(entries.filter((_, i) => settled[i].status === "rejected" && (settled[i] as PromiseRejectedResult).reason?.terminal).map((e) => e.execId));
+        const producer = live.current.nodes.find((n) => n.id === entries[0].nodeId && isInput(n)) as InputNode | undefined;
+        if (producer && results.length && !controller.signal.aborted) {
+          const committed = commitRun(live.current.nodes, live.current.edges, producer, results, { append: true });
+          publish(patchStatus({ nodes: committed.nodes, edges: committed.edges }, producer.id, { status: "done",
+            error: failures.length ? `${failures.length} executions failed; inspect Trace Logs.` : undefined }));
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(live.current));
+          results.forEach((result, i) => reportTraceEvent(result, "graph.committed", { outputId: committed.outputIds[i], recovered: true }));
+          forgetExecutions(results.map((r) => r.execId));
+        } else if (producer && failures.length) {
+          publish(patchStatus(live.current, producer.id, { status: controller.signal.aborted ? "idle" : "error", error: controller.signal.aborted ? undefined : "Could not recover every output. Inspect Trace Logs." }));
+        }
+        forgetExecutions(entries.filter((entry) => live.current.nodes.some((n) => isOutput(n) && n.data.execId === entry.execId)).map((e) => e.execId));
+      }
+      if (!stopped) { pendingAtMount.current = []; setRunning(false); }
+    };
+    void recover().catch((err) => { if (!stopped) { setNotice((err as Error).message); setRunning(false); } });
+    return () => { stopped = true; controller.abort(); };
+    // Run recovery once hydration resolves, not on each save/status change.
+  }, [saveState.ready, saveState.label === "Conflict", publish]);
+
+
 
   const runOne = useCallback(
     async (id: string) => {
@@ -375,8 +437,8 @@ function Canvas() {
    * on to the next step, and clearing it would read as "not aborted".
    */
   const stopRun = useCallback(() => {
+    cancelPending().forEach((entry) => void cancelExecution(entry));
     abort.current?.abort();
-    setRunning(false);
     setNotice(null);
   }, []);
 
@@ -602,6 +664,13 @@ function Canvas() {
           </div>
         </header>
 
+        <div className="save-status" role="status" title={saveState.error}>
+          {saveState.label}
+          {saveState.label === "Conflict" && <><span> — {saveState.error}</span>
+            <button onClick={() => void sync.current?.resolve("local")}>Keep local edits</button>
+            <button onClick={() => void sync.current?.resolve("remote")}>Load saved graph</button></>}
+        </div>
+
         {notice && (
           <div className="notice" onClick={() => setNotice(null)}>
             {notice}
@@ -638,7 +707,7 @@ function Canvas() {
             </ReactFlow>
           </div>
 
-          {panel === "trace" && <TracePanel onClose={() => setPanel(null)} />}
+          {panel === "trace" && <TracePanel onClose={() => setPanel(null)} onRecover={addSavedOutput} outputExecIds={nodes.filter(isOutput).map((n) => n.data.execId).filter((id): id is string => !!id)} />}
           {panel === "settings" && <SettingsPanel onClose={() => setPanel(null)} />}
         </div>
       </div>

@@ -478,6 +478,25 @@ textarea.text { font-family: inherit; resize: both; }
   background: var(--warn);
 }
 
+/* The sandbox switch is the same control as skip, but affirmative: it turns something on
+   rather than taking a node out of play, so it reads in the accent rather than the warning. */
+.skip.sandbox:hover .track { border-color: var(--accent); }
+.skip.sandbox input:checked ~ .track {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  border-color: var(--accent);
+}
+.skip.sandbox input:checked ~ .track::after { background: var(--accent); }
+.skip.sandbox input:disabled ~ .track { opacity: 0.4; cursor: not-allowed; }
+
+.sandbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--dim);
+}
+.sandbox-row .skip.on + span { color: var(--accent); }
+
 /* A skipped node stays legible but visibly out of play. */
 .node.skipped { opacity: 0.55; }
 .node.skipped:hover { opacity: 0.8; }
@@ -611,6 +630,23 @@ textarea.text { font-family: inherit; resize: both; }
   background: none;
 }
 .attachment .icon:hover:not(:disabled) { border-color: transparent; }
+
+/* .icon hovers red, which is the remove button's affordance. Choosing a folder is not
+   destructive, so it takes the accent instead — same distinction .add-tool makes. */
+.attachment .icon.browse:hover:not(:disabled) { color: var(--accent); }
+
+/* The browser cannot say where a chosen folder is, so a workspace path is the proxy's best
+   answer rather than a certainty. This says whether it landed on a real folder. */
+.ws-mark { flex: none; font-size: 9px; line-height: 1; }
+.ws-mark.ok { color: var(--ok); }
+.ws-mark.bad { color: var(--warn); }
+
+.ws-note {
+  margin: 0 0 2px 2px;
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--warn);
+}
 
 /* Tools live inside their step now: a stack of collapsible editors under the input field. */
 .tools { display: flex; flex-direction: column; gap: 6px; }
@@ -1025,3 +1061,6 @@ body.resizing-col { cursor: col-resize; user-select: none; }
   background: var(--err-soft);
   border-color: var(--err);
 }
+
+.save-status { display: flex; align-items: center; gap: 10px; padding: 6px 18px; color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--border); }
+.trace-overview { padding: 10px 0; }

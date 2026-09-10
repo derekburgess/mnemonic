@@ -25,3 +25,7 @@ dist-ssr
 
 .env
 data/
+
+# Browser test artifacts
+/test-results/
+/playwright-report/

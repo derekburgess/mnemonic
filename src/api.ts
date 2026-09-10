@@ -1,4 +1,7 @@
+import { reportTraceEvent } from "./traceEvents";
+import type { TraceEvent } from "../server/events";
 import type { Effort, ToolCallRecord, ToolConfig } from "./types";
+import type { ContainerTrace } from "../server/containerTrace";
 
 const FALLBACK_MODELS = ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4o", "gpt-4o-mini"];
 
@@ -61,21 +64,85 @@ export function toolSpec(d: ToolConfig): Record<string, unknown> {
   };
 }
 
+export type SandboxStatus = { available: boolean; runtime?: string; version?: string; reason?: string };
+
+/** Whether the proxy could run a step in a container, so the toggle can say why not. */
+export async function fetchSandboxStatus(): Promise<SandboxStatus> {
+  try {
+    const res = await fetch("/api/sandbox");
+    if (!res.ok) throw new Error(String(res.status));
+    return await res.json();
+  } catch {
+    return { available: false, reason: "Could not reach the proxy to ask about containers." };
+  }
+}
+
+export type NativePick = { path?: string; cancelled?: boolean; unavailable?: boolean };
+
+/**
+ * Opens the desktop's folder chooser through the proxy. This is the only route that yields a
+ * real absolute path; everything else is inference.
+ */
+export async function pickFolderNatively(start?: string): Promise<NativePick> {
+  const res = await fetch("/api/fs/pick", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ start }),
+  });
+  if (res.status === 501) return { unavailable: true };
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `could not open a folder chooser (${res.status})`);
+  return body;
+}
+
+export type FolderMatch = { path: string; score: number };
+
+/**
+ * Ask the proxy where a folder the OS dialog just chose actually lives. The browser only ever
+ * learns the folder's name and what is directly inside it, so that is what gets sent.
+ */
+export async function resolveFolder(name: string, entries: string[]): Promise<FolderMatch[]> {
+  const res = await fetch("/api/fs/resolve", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, entries }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `could not locate that folder (${res.status})`);
+  return body.matches ?? [];
+}
+
+export type PathCheck = { exists: boolean; dir: boolean; suggestions: string[] };
+
+/**
+ * Whether a typed or resolved path is really a folder on the machine running the proxy, and
+ * what it could be completed to. One request, because the field asks for both together.
+ */
+export async function checkPath(path: string): Promise<PathCheck> {
+  const res = await fetch(`/api/fs/check?path=${encodeURIComponent(path)}`);
+  if (!res.ok) return { exists: false, dir: false, suggestions: [] };
+  const body = await res.json();
+  return { exists: !!body.exists, dir: !!body.dir, suggestions: body.suggestions ?? [] };
+}
+
 export type StoredGraph = { nodes: unknown[]; edges: unknown[]; updatedMs: number } | null;
 
 export async function fetchGraph(): Promise<StoredGraph> {
-  const res = await fetch("/api/graph");
+  const res = await fetch("/api/graph", { signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`could not load the graph (${res.status})`);
   return res.json();
 }
 
-export async function pushGraph(nodes: unknown[], edges: unknown[]): Promise<void> {
+export async function pushGraph(nodes: unknown[], edges: unknown[], expectedRevision: number | null): Promise<number> {
   const res = await fetch("/api/graph", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ nodes, edges }),
+    body: JSON.stringify({ nodes, edges, expectedRevision }),
+    signal: AbortSignal.timeout(10_000),
   });
-  if (!res.ok) throw new Error(`could not save the graph (${res.status})`);
+  const body = await res.json();
+  if (!res.ok) throw Object.assign(new Error(body.error ?? `could not save the graph (${res.status})`), { status: res.status });
+  return body.updatedMs;
 }
 
 export type Provider = "openai" | "compatible";
@@ -110,6 +177,7 @@ export async function saveSettings(patch: {
 }
 
 export type TraceMeta = {
+  clientSentMs?: number;
   runId: string;
   execId: string;
   kind: "run" | "next" | "step";
@@ -120,6 +188,7 @@ export type TraceMeta = {
 };
 
 export type TraceRun = {
+  running?: number;
   runId: string;
   kind: string;
   startedMs: number;
@@ -130,6 +199,10 @@ export type TraceRun = {
 };
 
 export type TraceStep = {
+  runId: string;
+  events: TraceEvent[];
+  delivery: string;
+  container: ContainerTrace | null;
   execId: string;
   seq: number;
   nodeId: string;
@@ -138,7 +211,7 @@ export type TraceStep = {
   servedModel: string | null;
   effort: string;
   startedMs: number;
-  finishedMs: number;
+  finishedMs: number | null;
   status: string;
   error: string | null;
   systemPrompt: string | null;
@@ -149,7 +222,29 @@ export type TraceStep = {
   toolCalls: ToolCallRecord[] | null;
   outputText: string | null;
   usage: { input?: number; output?: number } | null;
+  params: { maxRounds: number | null; timeoutSec: number | null; deliveryTimeoutSec?: number } | null;
+  files: { name: string; mime: string; bytes: number }[] | null;
+  links: { url: string; kind: string; note?: string }[] | null;
 };
+
+export type StepResult = {
+  status: string;
+  error: string | null;
+  model: string;
+  text: string;
+  usage?: { input?: number; output?: number };
+  toolCalls?: ToolCallRecord[];
+};
+
+/** One step execution's result, without the rounds — small enough to poll while waiting. */
+export async function fetchStepResult(runId: string, execId: string, signal?: AbortSignal): Promise<StepResult | null> {
+  const res = await fetch(
+    `/api/trace/result/${encodeURIComponent(runId)}/${encodeURIComponent(execId)}`,
+    { signal },
+  );
+  if (!res.ok) throw new Error(`could not read the step result (${res.status})`);
+  return res.json();
+}
 
 export async function fetchTraceRuns(): Promise<TraceRun[]> {
   const res = await fetch("/api/trace/runs");
@@ -182,34 +277,95 @@ export async function runStep(
     timeoutSec?: number;
     files?: { name: string; mime: string; dataUrl: string }[];
     links?: string[];
+    workspaces?: string[];
+    sandbox?: boolean;
     trace?: TraceMeta;
   },
   signal?: AbortSignal,
 ): Promise<RunResponse> {
-  // Without a deadline a hung request would leave the UI stuck in its running state forever.
-  const budgetSec = args.timeoutSec ?? DEFAULT_STEP_TIMEOUT_SEC;
-  const timeout = AbortSignal.timeout(budgetSec * 1000);
-  const merged = signal ? AbortSignal.any([signal, timeout]) : timeout;
-
-  let res: Response;
+  const trace = args.trace ?? { runId: crypto.randomUUID(), execId: crypto.randomUUID(), kind: "step" as const,
+    seq: 0, nodeId: "", label: "", context: [] };
+  const budget = args.timeoutSec && args.timeoutSec > 0 ? args.timeoutSec : DEFAULT_STEP_TIMEOUT_SEC;
+  const deadline = Date.now() + (budget + (args.sandbox ? 720 : 60)) * 1000;
+  const cancel = () => { reportTraceEvent(trace, "delivery.cancelled"); void cancelExecution(trace); };
+  if (signal?.aborted) throw new Error("cancelled");
+  signal?.addEventListener("abort", cancel, { once: true });
   try {
-    res = await fetch("/api/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(args),
-      signal: merged,
-    });
-  } catch (err) {
-    if (signal?.aborted) throw new Error("cancelled");
-    if ((err as Error).name === "TimeoutError") {
-      throw new Error(
-        `The step hit its ${budgetSec}s timeout. Raise "Timeout" if it legitimately takes longer.`,
-      );
+    // Retrying admission with the same identity cannot execute the model twice.
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const response = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...args, trace: { ...trace, clientSentMs: Date.now() } }), signal: AbortSignal.timeout(15_000) });
+        const body = await response.json();
+        if (!response.ok) throw Object.assign(new Error(body.error ?? `request failed (${response.status})`), { authoritative: true, terminal: true });
+        if (response.status !== 202 || body.execId !== trace.execId || body.runId !== trace.runId) throw new Error("Invalid execution acknowledgement");
+        reportTraceEvent(trace, "delivery.headers", { status: 202, attempt });
+        break;
+      } catch (err) {
+        if ((err as { authoritative?: boolean }).authoritative) throw err;
+        reportTraceEvent(trace, "delivery.failed", { phase: "admission", attempt, error: (err as Error).message });
+        if (signal?.aborted) break;
+        if (attempt < 3) await pause(500, signal);
+      }
     }
-    throw err;
-  }
+    if (signal?.aborted) { await cancelExecution(trace); throw new Error("cancelled"); }
+    return await waitForExecution(trace, { deadline, signal });
+  } finally { signal?.removeEventListener("abort", cancel); }
+}
 
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error ?? `request failed (${res.status})`);
-  return body;
+export async function cancelExecution(trace: { runId: string; execId: string }): Promise<void> {
+  try { await fetch(`/api/executions/${encodeURIComponent(trace.runId)}/${encodeURIComponent(trace.execId)}/cancel`,
+    { method: "POST", signal: AbortSignal.timeout(5000) }); } catch { /* Recovery will still show the server's state. */ }
+}
+
+export async function fetchExecution(trace: {runId: string; execId: string}, signal?: AbortSignal): Promise<StepResult> {
+  const res = await fetch(`/api/executions/${encodeURIComponent(trace.runId)}/${encodeURIComponent(trace.execId)}`, { signal });
+  if (!res.ok) throw Object.assign(new Error((await res.json()).error ?? `Execution lookup failed (${res.status})`), { status: res.status });
+  return res.json();
+}
+
+export async function waitForExecution(trace: {runId: string; execId: string}, options: { deadline: number; signal?: AbortSignal }): Promise<RunResponse> {
+  let misses = 0;
+  const started = Date.now();
+  let attempt = 0;
+  while (Date.now() < options.deadline) {
+    if (options.signal?.aborted) throw new Error("cancelled");
+    let result: StepResult | undefined;
+    try {
+      reportTraceEvent(trace, "delivery.poll", { attempt: ++attempt });
+      const timeout = AbortSignal.timeout(10_000);
+      result = await fetchExecution(trace, options.signal ? AbortSignal.any([options.signal, timeout]) : timeout);
+    } catch (err) {
+      if (options.signal?.aborted) throw new Error("cancelled");
+      reportTraceEvent(trace, "delivery.poll_failed", { error: (err as Error).message });
+      if ((err as {status?: number}).status === 404 && ++misses >= 3) throw Object.assign(err as Error, { terminal: true });
+    }
+    if (result?.status === "error") {
+      reportTraceEvent(trace, "delivery.received", { executionStatus: "error" });
+      throw Object.assign(new Error(result.error ?? "Execution failed"), { terminal: true });
+    }
+    if (result?.status === "ok") {
+      reportTraceEvent(trace, "delivery.received", { elapsedMs: Date.now() - started, polls: attempt });
+      return { text: result.text, model: result.model, usage: result.usage ?? undefined, toolCalls: result.toolCalls ?? undefined };
+    }
+    await pause(1000, options.signal);
+  }
+  throw new Error("Still waiting for the execution. Its result can be recovered from Trace Logs.");
+}
+
+function pause(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const done = () => { clearTimeout(timer); signal?.removeEventListener("abort", stop); resolve(); };
+    const stop = () => { clearTimeout(timer); signal?.removeEventListener("abort", stop); reject(new Error("cancelled")); };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", stop, { once: true });
+    if (signal?.aborted) stop();
+  });
+}
+
+export async function fetchTraceProgress(runId: string, after: number) {
+  const res = await fetch(`/api/trace/runs/${encodeURIComponent(runId)}/progress?after=${after}`, { signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new Error(`could not load live trace (${res.status})`);
+  return res.json() as Promise<{ cursor: number; events: (TraceEvent & { execId: string })[];
+    steps: { execId: string; status: string; error: string | null; finishedMs: number | null }[] }>;
 }

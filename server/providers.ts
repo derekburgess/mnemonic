@@ -1,3 +1,4 @@
+import { event, errorDetail, tracedFetch, type EmitEvent, type TraceEvent } from "./events.js";
 import type OpenAI from "openai";
 import type { Dispatch } from "./tools.js";
 import { resolveLinks, type ResolvedLink } from "./links.js";
@@ -57,6 +58,8 @@ export type RunArgs = {
   dispatch: Dispatch;
   /** Called with each request/response pair so the trace keeps the whole loop. */
   onRound: (round: { request: unknown; response: unknown; ms: number }) => void;
+  onEvent?: EmitEvent;
+  eventSource?: TraceEvent["source"];
   maxRounds?: number;
   /** Bounds the whole step, so an abandoned run stops costing tokens here too. */
   signal?: AbortSignal;
@@ -64,12 +67,29 @@ export type RunArgs = {
   links?: string[];
 };
 
+export type LinkSummary = { url: string; kind: ResolvedLink["kind"]; note?: string };
+
 export type RunResult = {
   text: string;
   model: string;
   usage: { input: number; output: number };
   toolCalls: ToolCallRecord[];
+  /** The input exactly as composed, including inlined files and fetched link text. */
+  composedInput: string;
+  links: LinkSummary[];
 };
+
+const summarise = (links: ResolvedLink[]): LinkSummary[] =>
+  links.map((l) => ({
+    url: l.url,
+    kind: l.kind,
+    note:
+      l.kind === "error"
+        ? l.text
+        : l.kind === "text"
+          ? `${l.text.length} characters`
+          : "sent as content",
+  }));
 
 const uniq = (urls: (string | null | undefined)[]) => [...new Set(urls.filter((u): u is string => !!u))];
 
@@ -79,15 +99,56 @@ export const TIMEOUT_MESSAGE = 'The step hit its timeout. Raise "Timeout" if it 
  * Stops waiting on a tool once the step's budget is spent. The tool itself cannot be killed
  * mid-flight, but the run gives up on it rather than sitting there until it finishes.
  */
-function withDeadline<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+async function withDeadline<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return work;
-  if (signal.aborted) return Promise.reject(new Error(TIMEOUT_MESSAGE));
-  return Promise.race([
-    work,
-    new Promise<never>((_, reject) =>
-      signal.addEventListener("abort", () => reject(new Error(TIMEOUT_MESSAGE)), { once: true }),
-    ),
-  ]);
+  let stop: () => void = () => {};
+  try {
+    return await Promise.race([work, new Promise<never>((_, reject) => {
+      stop = () => reject(new Error(TIMEOUT_MESSAGE));
+      signal.addEventListener("abort", stop, { once: true });
+      if (signal.aborted) stop();
+    })]);
+  } finally {
+    signal.removeEventListener("abort", stop);
+  }
+}
+
+async function executeTool(args: RunArgs, name: string, input: string, callId: string, round: number) {
+  const source = args.eventSource ?? "proxy";
+  const started = Date.now();
+  const emit = (kind: string, detail: unknown) => args.onEvent?.(event(source, kind, detail));
+  emit("tool.started", { name, callId, round, attempt: 1, arguments: input });
+  try {
+    const output = await withDeadline(args.dispatch(name, input, { callId, round }), args.signal);
+    let error: unknown;
+    try { const value = JSON.parse(output); error = value?.error ?? (value?.isError ? value : undefined); } catch { /* text result */ }
+    emit("tool.completed", { name, callId, round, attempt: 1, ms: Date.now() - started,
+      status: error ? "error" : "ok", error, output, timeout: !!error && /timeout|timed out|exceeded|abort/i.test(JSON.stringify(error)) });
+    return output;
+  } catch (err) {
+    emit("tool.failed", { name, callId, round, attempt: 1, ms: Date.now() - started, error: errorDetail(err) });
+    throw err;
+  }
+}
+
+function modelClient(args: RunArgs, round: number) {
+  return args.onEvent ? args.client.withOptions({ fetch: tracedFetch((entry) => args.onEvent?.({
+    ...entry, detail: { ...(entry.detail as Record<string, unknown>), round },
+  }), args.eventSource ?? "proxy") }) : args.client;
+}
+
+async function modelCall<T>(args: RunArgs, round: number, work: () => Promise<T>): Promise<T> {
+  const source = args.eventSource ?? "proxy";
+  const started = Date.now();
+  args.onEvent?.(event(source, "model.started", { round, model: args.model }));
+  try {
+    const result = await work();
+    args.onEvent?.(event(source, "model.completed", { round, ms: Date.now() - started }));
+    return result;
+  } catch (err) {
+    args.onEvent?.(event(source, "model.failed", { round, ms: Date.now() - started, error: errorDetail(err) }));
+    throw err;
+  }
 }
 
 /**
@@ -107,7 +168,7 @@ function linkText(links: ResolvedLink[]): string {
 }
 
 export async function runResponses(args: RunArgs): Promise<RunResult> {
-  const { client, model, effort, input, instructions, tools, dispatch, onRound } = args;
+  const { model, effort, input, instructions, tools, onRound } = args;
   const maxRounds = args.maxRounds ?? DEFAULT_TOOL_ROUNDS;
 
   const base = {
@@ -118,9 +179,10 @@ export async function runResponses(args: RunArgs): Promise<RunResult> {
     ...(tools.length ? { tools } : {}),
   };
 
+  let roundNumber = 0;
   const call = async (payload: Record<string, unknown>) => {
     const started = Date.now();
-    const result = await client.responses.create(payload as never, { signal: args.signal });
+    const result = await modelCall(args, ++roundNumber, () => modelClient(args, roundNumber).responses.create(payload as never, { signal: args.signal }));
     onRound({
       request: redact(payload),
       response: { output: result.output, usage: result.usage, model: result.model },
@@ -166,6 +228,10 @@ export async function runResponses(args: RunArgs): Promise<RunResult> {
 
     for (const item of response.output) {
       if (item.type !== "web_search_call") continue;
+      args.onEvent?.(event(args.eventSource ?? "proxy", "tool.completed", {
+        name: "web_search", callId: item.id, round: round + 1, status: item.status,
+        timing: "Provider-managed tool; individual duration is unavailable", output: item,
+      }));
       const action = (item as {
         action?: { type?: string; query?: string; queries?: string[] | null; url?: string | null; sources?: { url?: string }[] | null };
       }).action;
@@ -200,7 +266,7 @@ export async function runResponses(args: RunArgs): Promise<RunResult> {
       conversation.push({
         type: "function_call_output",
         call_id,
-        output: await withDeadline(dispatch(name, callArgs), args.signal),
+        output: await executeTool(args, name, callArgs, call_id, round + 1),
       });
     }
 
@@ -225,6 +291,8 @@ export async function runResponses(args: RunArgs): Promise<RunResult> {
     model: response.model ?? model,
     usage: { input: usedIn, output: usedOut },
     toolCalls,
+    composedInput: text,
+    links: summarise(links),
   };
 }
 
@@ -251,7 +319,7 @@ function asChatTools(tools: unknown[]) {
  * built-in tools and reasoning items do not exist here.
  */
 export async function runChat(args: RunArgs): Promise<RunResult> {
-  const { client, model, effort, input, instructions, tools, dispatch, onRound } = args;
+  const { model, effort, input, instructions, tools, onRound } = args;
   const maxRounds = args.maxRounds ?? DEFAULT_TOOL_ROUNDS;
 
   const chatTools = tools.length ? asChatTools(tools) : undefined;
@@ -286,9 +354,10 @@ export async function runChat(args: RunArgs): Promise<RunResult> {
     ...(chatTools ? { tools: chatTools } : {}),
   };
 
+  let roundNumber = 0;
   const call = async (payload: Record<string, unknown>) => {
     const started = Date.now();
-    const result = await client.chat.completions.create(payload as never, { signal: args.signal });
+    const result = await modelCall(args, ++roundNumber, () => modelClient(args, roundNumber).chat.completions.create(payload as never, { signal: args.signal }));
     onRound({
       request: redact(payload),
       response: { choices: result.choices, usage: result.usage, model: result.model },
@@ -327,7 +396,7 @@ export async function runChat(args: RunArgs): Promise<RunResult> {
       messages.push({
         role: "tool",
         tool_call_id: (call as { id: string }).id,
-        content: await withDeadline(dispatch(fn.name, fn.arguments), args.signal),
+        content: await executeTool(args, fn.name, fn.arguments, (call as { id: string }).id, round + 1),
       });
     }
 
@@ -339,5 +408,7 @@ export async function runChat(args: RunArgs): Promise<RunResult> {
     model: response.model ?? model,
     usage: { input: usedIn, output: usedOut },
     toolCalls,
+    composedInput: text,
+    links: summarise(links),
   };
 }

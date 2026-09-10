@@ -1,7 +1,9 @@
+import { event, errorDetail, type EmitEvent } from "./events.js";
 import vm from "node:vm";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { buildWorkspaceTools } from "./workspace.js";
 
 /** A tool node as the browser describes it. */
 export type ToolSpec =
@@ -49,6 +51,7 @@ const MOUNT_PATHS = ["/mcp", "/sse", "/mcp/", "/sse/"];
 /** Addresses a server binds to but which are not valid destinations to connect to. */
 const BIND_ONLY: Record<string, string> = { "0.0.0.0": "127.0.0.1", "[::]": "[::1]", "::": "[::1]" };
 
+
 /**
  * Servers print the address they bound to ("Uvicorn running on http://0.0.0.0:8765"), which is
  * the natural thing to paste. 0.0.0.0 means "all interfaces" rather than a host, and sending it
@@ -77,13 +80,17 @@ function candidateUrls(serverUrl: string): URL[] {
 async function connectMcp(
   serverUrl: string,
   authorization?: string,
+  emit?: EmitEvent,
 ): Promise<{ client: Client; url: string }> {
   const requestInit = authorization ? { headers: { Authorization: authorization } } : undefined;
   const newClient = () => new Client({ name: "mnemonic", version: "0.1.0" }, { capabilities: {} });
   const failures: string[] = [];
 
+  let attempt = 0;
   for (const url of candidateUrls(serverUrl)) {
     for (const kind of ["streamable", "sse"] as const) {
+      const started = Date.now();
+      emit?.(event("proxy", "tool.connection_attempt", { attempt: ++attempt, transport: kind, url: url.toString() }));
       try {
         // Always a fresh client: a failed connect has already torn its transport down.
         const client = newClient();
@@ -92,8 +99,10 @@ async function connectMcp(
             ? new StreamableHTTPClientTransport(url, { requestInit })
             : new SSEClientTransport(url, { requestInit });
         await client.connect(transport);
+        emit?.(event("proxy", "tool.connected", { attempt, transport: kind, ms: Date.now() - started }));
         return { client, url: url.toString() };
       } catch (err) {
+        emit?.(event("proxy", "tool.connection_failed", { attempt, transport: kind, ms: Date.now() - started, error: errorDetail(err) }));
         failures.push(`${url.pathname} (${kind}): ${(err as Error).message.slice(0, 120)}`);
       }
     }
@@ -106,8 +115,9 @@ async function withMcpClient<T>(
   serverUrl: string,
   authorization: string | undefined,
   fn: (client: Client) => Promise<T>,
+  emit?: EmitEvent,
 ): Promise<T> {
-  const { client } = await connectMcp(serverUrl, authorization);
+  const { client } = await connectMcp(serverUrl, authorization, emit);
   try {
     return await fn(client);
   } finally {
@@ -116,8 +126,8 @@ async function withMcpClient<T>(
 }
 
 /** Also reports the URL that actually worked, so the UI can correct the one you typed. */
-export async function listMcpTools(serverUrl: string, authorization?: string) {
-  const { client, url } = await connectMcp(serverUrl, authorization);
+export async function listMcpTools(serverUrl: string, authorization?: string, emit?: EmitEvent) {
+  const { client, url } = await connectMcp(serverUrl, authorization, emit);
   try {
     const { tools } = await client.listTools();
     return {
@@ -139,17 +149,33 @@ const objectSchema = (schema: unknown): Record<string, unknown> => {
   return s.type === "object" ? s : { type: "object", properties: {}, additionalProperties: true };
 };
 
-export type Dispatch = (name: string, args: string) => Promise<string>;
+type CallContext = { callId: string; round: number };
+export type Dispatch = (name: string, args: string, context?: CallContext) => Promise<string>;
 
 /**
  * Turn tool nodes into Responses API tool definitions, plus a dispatcher for the ones we
  * execute ourselves. web_search is server-side at OpenAI and never reaches the dispatcher.
+ *
+ * A step's workspaces are not tools you configure — they are folders you lend it — so the
+ * file tools that reach them are derived here rather than listed under Tools.
  */
-export async function buildTools(specs: ToolSpec[]): Promise<{ tools: unknown[]; dispatch: Dispatch }> {
+export async function buildTools(
+  specs: ToolSpec[],
+  workspaces: string[] = [],
+  emit?: EmitEvent,
+): Promise<{ tools: unknown[]; dispatch: Dispatch }> {
   const tools: unknown[] = [];
-  const handlers = new Map<string, (args: unknown) => Promise<string>>();
+  const handlers = new Map<string, (args: unknown, context?: CallContext) => Promise<string>>();
+
+  for (const [name, tool] of Object.entries(buildWorkspaceTools(workspaces))) {
+    tools.push(tool.definition);
+    handlers.set(name, async (args) =>
+      JSON.stringify(await tool.run((args ?? {}) as Record<string, unknown>)),
+    );
+  }
 
   for (const spec of specs) {
+    emit?.(event("proxy", "tool.configured", { kind: spec.kind, name: spec.kind === "custom" ? spec.fnName : spec.kind === "mcp" ? spec.label : "web_search", timeoutSec: spec.kind === "web_search" ? null : spec.timeoutSec ?? (spec.kind === "mcp" ? DEFAULT_MCP_TIMEOUT_SEC : DEFAULT_CODE_TIMEOUT_SEC), automaticToolRetries: 0 }));
     if (spec.kind === "web_search") {
       const domains = (spec.allowedDomains ?? "")
         .split(",")
@@ -166,7 +192,7 @@ export async function buildTools(specs: ToolSpec[]): Promise<{ tools: unknown[];
     if (spec.kind === "mcp") {
       // We are the MCP client, so private and localhost servers work; OpenAI only ever sees
       // ordinary function tools that call back into this proxy.
-      const { tools: available } = await listMcpTools(spec.serverUrl, spec.authorization);
+      const { tools: available } = await listMcpTools(spec.serverUrl, spec.authorization, emit);
       const wanted = spec.selectedTools?.length
         ? available.filter((t) => spec.selectedTools!.includes(t.name))
         : available;
@@ -180,15 +206,16 @@ export async function buildTools(specs: ToolSpec[]): Promise<{ tools: unknown[];
           parameters: objectSchema(tool.inputSchema),
           strict: false,
         });
-        handlers.set(name, async (args) => {
+        handlers.set(name, async (args, context) => {
           const result = await withMcpClient(spec.serverUrl, spec.authorization, (client) =>
             client.callTool(
               { name: tool.name, arguments: (args ?? {}) as Record<string, unknown> },
               undefined,
               mcpCallOptions(spec.timeoutSec),
             ),
+            emit ? (entry) => emit({ ...entry, detail: { ...(entry.detail as Record<string, unknown>), name, ...context } }) : undefined,
           );
-          return JSON.stringify(result.content ?? result);
+          return JSON.stringify(result.isError ? { isError: true, content: result.content } : result.content ?? result);
         });
       }
       continue;
@@ -218,7 +245,7 @@ export async function buildTools(specs: ToolSpec[]): Promise<{ tools: unknown[];
     });
   }
 
-  const dispatch: Dispatch = async (name, rawArgs) => {
+  const dispatch: Dispatch = async (name, rawArgs, context) => {
     const handler = handlers.get(name);
     if (!handler) return JSON.stringify({ error: `unknown tool ${name}` });
     let args: unknown = {};
@@ -228,9 +255,9 @@ export async function buildTools(specs: ToolSpec[]): Promise<{ tools: unknown[];
       return JSON.stringify({ error: "arguments were not valid JSON" });
     }
     try {
-      return await handler(args);
+      return await handler(args, context);
     } catch (err) {
-      return JSON.stringify({ error: (err as Error).message });
+      return JSON.stringify({ error: (err as Error).message, errorDetails: errorDetail(err) });
     }
   };
 

@@ -1,0 +1,11 @@
+{
+  "name": "mnemonic-sandbox",
+  "private": true,
+  "type": "module",
+  "description": "Dependencies for one step executed inside a container. Deliberately not the app's package.json: the runner never touches DuckDB, Express or the UI, and a smaller closure is a smaller image and a smaller attack surface.",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "openai": "^7.7.0",
+    "tsx": "^4.23.12"
+  }
+}
