@@ -11,23 +11,26 @@ test("fresh local-only setup delivers outputs and actionable node errors through
   const dir = await mkdtemp(path.join(tmpdir(), "mnemonic-local-api-"));
   await mkdir(path.join(dir, "local-model"));
   await copyFile(path.join(root, "tests/fixtures/local-worker.py"), path.join(dir, "local-model/worker.py"));
+  for (const file of ["Dockerfile", "requirements.txt"]) await copyFile(path.join(root, "local-model", file), path.join(dir, "local-model", file));
   await symlink(path.join(root, "server"), path.join(dir, "server"));
   await symlink(path.join(root, "sandbox"), path.join(dir, "sandbox"));
   await writeFile(path.join(dir, "docker"), `#!/usr/bin/env python3
-import json, sys, subprocess
+import json, sys, subprocess, os
 if sys.argv[1] == 'run':
     job = json.load(sys.stdin)
     job['baseUrl'] = job['baseUrl'].replace('host.docker.internal', '127.0.0.1')
     with open('docker-runs', 'a') as log: log.write('run\\n')
     result = subprocess.run(${JSON.stringify([process.execPath, "--import", path.join(root, "node_modules/tsx/dist/loader.mjs"), path.join(root, "server/runner.ts")])}, input=json.dumps(job).encode())
     sys.exit(result.returncode)
+elif sys.argv[1] == 'start':
+    os.execvp('python3', ['python3', 'local-model/worker.py'])
 elif sys.argv[1] == 'inspect':
     print(json.dumps({'OOMKilled': False, 'ExitCode': 0}))
 elif sys.argv[1] == 'version':
     print('test-docker')
 `, { mode: 0o755 });
   const child = spawn(process.execPath, ["--import", path.join(root, "node_modules/tsx/dist/loader.mjs"), path.join(root, "server/index.ts")], {
-    cwd: dir, env: { ...process.env, OPENAI_API_KEY: "", PORT: "0", MNEMONIC_PYTHON: "python3", PATH: `${dir}:${process.env.PATH}` }, stdio: ["ignore", "pipe", "pipe"],
+    cwd: dir, env: { ...process.env, OPENAI_API_KEY: "", PORT: "0", PATH: `${dir}:${process.env.PATH}` }, stdio: ["ignore", "pipe", "pipe"],
   });
   t.after(async () => { if (child.exitCode === null) { child.kill(); await once(child, "exit"); } await rm(dir, { recursive: true, force: true }); });
   const base = await new Promise<string>((resolve, reject) => {

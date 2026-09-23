@@ -12,8 +12,7 @@
     "typecheck": "tsc -b --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
     "test:browser": "playwright test",
-    "test:docker": "MNEMONIC_TEST_DOCKER=1 node --import tsx --test tests/docker.integration.test.ts",
-    "setup:local-model": "node local-model/setup.mjs"
+    "test:docker": "MNEMONIC_TEST_DOCKER=1 node --import tsx --test tests/docker.integration.test.ts"
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.5-r.4",

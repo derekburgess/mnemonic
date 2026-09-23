@@ -4,7 +4,7 @@ import { withLocalModel, acquireModel, localCompletion, localActivity } from "..
 import type { TraceEvent } from "../server/events.ts";
 import path from "node:path";
 
-const worker = { python: "python3", script: path.resolve("tests/fixtures/local-worker.py"), model: "test" };
+const worker = { testWorker: { command: "python3", script: path.resolve("tests/fixtures/local-worker.py") }, model: "test" };
 
 test("local workers serve requests and exit before the next model acquires memory", async () => {
   const events: TraceEvent[] = [];
@@ -55,8 +55,8 @@ test("queued cancellations never admit a second model early", async () => {
   (await third)();
 });
 
-test("a missing Python environment gives an actionable error and releases the queue", async () => {
-  await assert.rejects(withLocalModel({ ...worker, python: "/nonexistent/mnemonic-python", signal: new AbortController().signal, emit: () => {} }, async () => {}, 8787), /setup:local-model/);
+test("a missing worker transport gives an actionable error and releases the queue", async () => {
+  await assert.rejects(withLocalModel({ ...worker, testWorker: { ...worker.testWorker, command: "/nonexistent/mnemonic-worker" }, signal: new AbortController().signal, emit: () => {} }, async () => {}, 8787), /Docker/);
   const release = await acquireModel(new AbortController().signal);
   release();
 });

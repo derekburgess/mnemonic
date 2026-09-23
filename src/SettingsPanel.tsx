@@ -135,7 +135,7 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
             Save base URL
           </button>
         </div>
-        </> : <p className="settings-note">One-time setup on this machine: <code>npm run setup:local-model</code>. Enter a Hugging Face model ID in each node. The saved key is used only for downloading gated or private models.</p>}
+        </> : <p className="settings-note">Docker prepares the Transformers runtime automatically on first use. Enter a Hugging Face model ID in each node. The saved key is used only for downloading gated or private models.</p>}
 
         <p className="settings-note">
           {settings?.provider === "huggingface" ? settings.runLocally ? (

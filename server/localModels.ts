@@ -1,7 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import path from "node:path";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { prepareModelContainer, removeModelContainer, inspectModelContainer } from "./localModelContainer.js";
 import { event, redactText, type EmitEvent } from "./events.js";
 
 export type LocalActivity = { phase: string; model: string; nodeId?: string; downloaded?: number; total?: number; message?: string; queued: number };
@@ -32,7 +33,8 @@ export async function localCompletion(token: string, body: { model?: string }): 
 
 export async function withLocalModel<T>(options: {
   model: string; nodeId?: string; token?: string; signal: AbortSignal; emit: EmitEvent;
-  python?: string; script?: string;
+  /** Explicit test transport; production always uses Docker. */
+  testWorker?: { command: string; script: string };
 }, run: (credentials: { apiKey: string; baseUrl: string }) => Promise<T>, port: number): Promise<T> {
   options.emit(event("proxy", "local.queued", { model: options.model }));
   const release = await acquireModel(options.signal);
@@ -40,6 +42,7 @@ export async function withLocalModel<T>(options: {
   let closed: Promise<void> | undefined;
   let key: string | undefined;
   let failure: Error | undefined;
+  let containerName: string | undefined;
   const update = (detail: Reply) => {
     activity = { phase: detail.phase ?? "Preparing", model: options.model, nodeId: options.nodeId,
       downloaded: detail.downloaded, total: detail.total, message: detail.message, queued: queue.length };
@@ -48,13 +51,12 @@ export async function withLocalModel<T>(options: {
   try {
     options.signal.throwIfAborted();
     update({ phase: "Preparing" });
-    const venvPython = path.resolve("data/local-model-venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
-    const python = options.python ?? process.env.MNEMONIC_PYTHON ?? (existsSync(venvPython) ? venvPython : "python3");
     mkdirSync(path.resolve("data/models"), { recursive: true });
-    child = spawn(python, ["-u", options.script ?? path.resolve("local-model/worker.py")], {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, HF_HUB_DISABLE_TELEMETRY: "1", TOKENIZERS_PARALLELISM: "false" },
-    });
+    const transport = options.testWorker
+      ? { command: options.testWorker.command, args: ["-u", options.testWorker.script], cache: path.resolve("data/models") }
+      : await prepareModelContainer(options.signal, options.emit, (phase) => update({ phase }));
+    if ("name" in transport) containerName = transport.name;
+    child = spawn(transport.command, transport.args, { stdio: ["pipe", "pipe", "pipe"] });
     const worker = child;
     let exited = false;
     closed = new Promise<void>((resolve) => worker.once("close", () => { exited = true; resolve(); }));
@@ -74,13 +76,20 @@ export async function withLocalModel<T>(options: {
     const abort = () => { fail(new Error(options.signal.reason?.name === "TimeoutError" ? "Local model run timed out. Increase the node timeout for downloads and loading." : "cancelled")); worker.kill("SIGKILL"); };
     options.signal.addEventListener("abort", abort, { once: true });
     void closed.then(() => options.signal.removeEventListener("abort", abort));
-    worker.on("error", () => fail(new Error("Could not start the local Python worker. Run npm run setup:local-model, or set MNEMONIC_PYTHON to an environment with the local model dependencies.")));
+    worker.on("error", () => fail(new Error("Could not start the local model container. Check that Docker is running and inspect the local runtime trace.")));
     worker.stdin.on("error", (err) => fail(new Error(`Local model worker input failed: ${err.message}`)));
     let stderr = "";
     worker.stderr.on("data", (data: Buffer) => { stderr = (stderr + redactText(data.toString(), [options.token ?? ""])).slice(-6000); });
-    worker.once("close", (code, signal) => {
+    worker.once("close", async (code, signal) => {
       if (stderr) options.emit(event("proxy", "local.logs", { text: stderr }));
       options.emit(event("proxy", "local.worker_exited", { code, signal }));
+      if (containerName && !failure) {
+        try {
+          const state = await inspectModelContainer(containerName);
+          options.emit(event("proxy", "local.container_state", state));
+          if (state.OOMKilled) failure = new Error("Insufficient memory: Docker killed the model container. Choose a smaller model or increase Docker's memory allocation.");
+        } catch { /* Retain uncertainty when Docker inspection is unavailable. */ }
+      }
       fail(failure ?? new Error(`Model worker exited unexpectedly (code ${code}, signal ${signal ?? "none"}). Memory exhaustion is possible but not confirmed. See the local worker trace.`));
     });
     const lines = createInterface({ input: worker.stdout });
@@ -95,7 +104,7 @@ export async function withLocalModel<T>(options: {
         else if (reply.phase) { update(reply); if (reply.phase === "Ready") readyResolve(); }
       } catch { /* Third-party stdout is not part of the worker protocol. */ }
     });
-    worker.stdin.write(JSON.stringify({ model: options.model, token: options.token || null, cache: path.resolve("data/models") }) + "\n");
+    worker.stdin.write(JSON.stringify({ model: options.model, token: options.token || null, cache: transport.cache }) + "\n");
     if (options.signal.aborted) abort();
     await ready;
     key = crypto.randomUUID();
@@ -123,9 +132,16 @@ export async function withLocalModel<T>(options: {
       update({ phase: "Unloading" });
       child.kill("SIGKILL");
       await closed;
-      options.emit(event("proxy", "local.unloaded", { model: options.model, memoryReleased: true }));
     }
-    activity = null;
+    try {
+      if (containerName) await removeModelContainer(containerName);
+      if (child) options.emit(event("proxy", "local.unloaded", { model: options.model, memoryReleased: true }));
+      activity = null;
+    } catch (err) {
+      update({ phase: "Error", message: `Model cleanup failed: ${(err as Error).message}` });
+      // Keep the queue locked until restart cleanup succeeds, rather than load a second model.
+      throw err;
+    }
     release();
   }
 }

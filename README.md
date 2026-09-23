@@ -499,33 +499,36 @@ src/TracePanel.tsx  the trace accordion
 
 ### Managed Hugging Face models
 
-Run `npm run setup:local-model` once on the proxy machine (Python 3.10+ required).
-This creates `data/local-model-venv` and installs PyTorch, Transformers and Hub dependencies.
-For hardware-specific PyTorch builds, prepare an environment yourself and set `MNEMONIC_PYTHON`
-to its Python executable. Select **Hugging Face** in Settings and enable **Download and run models locally**.
+Local inference requires Docker. The first run builds a dedicated Transformers image, with
+Python and model dependencies installed inside it; no host Python environment is required.
+The runtime image is rebuilt automatically when its Dockerfile, dependencies or worker change.
+NVIDIA inference is selected when Docker reports the NVIDIA runtime; otherwise CPU is used.
+Set `MNEMONIC_MODEL_DEVICE=cpu` or `cuda` to override auto-detection. CUDA requires NVIDIA
+Container Toolkit configured for Docker. Apple Metal is not available inside this Linux runtime.
+Select **Hugging Face** in Settings and enable **Download and run models locally**.
 Enter a Hugging Face repository ID in each node's Model field; no OpenAI key is needed.
 Save a Hugging Face token for gated/private repositories after accepting their access terms.
 
-Local inference uses a separate Python worker on the proxy machine. While local model mode is enabled, the existing **Run in a container** option is automatically
+Local inference uses a separate, ephemeral model container. While local model mode is enabled, the existing **Run in a container** option is automatically
 enabled and locked on all input nodes. The server also enforces this requirement. Disable local
 model mode first to unlock the switches; their on state is preserved until you change it.
 Containerized nodes connect to the worker through the proxy.
 Sandbox containers must be able to reach the proxy through `host.docker.internal`.
-The sandbox isolates node execution/tools; it does not contain the model worker.
-Runs are serialized to avoid loading multiple models at once. Each worker is terminated and
-awaited after success, error, timeout or cancellation before the next model is admitted.
+The node sandbox contains execution/tools; the model container contains Python and model inference.
+Runs are serialized to avoid loading multiple models at once. Each model container is forcibly removed and cleanup is confirmed after success, error, timeout or cancellation before the next model is admitted.
 Downloads remain in `data/models`; weights are not retained in memory between nodes.
 The node timeout includes queueing, downloading, loading and inference: increase it for first runs.
 
 The header shows lifecycle status and download bytes/progress. Node errors include memory,
 download and loading failures, with detailed lifecycle events under the trace's `local` filter.
-An unexplained worker kill is not reported as confirmed OOM.
+Docker-confirmed OOM kills are reported in the node; unexplained exits retain their uncertain cause.
+Containers are labeled per workspace and cleaned up after crashes/restarts. Cache files and images persist.
 
 This initial runtime supports text-generation Transformers models with safetensors weights and
-chat templates, using CPU, CUDA or MPS when available. Tool-enabled nodes additionally require
+chat templates, using CPU or CUDA when available. Tool-enabled nodes additionally require
 a tokenizer response template that Transformers can parse. Unsupported architectures, custom
 remote-code models, non-text attachments and missing templates fail explicitly. Model IDs are
 not restricted to a curated list. Generation is currently capped at 1,024 new tokens per round.
 
 Optional real-model smoke test (downloads a small public model):
-`MNEMONIC_TEST_TRANSFORMERS=1 MNEMONIC_PYTHON=data/local-model-venv/bin/python node --import tsx --test tests/local-model-real.test.ts`.
+`MNEMONIC_TEST_TRANSFORMERS=1 node --import tsx --test tests/local-model-real.test.ts`.

@@ -69,8 +69,8 @@ test("real Docker node connects to its local inference worker and unloads it", {
   const events: string[] = [];
   const real = !!process.env.MNEMONIC_TEST_TRANSFORMERS;
   const model = real ? "HuggingFaceTB/SmolLM2-135M-Instruct" : "test";
-  const result = await withLocalModel({ model, python: process.env.MNEMONIC_PYTHON ?? "python3",
-    ...(real ? {} : { script: path.resolve("tests/fixtures/local-worker.py") }),
+  const result = await withLocalModel({ model,
+    ...(real ? {} : { testWorker: { command: "python3", script: path.resolve("tests/fixtures/local-worker.py") } }),
     signal: AbortSignal.timeout(600_000), emit: (e) => events.push(e.kind) }, async ({ apiKey, baseUrl }) => {
     return runInSandbox({ apiKey, baseUrl: sandboxModelUrl(baseUrl), provider: "huggingface", model,
       effort: "off", input: "Say hello in one sentence.", timeoutSec: 60 }, [], { timeoutSec: 60 });

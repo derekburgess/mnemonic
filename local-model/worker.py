@@ -27,7 +27,7 @@ def describe_error(error, phase):
     if "no space left" in low:
         return "Model download failed: insufficient disk space. Free space in the model cache. " + message
     if isinstance(error, ImportError):
-        return "Local model dependencies are missing. Run npm run setup:local-model. " + message
+        return "The local model runtime image has missing or incompatible dependencies. Rebuild the runtime image and retry. " + message
     return phase + " failed: " + message
 
 

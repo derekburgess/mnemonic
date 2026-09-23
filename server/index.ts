@@ -1,5 +1,6 @@
 import { event, sanitize, redactText, errorDetail, type EmitEvent } from "./events.js";
 import express from "express";
+import { sweepLocalModels } from "./localModelContainer.js";
 import { localActivity, localCompletion, withLocalModel } from "./localModels.js";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -580,6 +581,7 @@ await markInterrupted().catch((err) => console.error("[mnemonic] trace recovery 
 
 // A previous life of this process may have been killed mid-step -- `tsx watch` restarts on every
 // save -- and a container outlives the client that started it. Whatever it left is removed here.
+await sweepLocalModels().catch((err) => console.warn("[mnemonic] local model cleanup:", err.message));
 await sweepOrphans().then((n) => {
   if (n) console.log(`[mnemonic] removed ${n} orphaned sandbox container(s) from a previous run`);
 });
