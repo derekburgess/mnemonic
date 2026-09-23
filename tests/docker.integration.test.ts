@@ -6,6 +6,8 @@ import { mkdtemp, chmod, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runInSandbox, sandboxStatus } from "../server/sandbox.ts";
+import { withLocalModel, localCompletion } from "../server/localModels.ts";
+import { sandboxModelUrl } from "../server/settings.ts";
 import type { ContainerTrace } from "../server/containerTrace.ts";
 
 test("real Docker: model networking, mounted workspace, logs, exit inspection and cancellation", {
@@ -48,4 +50,32 @@ test("real Docker: model networking, mounted workspace, logs, exit inspection an
     onTrace: (trace) => { diagnostics = trace; },
   }), /cancelled/);
   assert.match(diagnostics!.termination ?? "", /cancelled/);
+});
+
+
+test("real Docker node connects to its local inference worker and unloads it", {
+  skip: process.env.MNEMONIC_TEST_DOCKER !== "1", timeout: 12 * 60 * 1000,
+}, async (t) => {
+  const gateway = createServer(async (req, res) => {
+    try {
+      let body = ""; for await (const chunk of req) body += chunk;
+      const result = await localCompletion(req.headers.authorization?.replace(/^Bearer /, "") ?? "", JSON.parse(body));
+      res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(result));
+    } catch (err) { res.writeHead(400); res.end(JSON.stringify({ error: { message: (err as Error).message } })); }
+  });
+  gateway.listen(0, "0.0.0.0"); await once(gateway, "listening");
+  t.after(() => { gateway.closeAllConnections(); gateway.close(); });
+  const port = (gateway.address() as { port: number }).port;
+  const events: string[] = [];
+  const real = !!process.env.MNEMONIC_TEST_TRANSFORMERS;
+  const model = real ? "HuggingFaceTB/SmolLM2-135M-Instruct" : "test";
+  const result = await withLocalModel({ model, python: process.env.MNEMONIC_PYTHON ?? "python3",
+    ...(real ? {} : { script: path.resolve("tests/fixtures/local-worker.py") }),
+    signal: AbortSignal.timeout(600_000), emit: (e) => events.push(e.kind) }, async ({ apiKey, baseUrl }) => {
+    return runInSandbox({ apiKey, baseUrl: sandboxModelUrl(baseUrl), provider: "huggingface", model,
+      effort: "off", input: "Say hello in one sentence.", timeoutSec: 60 }, [], { timeoutSec: 60 });
+  }, port);
+  assert.equal(result.result.ok, true, JSON.stringify(result.result));
+  if (result.result.ok) assert.ok(result.result.result.text);
+  assert.ok(events.includes("local.unloaded"));
 });

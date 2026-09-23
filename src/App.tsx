@@ -1,3 +1,4 @@
+import { LocalModelStatus } from "./LocalModelStatus";
 import { GraphSync, type SaveState } from "./graphSync";
 import { rememberExecutions, pendingExecutions, forgetExecutions, cancelPending } from "./pendingExecutions";
 import { reportTraceEvent } from "./traceEvents";
@@ -18,7 +19,7 @@ import {
   type IsValidConnection,
 } from "@xyflow/react";
 
-import { fetchModels, runStep, toolSpec, waitForExecution, cancelExecution, type TraceStep } from "./api";
+import { fetchSettings, fetchModels, runStep, toolSpec, waitForExecution, cancelExecution, type TraceStep } from "./api";
 import { Icon } from "./icons";
 import { SettingsPanel } from "./SettingsPanel";
 import { TracePanel } from "./TracePanel";
@@ -146,6 +147,7 @@ const seed = loadSnapshot() ?? {
 function Canvas() {
   const [nodes, setNodes, onNodesChange] = useNodesState<GraphNode>(seed.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<GraphEdge>(seed.edges);
+  const [localModelsRequired, setLocalModelsRequired] = useState(false);
   const [models, setModels] = useState<string[]>([DEFAULT_MODEL]);
   const [stepped, setStepped] = useState<string[]>([]);
   const steppedRef = useRef<string[]>([]);
@@ -171,8 +173,16 @@ function Canvas() {
 
   useEffect(() => {
     fetchModels().then(setModels);
+    fetchSettings().then((settings) => setLocalModelsRequired(settings.provider === "huggingface" && !!settings.runLocally)).catch(() => {});
   }, []);
 
+
+  useEffect(() => {
+    if (localModelsRequired && nodes.some((node) => isInput(node) && !node.data.sandbox)) {
+      setNodes((current) => current.map((node) => isInput(node) && !node.data.sandbox
+        ? { ...node, data: { ...node.data, sandbox: true } } : node));
+    }
+  }, [localModelsRequired, nodes, setNodes]);
 
   const sync = useRef<GraphSync | null>(null);
   const publish = useCallback(
@@ -281,7 +291,7 @@ function Canvas() {
               files: producer.data.files?.map(({ name, mime, dataUrl }) => ({ name, mime, dataUrl })),
               links: producer.data.links?.map((l) => l.url).filter((url) => url.trim()),
               workspaces: producer.data.workspaces?.map((w) => w.path).filter((p) => p.trim()),
-              sandbox: producer.data.sandbox,
+              sandbox: localModelsRequired || producer.data.sandbox,
               ...(execution
                 ? {
                     trace: {
@@ -352,7 +362,7 @@ function Canvas() {
       else forgetExecutions(executions.filter((_, i) => settled[i].status === "fulfilled" || (settled[i] as PromiseRejectedResult).reason?.terminal).map((e) => e.execId));
       return working;
     },
-    [publish],
+    [publish, localModelsRequired],
   );
 
   const addSavedOutput = useCallback(async (step: TraceStep) => {
@@ -607,8 +617,8 @@ function Canvas() {
   );
 
   const actions = useMemo(
-    () => ({ models, currentId, runOrder, updateInput, updateOutput, runOne, removeNode, setSkipped }),
-    [models, currentId, runOrder, updateInput, updateOutput, runOne, removeNode, setSkipped],
+    () => ({ models, localModelsRequired, currentId, runOrder, updateInput, updateOutput, runOne, removeNode, setSkipped }),
+    [models, localModelsRequired, currentId, runOrder, updateInput, updateOutput, runOne, removeNode, setSkipped],
   );
 
   return (
@@ -623,6 +633,7 @@ function Canvas() {
           </div>
 
           <div className="bar-right">
+            <LocalModelStatus />
             <div className="save-status" data-state={saveState.label} role="status" title={saveState.error}>
               <span className="save-status-label">
                 <span className="save-status-dot" aria-hidden="true" />
@@ -717,7 +728,7 @@ function Canvas() {
           </div>
 
           {panel === "trace" && <TracePanel onClose={() => setPanel(null)} onRecover={addSavedOutput} outputExecIds={nodes.filter(isOutput).map((n) => n.data.execId).filter((id): id is string => !!id)} />}
-          {panel === "settings" && <SettingsPanel onClose={() => setPanel(null)} onSaved={() => { void fetchModels().then(setModels); }} />}
+          {panel === "settings" && <SettingsPanel onClose={() => setPanel(null)} onSaved={(settings) => { setLocalModelsRequired(settings.provider === "huggingface" && !!settings.runLocally); void fetchModels().then(setModels); }} />}
         </div>
       </div>
     </GraphActionsContext.Provider>

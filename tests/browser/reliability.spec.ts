@@ -128,3 +128,40 @@ test("a newer remote revision cannot overwrite local edits silently", async ({ p
   await expect(page.locator(".save-status")).toHaveText("Saved");
   expect(state.graph.nodes[0].data.label).toBe("Local branch");
 });
+
+test("local model download progress shares the header with save status", async ({ page }) => {
+  await setup(page);
+  await page.route("**/api/local-model/status", (route) => route.fulfill({ json: {
+    activity: { phase: "Downloading", model: "org/model", downloaded: 52428800, total: 104857600, queued: 1 },
+  } }));
+  await page.goto("/");
+  const header = page.locator("header.toolbar");
+  await expect(header.getByText("Downloading · org/model · 1 queued")).toBeVisible();
+  await expect(header.getByRole("progressbar")).toHaveAttribute("value", "52428800");
+  await expect(header.getByText("50 MB / 100 MB")).toBeVisible();
+  await expect(header.locator(".save-status")).toBeVisible();
+});
+
+
+test("local models force container switches on and unlock them when disabled", async ({ page }) => {
+  await setup(page);
+  let settings = { provider: "huggingface", runLocally: true, keySource: "none", baseUrl: "", hasPanelKey: false };
+  await page.route("**/api/settings", async (route) => {
+    if (route.request().method() === "POST") settings = { ...settings, ...route.request().postDataJSON() };
+    await route.fulfill({ json: settings });
+  });
+  await page.reload();
+  const switches = page.getByRole("checkbox", { name: "Run this node in a sandbox container" });
+  await expect(switches.first()).toBeChecked();
+  await expect(switches.first()).toBeDisabled();
+  await page.getByRole("button", { name: "Add Step", exact: true }).click();
+  await expect(switches).toHaveCount(2);
+  await expect(switches.nth(1)).toBeChecked();
+  await expect(switches.nth(1)).toBeDisabled();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("checkbox", { name: "Download and run models locally" }).press("Space");
+  await expect(switches.first()).toBeEnabled();
+  await expect(switches.first()).toBeChecked();
+  await switches.first().press("Space");
+  await expect(switches.first()).not.toBeChecked();
+});

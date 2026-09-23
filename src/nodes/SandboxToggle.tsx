@@ -11,7 +11,7 @@ import { fetchSandboxStatus, type SandboxStatus } from "../api";
 let asked: Promise<SandboxStatus> | null = null;
 const sandboxStatus = () => (asked ??= fetchSandboxStatus());
 
-export function SandboxToggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+export function SandboxToggle({ on, onChange, required = false }: { on: boolean; required?: boolean; onChange: (v: boolean) => void }) {
   const [status, setStatus] = useState<SandboxStatus | null>(null);
 
   useEffect(() => {
@@ -25,14 +25,16 @@ export function SandboxToggle({ on, onChange }: { on: boolean; onChange: (v: boo
   const available = status?.available ?? false;
   // A step already set to run contained keeps its switch usable even where this proxy cannot
   // honour it: the setting travels with the graph, and hiding it would look like it was lost.
-  const locked = !!status && !available && !on;
+  const locked = required || (!!status && !available && !on);
 
   return (
     <div className="stack">
       <label
         className={`sandbox-row nodrag${on ? " on" : ""}${locked ? " locked" : ""}`}
         title={
-          available
+          required
+            ? "Required for local models. Disable Download and run models locally in Settings to unlock this switch."
+            : available
             ? `Each run of this step gets its own container (${status?.runtime} ${status?.version}), destroyed when the step returns.`
             : (status?.reason ?? "Checking whether this machine can run containers…")
         }
@@ -48,6 +50,8 @@ export function SandboxToggle({ on, onChange }: { on: boolean; onChange: (v: boo
         </span>
         <span>Run this node in a sandbox container</span>
       </label>
+
+      {required && <p className="ws-note nodrag">Required for local models. Disable local model mode in Settings to unlock.</p>}
 
       {/* A step that asked to be contained and cannot be will fail rather than quietly run on
           the host, so the reason belongs here, before it is run. */}

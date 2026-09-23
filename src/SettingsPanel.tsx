@@ -8,7 +8,7 @@ const SOURCE_LABEL: Record<PlatformSettings["keySource"], string> = {
   none: "not set",
 };
 
-export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (settings: PlatformSettings) => void }) {
   const [settings, setSettings] = useState<PlatformSettings | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
@@ -26,7 +26,7 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
   }, []);
 
   const save = useCallback(
-    async (patch: { apiKey?: string; baseUrl?: string; provider?: Provider }) => {
+    async (patch: { runLocally?: boolean; apiKey?: string; baseUrl?: string; provider?: Provider }) => {
       setBusy(true);
       setError(null);
       try {
@@ -35,7 +35,7 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
         setBaseUrl(next.baseUrl);
         setApiKey("");
         setStatus("Saved");
-        onSaved();
+        onSaved(next);
         setTimeout(() => setStatus(null), 1600);
       } catch (err) {
         setError((err as Error).message);
@@ -67,14 +67,25 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
             disabled={busy || !settings}
           >
             <option value="openai">OpenAI — Responses API</option>
-            <option value="huggingface">Hugging Face — Local models</option>
+            <option value="huggingface">Hugging Face</option>
             <option value="compatible">OpenAI-compatible — Chat Completions</option>
           </select>
         </label>
 
+        {settings?.provider === "huggingface" && (
+          <label className="sandbox-row">
+            <span className="skip sandbox"><input type="checkbox" checked={!!settings.runLocally}
+              disabled={busy} onChange={(e) => save({ runLocally: e.target.checked })} />
+              <span className="track" aria-hidden="true" /></span>
+            <span>Download and run models locally</span>
+          </label>
+        )}
+
         <p className="settings-note">
           {settings?.provider === "huggingface"
-            ? "Connect to a running local model server such as vLLM, TGI or llama.cpp using its Chat Completions endpoint. Models are loaded by that server. Tool and image support depend on the model and server."
+            ? settings.runLocally
+              ? "Each node downloads its model if needed, then runs it with Transformers. Model files stay cached; the model is unloaded after every run. Local runs are queued to limit memory use. First-time downloads may require a longer node timeout."
+              : "Connect to a running local model server such as vLLM, TGI or llama.cpp using its Chat Completions endpoint. Models are loaded by that server. Tool and image support depend on the model and server."
             : settings?.provider === "compatible"
             ? "Works with OpenRouter, vLLM, Ollama, LM Studio and anything else speaking /v1/chat/completions. MCP and custom tools work here; the built-in web search tool does not."
             : "OpenAI's own API. Adds the built-in web search tool and records the model's reasoning items in the trace."}
@@ -108,6 +119,7 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
           {status && <span className="dim">{status}</span>}
         </div>
 
+        {!settings?.runLocally || settings.provider !== "huggingface" ? <>
         <label className="stack">
           Base URL <span className="dim">{settings?.provider === "huggingface" ? "(include /v1)" : "(blank for OpenAI)"}</span>
           <input
@@ -123,9 +135,12 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
             Save base URL
           </button>
         </div>
+        </> : <p className="settings-note">One-time setup on this machine: <code>npm run setup:local-model</code>. Enter a Hugging Face model ID in each node. The saved key is used only for downloading gated or private models.</p>}
 
         <p className="settings-note">
-          {settings?.provider === "huggingface" ? (
+          {settings?.provider === "huggingface" ? settings.runLocally ? (
+            <>Local model mode requires container execution. Node container switches stay on and locked until this setting is disabled.</>
+          ) : (
             <>Leave the key empty for an unauthenticated local server. These settings are separate from your cloud credentials. Sandbox runs route localhost through host.docker.internal. The model server must listen on an interface reachable from Docker.</>
           ) : <>The key is stored in <code>data/settings.json</code> on this machine and is never sent to
           the browser — only whether one is set. A key here takes precedence over{" "}

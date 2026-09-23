@@ -1,5 +1,6 @@
 import { event, sanitize, redactText, errorDetail, type EmitEvent } from "./events.js";
 import express from "express";
+import { localActivity, localCompletion, withLocalModel } from "./localModels.js";
 import cors from "cors";
 import dotenv from "dotenv";
 import OpenAI from "openai";
@@ -22,7 +23,7 @@ app.use(express.json({ limit: "4mb" }));
 
 const MISSING_KEY = "No API key set. Add one in Settings, or put OPENAI_API_KEY in .env.";
 
-if (resolveCredentials().source === "none") console.warn(`[mnemonic] ${MISSING_KEY}`);
+if (!resolveCredentials().apiKey) console.warn(`[mnemonic] ${MISSING_KEY}`);
 
 // Constructed lazily and rebuilt whenever the credentials change: the SDK throws on a missing
 // key, and the UI is still worth serving so the graph can be built before a key is in place.
@@ -69,13 +70,22 @@ function usableModels(models: { id: string; created?: number }[]): string[] {
 }
 
 /** The key itself is never sent back to the browser, only whether one is configured. */
+app.get("/api/local-model/status", (_req, res) => res.json({ activity: localActivity() }));
+app.post("/api/local-inference/chat/completions", async (req, res) => {
+  try {
+    const token = req.headers.authorization?.replace(/^Bearer /, "") ?? "";
+    res.json(await localCompletion(token, req.body ?? {}));
+  } catch (err) { res.status(400).json({ error: { message: (err as Error).message } }); }
+});
+
 app.get("/api/settings", (_req, res) => {
   const { source, baseUrl, provider } = resolveCredentials();
-  res.json({ keySource: source, baseUrl: baseUrl ?? "", provider, hasPanelKey: !!(resolveCredentials().provider === "huggingface" ? readSettings().localApiKey : readSettings().apiKey) });
+  res.json({ keySource: source, baseUrl: baseUrl ?? "", provider, runLocally: !!readSettings().runLocally, hasPanelKey: !!(resolveCredentials().provider === "huggingface" ? readSettings().localApiKey : readSettings().apiKey) });
 });
 
 app.post("/api/settings", (req, res) => {
-  const { apiKey, baseUrl, provider } = req.body ?? {};
+  const { apiKey, baseUrl, provider, runLocally } = req.body ?? {};
+  if (runLocally !== undefined && typeof runLocally !== "boolean") return res.status(400).json({ error: "runLocally must be a boolean" });
   if (apiKey !== undefined && typeof apiKey !== "string") {
     return res.status(400).json({ error: "apiKey must be a string" });
   }
@@ -90,18 +100,20 @@ app.post("/api/settings", (req, res) => {
   }
   try {
     writeSettings({
+      ...(runLocally !== undefined ? { runLocally } : {}),
       ...(apiKey !== undefined ? { apiKey } : {}),
       ...(baseUrl !== undefined ? { baseUrl: String(baseUrl) } : {}),
       ...(provider !== undefined ? { provider: provider as Provider } : {}),
     });
     const { source, baseUrl: url, provider: p } = resolveCredentials();
-    res.json({ keySource: source, baseUrl: url ?? "", provider: p, hasPanelKey: !!(resolveCredentials().provider === "huggingface" ? readSettings().localApiKey : readSettings().apiKey) });
+    res.json({ keySource: source, baseUrl: url ?? "", provider: p, runLocally: !!readSettings().runLocally, hasPanelKey: !!(resolveCredentials().provider === "huggingface" ? readSettings().localApiKey : readSettings().apiKey) });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
 });
 
 app.get("/api/models", async (_req, res) => {
+  if (readSettings().provider === "huggingface" && readSettings().runLocally) return res.json({ models: [] });
   try {
     const list = await getClient().models.list();
     // Another provider's catalogue is its own; curating it against OpenAI's naming would
@@ -252,7 +264,9 @@ app.post("/api/run", async (req, res) => {
   // A contained step sees its workspaces where they are mounted, not where they live on the
   // host. Naming is shared with the tools, so a prompt reads the same either way -- only the
   // location behind the name changes, and the host's directory shape stays out of the prompt.
-  const contained = sandbox === true;
+  const credentials = resolveCredentials();
+  const managedLocal = credentials.provider === "huggingface" && !!readSettings().runLocally;
+  const contained = managedLocal || sandbox === true;
   const mounts = contained ? mountsFor(roots) : [];
   const visibleRoots = contained ? mounts.map((m) => m.container) : roots;
 
@@ -268,7 +282,6 @@ app.post("/api/run", async (req, res) => {
   const rounds: unknown[] = [];
   let container: ContainerTrace | null = null;
 
-  const credentials = resolveCredentials();
   const secrets = [credentials.apiKey, ...(toolSpecs ?? []).flatMap((t: ToolSpec) =>
     t.kind === "mcp" && t.authorization ? [t.authorization, t.authorization.replace(/^Bearer\s+/i, "")] : [])];
   const execId = trace?.execId ?? `${trace?.runId}-${trace?.seq ?? 0}`;
@@ -276,7 +289,7 @@ app.post("/api/run", async (req, res) => {
   let eventCount = 0;
   const emit: EmitEvent = (entry) => {
     if (!trace?.runId) return;
-    if (++eventCount > 2000 && !/^(execution\.|result\.|container\.(exited|cleanup)|response\.)/.test(entry.kind)) return;
+    if (++eventCount > 2000 && !/^(execution\.|result\.|container\.(exited|cleanup)|response\.|local\.(error|ready|unloading|unloaded|worker_exited))/.test(entry.kind)) return;
     const safe = { ...entry, detail: sanitize(entry.detail, secrets) };
     writes = writes.then(() => recordEvent(trace.runId, execId, safe))
       .catch((err) => console.error("[mnemonic] trace event write failed:", (err as Error).message));
@@ -374,7 +387,11 @@ app.post("/api/run", async (req, res) => {
   res.status(202).json(acknowledgement);
   try {
     controller.signal.throwIfAborted();
-    const { provider, apiKey, baseUrl } = credentials;
+    const { provider } = credentials;
+    if (managedLocal) {
+      const docker = await sandboxStatus();
+      if (!docker.available) throw new Error(`Local model mode requires Docker. ${docker.reason}`);
+    }
     // The browser has its own deadline, but the server needs one too or an abandoned run keeps
     // calling the model after the node has given up on it.
     const budgetSec = typeof timeoutSec === "number" && timeoutSec > 0 ? timeoutSec : 300;
@@ -382,7 +399,8 @@ app.post("/api/run", async (req, res) => {
       ? links.filter((l: unknown): l is string => typeof l === "string" && !!l.trim())
       : undefined;
 
-    const result = contained
+    const localSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(budgetSec * 1000)]);
+    const execute = async ({ apiKey, baseUrl }: { apiKey: string; baseUrl?: string }) => contained
       ? await runContained({
           job: {
             apiKey,
@@ -404,10 +422,10 @@ app.post("/api/run", async (req, res) => {
           rounds,
           onTrace: (trace) => { container = trace; },
           onEvent: emit,
-          signal: controller.signal,
+          signal: managedLocal ? localSignal : controller.signal,
         })
       : await (async () => {
-          const client = getClient();
+          const client = new OpenAI({ apiKey, ...(baseUrl ? { baseURL: baseUrl } : {}), ...(managedLocal ? { maxRetries: 0 } : {}) });
           emit(event("proxy", "tools.preparing"));
           const { tools, dispatch } = await buildTools((toolSpecs ?? []) as ToolSpec[], roots, emit);
           const run = provider !== "openai" ? runChat : runResponses;
@@ -427,6 +445,12 @@ app.post("/api/run", async (req, res) => {
             onRound: (round) => { rounds.push(round); emit(event("proxy", "round.recorded", { round: rounds.length, ...round })); },
           });
         })();
+    const address = server.address();
+    const result = managedLocal
+      ? await withLocalModel({ model, nodeId: trace.nodeId, token: readSettings().localApiKey,
+          signal: localSignal, emit }, execute,
+          typeof address === "object" && address ? address.port : PORT)
+      : await execute(credentials);
 
     const payload = {
       text: result.text,

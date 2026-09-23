@@ -24,7 +24,7 @@ const DEFAULT_TIMEOUT_SEC = 300;
 const asDuration = (sec: number) => (sec < 60 ? `${sec}s` : `${sec / 60}m`);
 
 export function InputNodeView({ id, data }: NodeProps<InputNode>) {
-  const { models, currentId, runOrder, updateInput: onChange, runOne: onRun, removeNode: onDelete, setSkipped } =
+  const { models, localModelsRequired, currentId, runOrder, updateInput: onChange, runOne: onRun, removeNode: onDelete, setSkipped } =
     useGraphActions();
   const place = runOrder.indexOf(id);
   const busy = data.status === "running";
@@ -246,7 +246,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         </label>
       </div>
 
-      <SandboxToggle on={!!data.sandbox} onChange={(v) => onChange(id, { sandbox: v })} />
+      <SandboxToggle required={localModelsRequired} on={localModelsRequired || !!data.sandbox} onChange={(v) => onChange(id, { sandbox: v })} />
 
       <div className="stack">
         <button

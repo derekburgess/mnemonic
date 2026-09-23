@@ -45,6 +45,7 @@ function StepDetail({ step, onRecover, outputExecIds }: { step: TraceStep; onRec
   for (const entry of timeline) {
     const detail = entry.detail as { round?: number; callId?: string; name?: string } | undefined;
     const key = /^(model|round)\./.test(entry.kind) ? `Model round ${detail?.round ?? "—"}`
+      : entry.kind.startsWith("local.") ? "Local model lifecycle"
       : entry.kind.startsWith("tool.") && detail?.callId ? `Tool ${detail.name ?? "call"} · ${detail.callId}`
       : entry.kind.startsWith("delivery.") || entry.kind.startsWith("graph.") ? "Result delivery"
       : /^(container|runner|image)\./.test(entry.kind) ? "Container" : "Execution setup and outcome";
@@ -83,7 +84,7 @@ function StepDetail({ step, onRecover, outputExecIds }: { step: TraceStep; onRec
 
       <Section title={`Timeline (${step.events?.length ?? 0})`} open>
         <label className="trace-filter"><span>Filter by</span><select value={filter} onChange={(e) => setFilter(e.target.value)}>
-          {["all", "model", "tool", "container", "delivery", "graph"].map((name) => <option key={name}>{name}</option>)}
+          {["all", "model", "local", "tool", "container", "delivery", "graph"].map((name) => <option key={name}>{name}</option>)}
         </select></label>
         {timeline.length === 0 && <p className="dim">No events recorded.</p>}
         {[...groups].map(([label, entries]) => <details key={label} className="trace-section"><summary>{label} · {entries.length} events</summary>

@@ -10,6 +10,7 @@ export type Provider = "openai" | "compatible" | "huggingface";
 export type Settings = {
   apiKey?: string;
   localApiKey?: string;
+  runLocally?: boolean;
   localBaseUrl?: string;
   /** Blank means OpenAI's own endpoint. */
   baseUrl?: string;

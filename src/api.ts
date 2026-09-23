@@ -153,6 +153,7 @@ export type PlatformSettings = {
   baseUrl: string;
   provider: Provider;
   hasPanelKey: boolean;
+  runLocally?: boolean;
 };
 
 export async function fetchSettings(): Promise<PlatformSettings> {
@@ -162,6 +163,7 @@ export async function fetchSettings(): Promise<PlatformSettings> {
 }
 
 export async function saveSettings(patch: {
+  runLocally?: boolean;
   apiKey?: string;
   baseUrl?: string;
   provider?: Provider;

@@ -3,6 +3,7 @@ import type { InputData, OutputData } from "../types";
 
 export type GraphActions = {
   models: string[];
+  localModelsRequired: boolean;
   /** The step Next would run, highlighted on the canvas. */
   currentId: string | null;
   /** Step ids in the order they will run, so each node can show its place in the queue. */
