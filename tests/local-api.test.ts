@@ -45,6 +45,12 @@ elif sys.argv[1] == 'version':
   assert.equal((await settings.json()).runLocally, true);
   assert.deepEqual((await (await fetch(`${base}/api/models`)).json()).models, []);
   for (const model of ["test", "load-error", "inference-error"]) {
+    assert.equal((await post("/api/local-model/download", { model })).status, 202);
+    for (let i = 0; i < 150; i++) {
+      const library = await (await fetch(`${base}/api/local-model/models`)).json();
+      if (library.models.some((m: any) => m.model === model && m.status === "Downloaded")) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     assert.equal((await post("/api/run", { model, sandbox: false, input: "Hello", effort: "off", timeoutSec: 5,
       trace: { runId: "local", execId: model, nodeId: "step" } })).status, 202);
     let result;

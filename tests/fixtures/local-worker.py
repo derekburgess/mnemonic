@@ -1,7 +1,20 @@
 import json
 import sys
 import time
+import os
 config = json.loads(sys.stdin.readline())
+if config.get('mode') == 'download':
+    cache = os.path.abspath('data/models') if config['cache'] == '/models' else config['cache']
+    root = os.path.join(cache, 'models--' + config['model'].replace('/', '--'))
+    revision = 'a' * 40
+    snapshot = os.path.join(root, 'snapshots', revision)
+    os.makedirs(snapshot, exist_ok=True)
+    with open(os.path.join(snapshot, 'config.json'), 'w') as f: f.write('{}')
+    with open(os.path.join(root, '.mnemonic-ready.json'), 'w') as f:
+        json.dump({'model': config['model'], 'revision': revision, 'files': [{'name': 'config.json', 'size': 2}]}, f)
+    print(json.dumps({'phase': 'Ready'}), flush=True)
+    sys.stdin.read()
+    sys.exit(0)
 if config['model'] == 'load-error':
     print(json.dumps({'error': 'GPU out of memory. Choose a smaller model.'}), flush=True)
     sys.exit(0)

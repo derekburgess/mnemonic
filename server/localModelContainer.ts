@@ -36,7 +36,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
   });
 }
 
-export async function prepareModelContainer(signal: AbortSignal, emit: EmitEvent, phase: (name: string) => void) {
+export async function prepareModelContainer(signal: AbortSignal, emit: EmitEvent, phase: (name: string) => void, downloading = false) {
   const runtimes = await docker(["info", "--format", "{{json .Runtimes}}"], signal)
     .catch(() => { throw new Error("Local models require a running Docker daemon. Start Docker and retry."); });
   signal.throwIfAborted();
@@ -75,7 +75,8 @@ export async function prepareModelContainer(signal: AbortSignal, emit: EmitEvent
     await docker(["create", "--interactive", "--init", "--name", name, "--label", label,
       "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=256", "--read-only", "--tmpfs", "/tmp:rw,nosuid,size=256m",
       "--user", `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
-      "--mount", `type=bind,source=${cache},target=/models`, ...(gpu ? ["--gpus", "all"] : []), image], signal);
+      "--mount", `type=bind,source=${cache},target=/models${downloading ? "" : ",readonly"}`,
+      ...(downloading ? [] : ["--network=none"]), ...(gpu ? ["--gpus", "all"] : []), image], signal);
   } catch (err) { await removeModelContainer(name); throw err; }
   emit(event("proxy", "local.container_created", { name, image, device: gpu ? "cuda" : "cpu" }));
   return { name, command: "docker", args: ["start", "--attach", "--interactive", name], cache: "/models" };

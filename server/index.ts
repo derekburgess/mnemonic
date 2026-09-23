@@ -1,5 +1,6 @@
 import { event, sanitize, redactText, errorDetail, type EmitEvent } from "./events.js";
 import express from "express";
+import { listLibrary, startDownload, cancelDownload, deleteDownload, modelDownloaded } from "./modelLibrary.js";
 import { sweepLocalModels } from "./localModelContainer.js";
 import { localActivity, localCompletion, withLocalModel } from "./localModels.js";
 import cors from "cors";
@@ -71,6 +72,20 @@ function usableModels(models: { id: string; created?: number }[]): string[] {
 }
 
 /** The key itself is never sent back to the browser, only whether one is configured. */
+app.get("/api/local-model/models", (_req, res) => res.json({ models: listLibrary(), activity: localActivity() }));
+app.post("/api/local-model/download", (req, res) => {
+  try { startDownload(req.body?.model); res.status(202).json({ accepted: true }); }
+  catch (err) { res.status(400).json({ error: (err as Error).message }); }
+});
+app.post("/api/local-model/cancel", (req, res) => {
+  try { cancelDownload(req.body?.model); res.json({ cancelling: true }); }
+  catch (err) { res.status(400).json({ error: (err as Error).message }); }
+});
+app.delete("/api/local-model/models", async (req, res) => {
+  try { await deleteDownload(req.body?.model); res.json({ deleted: true }); }
+  catch (err) { res.status(409).json({ error: (err as Error).message }); }
+});
+
 app.get("/api/local-model/status", (_req, res) => res.json({ activity: localActivity() }));
 app.post("/api/local-inference/chat/completions", async (req, res) => {
   try {
@@ -114,7 +129,7 @@ app.post("/api/settings", (req, res) => {
 });
 
 app.get("/api/models", async (_req, res) => {
-  if (readSettings().provider === "huggingface" && readSettings().runLocally) return res.json({ models: [] });
+  if (readSettings().provider === "huggingface" && readSettings().runLocally) return res.json({ models: listLibrary().filter((model) => model.status === "Downloaded").map((model) => model.model) });
   try {
     const list = await getClient().models.list();
     // Another provider's catalogue is its own; curating it against OpenAI's naming would
@@ -390,6 +405,7 @@ app.post("/api/run", async (req, res) => {
     controller.signal.throwIfAborted();
     const { provider } = credentials;
     if (managedLocal) {
+      if (!modelDownloaded(model)) throw new Error("Download this model in Settings > Hugging Face before running the node.");
       const docker = await sandboxStatus();
       if (!docker.available) throw new Error(`Local model mode requires Docker. ${docker.reason}`);
     }

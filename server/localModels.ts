@@ -22,6 +22,11 @@ export async function acquireModel(signal: AbortSignal): Promise<() => void> {
   return () => { if (released) return; released = true; occupied = false; queue.shift()?.(); };
 }
 
+export async function acquireModelIfIdle() {
+  if (occupied || queue.length) throw new Error("The local model cache is in use. Wait for active runs and downloads to finish before deleting a model.");
+  return acquireModel(new AbortController().signal);
+}
+
 type Reply = { id?: number; result?: unknown; error?: string; phase?: string; downloaded?: number; total?: number; message?: string; resources?: unknown };
 const sessions = new Map<string, { request: (body: unknown) => Promise<unknown>; model: string }>();
 export async function localCompletion(token: string, body: { model?: string }): Promise<unknown> {
@@ -32,6 +37,7 @@ export async function localCompletion(token: string, body: { model?: string }): 
 }
 
 export async function withLocalModel<T>(options: {
+  mode?: "download";
   model: string; nodeId?: string; token?: string; signal: AbortSignal; emit: EmitEvent;
   /** Explicit test transport; production always uses Docker. */
   testWorker?: { command: string; script: string };
@@ -54,7 +60,7 @@ export async function withLocalModel<T>(options: {
     mkdirSync(path.resolve("data/models"), { recursive: true });
     const transport = options.testWorker
       ? { command: options.testWorker.command, args: ["-u", options.testWorker.script], cache: path.resolve("data/models") }
-      : await prepareModelContainer(options.signal, options.emit, (phase) => update({ phase }));
+      : await prepareModelContainer(options.signal, options.emit, (phase) => update({ phase }), options.mode === "download");
     if ("name" in transport) containerName = transport.name;
     child = spawn(transport.command, transport.args, { stdio: ["pipe", "pipe", "pipe"] });
     const worker = child;
@@ -104,7 +110,7 @@ export async function withLocalModel<T>(options: {
         else if (reply.phase) { update(reply); if (reply.phase === "Ready") readyResolve(); }
       } catch { /* Third-party stdout is not part of the worker protocol. */ }
     });
-    worker.stdin.write(JSON.stringify({ model: options.model, token: options.token || null, cache: transport.cache }) + "\n");
+    worker.stdin.write(JSON.stringify({ model: options.model, token: options.token || null, mode: options.mode ?? "inference", cache: transport.cache }) + "\n");
     if (options.signal.aborted) abort();
     await ready;
     key = crypto.randomUUID();

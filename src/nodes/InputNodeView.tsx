@@ -167,17 +167,20 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         <label>
           Model
           {models.length === 0 ? (
-            <input className="line nodrag" value={data.model}
-              placeholder="Model ID served by your local server"
-              onChange={(e) => onChange(id, { model: e.target.value })} />
+            <>
+              <input className="line nodrag" value={data.model} list={`model-options-${id}`}
+                placeholder={localModelsRequired ? "Downloaded Hugging Face model ID" : "Model ID served by your local server"}
+                onChange={(e) => onChange(id, { model: e.target.value })} />
+              <datalist id={`model-options-${id}`}>{models.map((model) => <option key={model} value={model} />)}</datalist>
+            </>
           ) : <select
             className="nodrag"
             value={data.model}
             onChange={(e) => onChange(id, { model: e.target.value })}
           >
             {(models.includes(data.model) ? models : [data.model, ...models]).map((m) => (
-              <option key={m} value={m}>
-                {m}
+              <option key={m} value={m} disabled={localModelsRequired && !models.includes(m)}>
+                {m}{localModelsRequired && !models.includes(m) ? " (not downloaded)" : ""}
               </option>
             ))}
           </select>}

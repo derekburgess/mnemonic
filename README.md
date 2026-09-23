@@ -506,7 +506,10 @@ NVIDIA inference is selected when Docker reports the NVIDIA runtime; otherwise C
 Set `MNEMONIC_MODEL_DEVICE=cpu` or `cuda` to override auto-detection. CUDA requires NVIDIA
 Container Toolkit configured for Docker. Apple Metal is not available inside this Linux runtime.
 Select **Hugging Face** in Settings and enable **Download and run models locally**.
-Enter a Hugging Face repository ID in each node's Model field; no OpenAI key is needed.
+Add a Hugging Face repository ID to the **Local models** list in Settings and click **Download**.
+Wait for **Downloaded**, then select or type that ID in the node; no OpenAI key is needed.
+Downloads run in the background independently of node timeouts, can be cancelled/retried, and
+continue when Settings closes. **Delete** removes a model cache when the runtime is idle.
 Save a Hugging Face token for gated/private repositories after accepting their access terms.
 
 Local inference uses a separate, ephemeral model container. While local model mode is enabled, the existing **Run in a container** option is automatically
@@ -517,7 +520,11 @@ Sandbox containers must be able to reach the proxy through `host.docker.internal
 The node sandbox contains execution/tools; the model container contains Python and model inference.
 Runs are serialized to avoid loading multiple models at once. Each model container is forcibly removed and cleanup is confirmed after success, error, timeout or cancellation before the next model is admitted.
 Downloads remain in `data/models`; weights are not retained in memory between nodes.
-The node timeout includes queueing, downloading, loading and inference: increase it for first runs.
+Nodes load completed downloads from the shared cache without accessing the Hub. Model files are
+bind-mounted read-only into inference containers, not copied per run. Inference containers have
+network access disabled; only download containers contact Hugging Face. Node timeouts cover queueing, loading and
+inference; model downloads are separate settings jobs with no node timeout.
+Existing caches appear as **Incomplete** until Download verifies them and writes a completion marker.
 
 The header shows lifecycle status and download bytes/progress. Node errors include memory,
 download and loading failures, with detailed lifecycle events under the trace's `local` filter.

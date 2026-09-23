@@ -1129,3 +1129,16 @@ body.resizing-col { cursor: col-resize; user-select: none; }
 .local-model-progress { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
 .local-model-progress progress { min-width: 40px; width: 90px; height: 6px; accent-color: var(--accent); }
 .local-model-progress span { white-space: nowrap; }
+
+.model-library { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 10px; }
+.model-library h3 { margin: 0; font-size: 12px; font-weight: 600; }
+.model-download-form { display: flex; align-items: flex-end; gap: 8px; margin-bottom: 10px; }
+.model-download-form label { flex: 1; min-width: 0; }
+.model-library-entry { display: flex; flex-direction: column; gap: 5px; padding: 10px; margin: 8px 0; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); }
+.model-library-entry strong { font-size: 12px; overflow-wrap: anywhere; }
+.model-library-entry progress { width: 100%; height: 6px; accent-color: var(--accent); }
+.model-library-entry .error { margin: 0; overflow-wrap: anywhere; }
+.model-library-entry .settings-actions { margin: 2px 0 0; }
+
+.model-download-form .model-download { width: 28px; height: 28px; }
+.model-download:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }

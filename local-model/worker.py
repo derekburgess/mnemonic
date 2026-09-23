@@ -44,48 +44,69 @@ def main():
         config = json.loads(sys.stdin.readline())
         send(phase=phase)
         # Do not fork workers that could survive this process and retain model memory.
-        import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
         from huggingface_hub import snapshot_download, hf_hub_download
         from huggingface_hub.utils import tqdm
 
         if "dry_run" not in inspect.signature(snapshot_download).parameters:
             raise ImportError("The installed Hugging Face Hub version is too old; update the local model environment.")
-        phase = "Downloading"
-        send(phase=phase)
         repo = config["model"]
-        token = config.get("token") or False
-        common = dict(repo_id=repo, cache_dir=config["cache"], token=token)
-        # Select one weight format; never download duplicate PyTorch/TF/GGUF copies.
-        patterns = ["*.json", "*.jinja", "*.txt", "*.model", "*.tiktoken", "*.safetensors"]
-        files = snapshot_download(**common, allow_patterns=patterns, dry_run=True)
-        if not any(f.filename.endswith(".safetensors") for f in files):
-            raise ValueError("This runtime needs Transformers safetensors weights. GGUF, adapter-only, and other unsupported repositories need a compatible model repository.")
-        total = sum(f.file_size for f in files if f.will_download)
-        completed = 0
-        last = 0.0
+        repo_root = os.path.join(config["cache"], "models--" + repo.replace("/", "--"))
+        marker_path = os.path.join(repo_root, ".mnemonic-ready.json")
+        if config.get("mode") == "download":
+            phase = "Downloading"
+            send(phase=phase)
+            repo = config["model"]
+            token = config.get("token") or False
+            common = dict(repo_id=repo, cache_dir=config["cache"], token=token)
+            # Select one weight format; never download duplicate PyTorch/TF/GGUF copies.
+            patterns = ["*.json", "*.jinja", "*.txt", "*.model", "*.tiktoken", "*.safetensors"]
+            files = snapshot_download(**common, allow_patterns=patterns, dry_run=True)
+            if not any(f.filename.endswith(".safetensors") for f in files):
+                raise ValueError("This runtime needs Transformers safetensors weights. GGUF, adapter-only, and other unsupported repositories need a compatible model repository.")
+            total = sum(f.file_size for f in files if f.will_download)
+            completed = 0
+            last = 0.0
 
-        class Progress(tqdm):
-            def update(self, n=1):
-                nonlocal last
-                result = super().update(n)
-                now = time.monotonic()
-                if now - last > 0.25:
-                    last = now
-                    send(phase="Downloading", downloaded=min(total, completed + int(self.n)), total=total)
-                return result
+            class Progress(tqdm):
+                def update(self, n=1):
+                    nonlocal last
+                    result = super().update(n)
+                    now = time.monotonic()
+                    if now - last > 0.25:
+                        last = now
+                        send(phase="Downloading", downloaded=min(total, completed + int(self.n)), total=total)
+                    return result
 
-        snapshot = None
-        for info in files:
-            filename = hf_hub_download(**common, revision=info.commit_hash, filename=info.filename, tqdm_class=Progress)
-            if info.will_download:
-                completed += info.file_size
-            send(phase=phase, downloaded=completed, total=total)
-            if info.filename == "config.json":
-                snapshot = os.path.dirname(filename)
-        if snapshot is None:
-            raise ValueError("Repository has no model config.json.")
+            snapshot = None
+            for info in files:
+                filename = hf_hub_download(**common, revision=info.commit_hash, filename=info.filename, tqdm_class=Progress)
+                if info.will_download:
+                    completed += info.file_size
+                send(phase=phase, downloaded=completed, total=total)
+                if info.filename == "config.json":
+                    snapshot = os.path.dirname(filename)
+            if snapshot is None:
+                raise ValueError("Repository has no model config.json.")
 
+            revision = next(info.commit_hash for info in files if info.filename == "config.json")
+            with open(marker_path + ".tmp", "w") as marker:
+                json.dump({"model": repo, "revision": revision, "files": [{"name": f.filename, "size": f.file_size} for f in files]}, marker)
+            os.replace(marker_path + ".tmp", marker_path)
+            send(phase="Ready")
+            # Parent confirms completion and removes the download container.
+            sys.stdin.read()
+            return
+        else:
+            try:
+                with open(marker_path) as marker:
+                    manifest = json.load(marker)
+                snapshot = os.path.join(repo_root, "snapshots", manifest["revision"])
+                if manifest["model"] != repo or not all(os.path.getsize(os.path.join(snapshot, f["name"])) == f["size"] for f in manifest["files"]):
+                    raise ValueError("Incomplete cache")
+            except (OSError, KeyError, ValueError):
+                raise ValueError("Download this model in Settings > Hugging Face before running the node.")
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
         phase = "Loading"
         send(phase=phase)
         tokenizer = AutoTokenizer.from_pretrained(snapshot, local_files_only=True, trust_remote_code=False)

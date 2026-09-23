@@ -17,6 +17,7 @@ async function setup(page: Page, outputs = 1) {
   await page.route("**/api/**", async (route) => {
     const req = route.request(); const url = new URL(req.url()); const path = url.pathname;
     const json = (body: unknown, status = 200) => route.fulfill({ status, json: body });
+    if (path === "/api/local-model/models") return json({ models: [], activity: null });
     if (path === "/api/models") return json({ models: ["test"] });
     if (path === "/api/sandbox") return json({ available: true });
     if (path === "/api/graph") {
@@ -160,8 +161,43 @@ test("local models force container switches on and unlock them when disabled", a
   await expect(switches.nth(1)).toBeDisabled();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("checkbox", { name: "Download and run models locally" }).press("Space");
+  await expect(page.getByRole("region", { name: "Downloaded models" })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: /Base URL/ })).toBeVisible();
   await expect(switches.first()).toBeEnabled();
   await expect(switches.first()).toBeChecked();
   await switches.first().press("Space");
   await expect(switches.first()).not.toBeChecked();
+});
+
+test("Hugging Face library downloads before runs, shows progress, and deletes cached models", async ({ page }) => {
+  await setup(page);
+  let models: any[] = [];
+  await page.route("**/api/models", (route) => route.fulfill({ json: { models: models.filter((m) => m.status === "Downloaded").map((m) => m.model) } }));
+  await page.route("**/api/settings", (route) => route.fulfill({ json: { provider: "huggingface", runLocally: true,
+    keySource: "none", hasPanelKey: false, baseUrl: "" } }));
+  await page.route("**/api/local-model/**", async (route) => {
+    const endpoint = new URL(route.request().url()).pathname;
+    if (endpoint.endsWith("/download")) {
+      expect(route.request().postDataJSON().model).toBe("org/model");
+      models = [{ model: "org/model", status: "Downloading", active: true, bytes: 0, downloaded: 50, total: 100 }];
+      return route.fulfill({ status: 202, json: { accepted: true } });
+    }
+    if (route.request().method() === "DELETE") { models = []; return route.fulfill({ json: { deleted: true } }); }
+    return route.fulfill({ json: { models, activity: models.some((m) => m.active) ? { model: "org/model", phase: "Downloading", downloaded: 50, total: 100 } : null } });
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const library = page.getByRole("region", { name: "Downloaded models" });
+  await library.getByRole("textbox", { name: "Hugging Face model ID" }).fill("org/model");
+  await library.getByRole("button", { name: "Download", exact: true }).click();
+  await expect(library.getByRole("progressbar")).toHaveAttribute("value", "50");
+  await expect(library.getByRole("button", { name: "Cancel download" })).toBeVisible();
+  models = [{ model: "org/model", status: "Downloaded", active: false, bytes: 1048576 }];
+  await expect(library.getByText("Downloaded · 1 MB cached")).toBeVisible();
+  const modelSelect = page.getByRole("combobox", { name: "Model", exact: true });
+  await expect(modelSelect).toBeVisible();
+  await modelSelect.selectOption("org/model");
+  await expect(modelSelect).toHaveValue("org/model");
+  await library.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(library.getByText("No local models downloaded yet.")).toBeVisible();
 });
