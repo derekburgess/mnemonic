@@ -29,8 +29,15 @@ export function SandboxToggle({ on, onChange }: { on: boolean; onChange: (v: boo
 
   return (
     <div className="stack">
-      <div className="sandbox-row">
-        <label className={`skip sandbox nodrag${on ? " on" : ""}`}>
+      <label
+        className={`sandbox-row nodrag${on ? " on" : ""}${locked ? " locked" : ""}`}
+        title={
+          available
+            ? `Each run of this step gets its own container (${status?.runtime} ${status?.version}), destroyed when the step returns.`
+            : (status?.reason ?? "Checking whether this machine can run containers…")
+        }
+      >
+        <span className="skip sandbox">
           <input
             type="checkbox"
             checked={on}
@@ -38,17 +45,9 @@ export function SandboxToggle({ on, onChange }: { on: boolean; onChange: (v: boo
             onChange={(e) => onChange(e.target.checked)}
           />
           <span className="track" aria-hidden="true" />
-        </label>
-        <span
-          title={
-            available
-              ? `Each run of this step gets its own container (${status?.runtime} ${status?.version}), destroyed when the step returns.`
-              : (status?.reason ?? "Checking whether this machine can run containers…")
-          }
-        >
-          Run in container
         </span>
-      </div>
+        <span>Run this node in a sandbox container</span>
+      </label>
 
       {/* A step that asked to be contained and cannot be will fail rather than quietly run on
           the host, so the reason belongs here, before it is run. */}

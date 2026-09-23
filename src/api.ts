@@ -10,7 +10,7 @@ export async function fetchModels(): Promise<string[]> {
     const res = await fetch("/api/models");
     if (!res.ok) throw new Error(String(res.status));
     const body = await res.json();
-    return Array.isArray(body.models) && body.models.length ? body.models : FALLBACK_MODELS;
+    return Array.isArray(body.models) ? body.models : FALLBACK_MODELS;
   } catch {
     return FALLBACK_MODELS;
   }
@@ -145,7 +145,7 @@ export async function pushGraph(nodes: unknown[], edges: unknown[], expectedRevi
   return body.updatedMs;
 }
 
-export type Provider = "openai" | "compatible";
+export type Provider = "openai" | "compatible" | "huggingface";
 
 export type PlatformSettings = {
   /** Where the key in use came from; the key itself never leaves the server. */

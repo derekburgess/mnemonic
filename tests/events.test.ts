@@ -5,6 +5,24 @@ import { event, deliveryState, sanitize, tracedFetch, type TraceEvent } from "..
 import { runChat } from "../server/providers.ts";
 import { buildTools } from "../server/tools.ts";
 
+test("connection failures retain the destination and nested cause without URL credentials", async (t) => {
+  const cause = Object.assign(new Error("connect ECONNREFUSED"), {
+    code: "ECONNREFUSED", address: "127.0.0.1", port: 8000,
+  });
+  t.mock.method(globalThis, "fetch", async () => { throw new TypeError("fetch failed", { cause }); });
+  const events: TraceEvent[] = [];
+  await assert.rejects(tracedFetch((e) => events.push(e), "container")(
+    "http://user:password@localhost:8000/v1/chat/completions?key=private"));
+  const failure = events.find((e) => e.kind === "model.http_error")!.detail as {
+    endpoint: string; error: { cause: { code: string; port: number } };
+  };
+  assert.equal(failure.endpoint, "http://localhost:8000/v1/chat/completions");
+  assert.equal(failure.error.cause.code, "ECONNREFUSED");
+  assert.equal(failure.error.cause.port, 8000);
+  assert.ok(!JSON.stringify(events).includes("password"));
+  assert.ok(!JSON.stringify(events).includes("private"));
+});
+
 test("redaction and size limits preserve tool correlation metadata", () => {
   const value = sanitize({ name: "tool", round: 3, ms: 25, authorization: "private",
     output: "secret-key" + "x".repeat(100_000) }, ["secret-key"]) as Record<string, unknown>;

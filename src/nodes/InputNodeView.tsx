@@ -166,7 +166,11 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
       <div className="row">
         <label>
           Model
-          <select
+          {models.length === 0 ? (
+            <input className="line nodrag" value={data.model}
+              placeholder="Model ID served by your local server"
+              onChange={(e) => onChange(id, { model: e.target.value })} />
+          ) : <select
             className="nodrag"
             value={data.model}
             onChange={(e) => onChange(id, { model: e.target.value })}
@@ -176,7 +180,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
                 {m}
               </option>
             ))}
-          </select>
+          </select>}
         </label>
       </div>
 

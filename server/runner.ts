@@ -25,7 +25,7 @@ globalThis.console = new Console({ stdout: process.stderr, stderr: process.stder
 export type Job = {
   apiKey: string;
   baseUrl?: string;
-  provider: "openai" | "compatible";
+  provider: "openai" | "compatible" | "huggingface";
   model: string;
   effort?: string;
   input: string;
@@ -141,7 +141,7 @@ async function main() {
     const { tools, dispatch } = await buildTools(job.tools ?? [], job.workspaces ?? [], (e) => emit({ ...e, source: "container" }));
     console.info(`[sandbox] Tools ready (${tools.length}); starting model run`);
     const budgetSec = job.timeoutSec && job.timeoutSec > 0 ? job.timeoutSec : 300;
-    const run = job.provider === "compatible" ? runChat : runResponses;
+    const run = job.provider !== "openai" ? runChat : runResponses;
 
     const result = await run({
       onEvent: emit,

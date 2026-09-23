@@ -82,7 +82,7 @@ function StepDetail({ step, onRecover, outputExecIds }: { step: TraceStep; onRec
       </Section>
 
       <Section title={`Timeline (${step.events?.length ?? 0})`} open>
-        <label>Show <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+        <label className="trace-filter"><span>Filter by</span><select value={filter} onChange={(e) => setFilter(e.target.value)}>
           {["all", "model", "tool", "container", "delivery", "graph"].map((name) => <option key={name}>{name}</option>)}
         </select></label>
         {timeline.length === 0 && <p className="dim">No events recorded.</p>}

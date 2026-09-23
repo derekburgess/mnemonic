@@ -5,7 +5,7 @@ import dotenv from "dotenv";
 import OpenAI from "openai";
 import { buildTools, listMcpTools, type ToolSpec } from "./tools.js";
 import { deleteRun, getRun, getStepResult, listRuns, recordStep, recordEvent, markInterrupted, getRunProgress } from "./trace.js";
-import { readSettings, resolveCredentials, writeSettings, type Provider } from "./settings.js";
+import { readSettings, resolveCredentials, writeSettings, sandboxModelUrl, type Provider } from "./settings.js";
 import { loadGraph, saveGraph, graphDb } from "./graphstore.js";
 import { TIMEOUT_MESSAGE, runChat, runResponses } from "./providers.js";
 import { check, describeWorkspaces, findFolder, nativePick } from "./workspace.js";
@@ -71,13 +71,22 @@ function usableModels(models: { id: string; created?: number }[]): string[] {
 /** The key itself is never sent back to the browser, only whether one is configured. */
 app.get("/api/settings", (_req, res) => {
   const { source, baseUrl, provider } = resolveCredentials();
-  res.json({ keySource: source, baseUrl: baseUrl ?? "", provider, hasPanelKey: !!readSettings().apiKey });
+  res.json({ keySource: source, baseUrl: baseUrl ?? "", provider, hasPanelKey: !!(resolveCredentials().provider === "huggingface" ? readSettings().localApiKey : readSettings().apiKey) });
 });
 
 app.post("/api/settings", (req, res) => {
   const { apiKey, baseUrl, provider } = req.body ?? {};
   if (apiKey !== undefined && typeof apiKey !== "string") {
     return res.status(400).json({ error: "apiKey must be a string" });
+  }
+  if (provider !== undefined && !["openai", "compatible", "huggingface"].includes(provider)) {
+    return res.status(400).json({ error: "Unknown provider" });
+  }
+  if (baseUrl) {
+    try {
+      const url = new URL(baseUrl);
+      if (!["http:", "https:"].includes(url.protocol)) throw new Error();
+    } catch { return res.status(400).json({ error: "Base URL must be an HTTP or HTTPS URL" }); }
   }
   try {
     writeSettings({
@@ -86,7 +95,7 @@ app.post("/api/settings", (req, res) => {
       ...(provider !== undefined ? { provider: provider as Provider } : {}),
     });
     const { source, baseUrl: url, provider: p } = resolveCredentials();
-    res.json({ keySource: source, baseUrl: url ?? "", provider: p, hasPanelKey: !!readSettings().apiKey });
+    res.json({ keySource: source, baseUrl: url ?? "", provider: p, hasPanelKey: !!(resolveCredentials().provider === "huggingface" ? readSettings().localApiKey : readSettings().apiKey) });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -98,13 +107,13 @@ app.get("/api/models", async (_req, res) => {
     // Another provider's catalogue is its own; curating it against OpenAI's naming would
     // throw away everything it offers.
     const ids =
-      resolveCredentials().provider === "compatible"
+      resolveCredentials().provider !== "openai"
         ? list.data.map((m) => m.id).sort()
         : usableModels(list.data);
-    res.json({ models: ids.length ? ids : FALLBACK_MODELS });
+    res.json({ models: ids.length ? ids : resolveCredentials().provider === "openai" ? FALLBACK_MODELS : [] });
   } catch (err) {
     console.warn("[mnemonic] model listing failed, serving fallback list:", (err as Error).message);
-    res.json({ models: FALLBACK_MODELS, fallback: true });
+    res.json({ models: resolveCredentials().provider === "openai" ? FALLBACK_MODELS : [], fallback: true });
   }
 });
 
@@ -191,7 +200,10 @@ async function runContained(args: {
   // or not the step is contained, instead of surfacing as a container that exited oddly.
   if (!args.job.apiKey) throw Object.assign(new Error(MISSING_KEY), { status: 401 });
 
-  const { result, stderr } = await runInSandbox(args.job, args.mounts, {
+  const job = args.job.provider === "huggingface" && args.job.baseUrl
+    ? { ...args.job, baseUrl: sandboxModelUrl(args.job.baseUrl) }
+    : args.job;
+  const { result, stderr } = await runInSandbox(job, args.mounts, {
     timeoutSec: args.budgetSec,
     onTrace: args.onTrace,
     onEvent: args.onEvent,
@@ -398,7 +410,7 @@ app.post("/api/run", async (req, res) => {
           const client = getClient();
           emit(event("proxy", "tools.preparing"));
           const { tools, dispatch } = await buildTools((toolSpecs ?? []) as ToolSpec[], roots, emit);
-          const run = provider === "compatible" ? runChat : runResponses;
+          const run = provider !== "openai" ? runChat : runResponses;
           return run({
             signal: AbortSignal.any([controller.signal, AbortSignal.timeout(budgetSec * 1000)]),
             client,

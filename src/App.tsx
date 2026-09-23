@@ -623,6 +623,12 @@ function Canvas() {
           </div>
 
           <div className="bar-right">
+            <div className="save-status" data-state={saveState.label} role="status" title={saveState.error}>
+              <span className="save-status-label">
+                <span className="save-status-dot" aria-hidden="true" />
+                {saveState.label}
+              </span>
+            </div>
             {running ? (
               <button className="tinted tint-err" onClick={stopRun}>
                 <Icon name="stop" /> Stop
@@ -664,12 +670,15 @@ function Canvas() {
           </div>
         </header>
 
-        <div className="save-status" role="status" title={saveState.error}>
-          {saveState.label}
-          {saveState.label === "Conflict" && <><span> — {saveState.error}</span>
-            <button onClick={() => void sync.current?.resolve("local")}>Keep local edits</button>
-            <button onClick={() => void sync.current?.resolve("remote")}>Load saved graph</button></>}
-        </div>
+        {saveState.label === "Conflict" && (
+          <div className="save-conflict">
+            <span className="save-status-detail">{saveState.error}</span>
+            <div className="save-status-actions">
+              <button onClick={() => void sync.current?.resolve("local")}>Keep local edits</button>
+              <button onClick={() => void sync.current?.resolve("remote")}>Load saved graph</button>
+            </div>
+          </div>
+        )}
 
         {notice && (
           <div className="notice" onClick={() => setNotice(null)}>
@@ -708,7 +717,7 @@ function Canvas() {
           </div>
 
           {panel === "trace" && <TracePanel onClose={() => setPanel(null)} onRecover={addSavedOutput} outputExecIds={nodes.filter(isOutput).map((n) => n.data.execId).filter((id): id is string => !!id)} />}
-          {panel === "settings" && <SettingsPanel onClose={() => setPanel(null)} />}
+          {panel === "settings" && <SettingsPanel onClose={() => setPanel(null)} onSaved={() => { void fetchModels().then(setModels); }} />}
         </div>
       </div>
     </GraphActionsContext.Provider>

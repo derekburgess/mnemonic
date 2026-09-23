@@ -85,7 +85,7 @@ body {
 }
 .toolbar .gap { flex: none; width: 10px; }
 
-button, .file {
+button, .file, .sandbox-row {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -491,11 +491,11 @@ textarea.text { font-family: inherit; resize: both; }
 .sandbox-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--dim);
+  user-select: none;
 }
-.sandbox-row .skip.on + span { color: var(--accent); }
+.sandbox-row:hover:not(.locked), .sandbox-row:focus-within { border-color: var(--accent); }
+.sandbox-row.on { color: var(--accent); }
+.sandbox-row.locked, .sandbox-row.locked .skip { cursor: not-allowed; }
 
 /* A skipped node stays legible but visibly out of play. */
 .node.skipped { opacity: 0.55; }
@@ -601,7 +601,15 @@ textarea.text { font-family: inherit; resize: both; }
 
 /* ---------- attachments ---------- */
 
-.attach { justify-content: flex-start; height: 28px; font-size: var(--field-font); }
+.attach, .sandbox-row {
+  justify-content: flex-start;
+  height: 28px;
+  padding: 0 12px;
+  gap: 6px;
+  font-size: var(--field-font);
+}
+
+.sandbox-row { padding-left: 6px; }
 
 /* Just the name (or URL) and its remove button; no surrounding chrome. */
 .attachment {
@@ -1025,12 +1033,17 @@ body.resizing-col { cursor: col-resize; user-select: none; }
 .trace-section > summary {
   padding: 6px 9px;
   cursor: pointer;
+  user-select: none;
+}
+.trace-section > summary, .trace-filter > span {
   font-size: 11px;
   color: var(--dim);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  user-select: none;
 }
+.trace-filter { display: flex; align-items: center; gap: 8px; }
+.trace-filter > span { flex: none; }
+.trace-filter > select { width: auto; min-width: 0; flex: 1; }
 .trace-section > summary:hover { color: var(--text); }
 .trace-body { padding: 0 9px 9px; display: flex; flex-direction: column; gap: 6px; }
 
@@ -1062,5 +1075,50 @@ body.resizing-col { cursor: col-resize; user-select: none; }
   border-color: var(--err);
 }
 
-.save-status { display: flex; align-items: center; gap: 10px; padding: 6px 18px; color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--border); }
+.save-status {
+  --status-color: var(--accent);
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: 32px;
+  padding: 0 6px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.save-conflict {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  min-height: 32px;
+  padding: 5px 14px;
+  background: var(--panel);
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.5;
+  border-bottom: 1px solid var(--line);
+}
+.save-status[data-state="Saved"] { --status-color: var(--ok); }
+.save-status[data-state="Cached locally"],
+.save-status[data-state="Conflict"] { --status-color: var(--warn); }
+.save-status[data-state="Not saved"] { --status-color: var(--err); }
+.save-status-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  color: var(--status-color);
+  font-weight: 500;
+}
+.save-status-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+.save-status-detail { flex: 1 1 240px; overflow-wrap: anywhere; }
+.save-status-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.save-status-actions button { min-height: 24px; padding: 2px 8px; font-size: inherit; }
 .trace-overview { padding: 10px 0; }

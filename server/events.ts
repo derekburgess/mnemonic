@@ -58,21 +58,28 @@ export function tracedFetch(emit: EmitEvent, source: TraceEvent["source"]): type
     const started = Date.now();
     const headers = new Headers(init?.headers);
     const retry = Number(headers.get("x-stainless-retry-count") ?? 0);
-    emit(event(source, "model.http_attempt", { retry }));
+    const target = new URL(input instanceof Request ? input.url : String(input));
+    // Keep the destination, but never URL credentials or query parameters.
+    const endpoint = `${target.protocol}//${target.host}${target.pathname}`;
+    emit(event(source, "model.http_attempt", { retry, endpoint }));
     try {
       const response = await fetch(input, init);
       emit(event(source, "model.http_response", { retry, status: response.status,
         requestId: response.headers.get("x-request-id"), retryAfter: response.headers.get("retry-after"), ms: Date.now() - started }));
       return response;
     } catch (err) {
-      emit(event(source, "model.http_error", { retry, ms: Date.now() - started, error: errorDetail(err) }));
+      emit(event(source, "model.http_error", { retry, endpoint, ms: Date.now() - started, error: errorDetail(err) }));
       throw err;
     }
   };
 }
 
-export function errorDetail(err: unknown) {
-  const e = err as { name?: string; message?: string; code?: unknown; status?: number };
+export function errorDetail(err: unknown, depth = 0): Record<string, unknown> {
+  const e = err as { name?: string; message?: string; code?: unknown; status?: number;
+    cause?: unknown; errors?: unknown[]; syscall?: string; address?: string; port?: number };
   return { name: e?.name, message: e?.message ?? String(err), code: e?.code, status: e?.status,
+    syscall: e?.syscall, address: e?.address, port: e?.port,
+    ...(depth < 3 && e?.cause ? { cause: errorDetail(e.cause, depth + 1) } : {}),
+    ...(depth < 3 && Array.isArray(e?.errors) ? { errors: e.errors.slice(0, 8).map((cause) => errorDetail(cause, depth + 1)) } : {}),
     timeout: /timeout|timed out|exceeded|abort/i.test(`${e?.name} ${e?.message}`) };
 }
