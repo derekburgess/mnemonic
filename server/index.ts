@@ -1,6 +1,6 @@
 import { event, sanitize, redactText, errorDetail, type EmitEvent } from "./events.js";
 import express from "express";
-import { listLibrary, startDownload, cancelDownload, deleteDownload, modelDownloaded } from "./modelLibrary.js";
+import { listLibrary, startDownload, cancelDownload, deleteDownload, modelDownloaded, setModelGpu, modelUsesGpu } from "./modelLibrary.js";
 import { sweepLocalModels } from "./localModelContainer.js";
 import { localActivity, localCompletion, withLocalModel } from "./localModels.js";
 import cors from "cors";
@@ -73,6 +73,10 @@ function usableModels(models: { id: string; created?: number }[]): string[] {
 
 /** The key itself is never sent back to the browser, only whether one is configured. */
 app.get("/api/local-model/models", (_req, res) => res.json({ models: listLibrary(), activity: localActivity() }));
+app.post("/api/local-model/gpu", (req, res) => {
+  try { setModelGpu(req.body?.model, req.body?.useGpu); res.json({ saved: true }); }
+  catch (err) { res.status(400).json({ error: (err as Error).message }); }
+});
 app.post("/api/local-model/download", (req, res) => {
   try { startDownload(req.body?.model); res.status(202).json({ accepted: true }); }
   catch (err) { res.status(400).json({ error: (err as Error).message }); }
@@ -465,7 +469,7 @@ app.post("/api/run", async (req, res) => {
     const address = server.address();
     const result = managedLocal
       ? await withLocalModel({ model, nodeId: trace.nodeId, token: readSettings().localApiKey,
-          signal: localSignal, emit }, execute,
+          signal: localSignal, useGpu: modelUsesGpu(model), emit }, execute,
           typeof address === "object" && address ? address.port : PORT)
       : await execute(credentials);
 

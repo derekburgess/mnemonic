@@ -36,14 +36,13 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
   });
 }
 
-export async function prepareModelContainer(signal: AbortSignal, emit: EmitEvent, phase: (name: string) => void, downloading = false) {
-  const runtimes = await docker(["info", "--format", "{{json .Runtimes}}"], signal)
+export async function prepareModelContainer(signal: AbortSignal, emit: EmitEvent, phase: (name: string) => void, downloading = false, useGpu = false) {
+  await docker(["info", "--format", "{{json .Runtimes}}"], signal)
     .catch(() => { throw new Error("Local models require a running Docker daemon. Start Docker and retry."); });
   signal.throwIfAborted();
   await sweepLocalModels();
-  const setting = process.env.MNEMONIC_MODEL_DEVICE ?? "auto";
-  if (!["auto", "cpu", "cuda"].includes(setting)) throw new Error("MNEMONIC_MODEL_DEVICE must be auto, cpu or cuda.");
-  const gpu = setting === "cuda" || (setting === "auto" && Object.hasOwn(JSON.parse(runtimes || "{}"), "nvidia"));
+  // Downloading only populates the cache; GPU access is an explicit inference setting.
+  const gpu = !downloading && useGpu;
   const hash = createHash("sha256").update(gpu ? "cuda" : "cpu");
   for (const file of ["Dockerfile", "requirements.txt", "worker.py"]) hash.update(readFileSync(path.join(root, file)));
   const image = `mnemonic-local-model:${hash.digest("hex").slice(0, 12)}`;

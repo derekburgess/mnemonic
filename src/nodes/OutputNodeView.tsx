@@ -87,7 +87,9 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
           />
         ) : (
           <div {...textProps} className="text md nodrag nowheel">
-            {data.text ? (
+            {data.kind === "thinking" ? (
+              <div style={{ whiteSpace: "pre-wrap" }}>{data.text}</div>
+            ) : data.text ? (
               // GFM for tables and strikethrough; breaks so single newlines survive as written.
               <Markdown remarkPlugins={[remarkGfm, remarkBreaks]}>{data.text}</Markdown>
             ) : (

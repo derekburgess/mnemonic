@@ -1,4 +1,3 @@
-import { LocalModelStatus } from "./LocalModelStatus";
 import { GraphSync, type SaveState } from "./graphSync";
 import { rememberExecutions, pendingExecutions, forgetExecutions, cancelPending } from "./pendingExecutions";
 import { reportTraceEvent } from "./traceEvents";
@@ -633,7 +632,6 @@ function Canvas() {
           </div>
 
           <div className="bar-right">
-            <LocalModelStatus />
             <div className="save-status" data-state={saveState.label} role="status" title={saveState.error}>
               <span className="save-status-label">
                 <span className="save-status-dot" aria-hidden="true" />

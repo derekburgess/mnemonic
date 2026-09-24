@@ -75,6 +75,7 @@ export type ToolConfig = {
 export type ToolCallRecord = { name: string; detail?: string; urls?: string[] };
 
 export type OutputData = {
+  kind?: "thinking";
   execId?: string;
   runId?: string;
   /** Which input node produced this artifact. Outputs are immutable records of one run. */

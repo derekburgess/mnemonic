@@ -502,9 +502,9 @@ src/TracePanel.tsx  the trace accordion
 Local inference requires Docker. The first run builds a dedicated Transformers image, with
 Python and model dependencies installed inside it; no host Python environment is required.
 The runtime image is rebuilt automatically when its Dockerfile, dependencies or worker change.
-NVIDIA inference is selected when Docker reports the NVIDIA runtime; otherwise CPU is used.
-Set `MNEMONIC_MODEL_DEVICE=cpu` or `cuda` to override auto-detection. CUDA requires NVIDIA
-Container Toolkit configured for Docker. Apple Metal is not available inside this Linux runtime.
+Inference uses CPU by default. Enable **Use GPU** on a downloaded model’s card in Settings for
+NVIDIA inference. This replaces automatic detection and `MNEMONIC_MODEL_DEVICE` overrides.
+Downloads always use CPU containers. GPU inference requires NVIDIA Container Toolkit configured for Docker. Apple Metal is not available inside this Linux runtime.
 Select **Hugging Face** in Settings and enable **Download and run models locally**.
 Add a Hugging Face repository ID to the **Local models** list in Settings and click **Download**.
 Wait for **Downloaded**, then select or type that ID in the node; no OpenAI key is needed.

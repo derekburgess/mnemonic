@@ -160,6 +160,16 @@ export function composeSystem(
   return system || undefined;
 }
 
+/** Extract complete model-emitted thinking blocks without altering their tags or contents. */
+export function splitThinking(text: string): { thinking: string; answer: string } {
+  const blocks: string[] = [];
+  const answer = text.replace(/<(think|thinking)>[\s\S]*?<\/\1>/gi, (block) => {
+    blocks.push(block);
+    return "";
+  });
+  return { thinking: blocks.join("\n\n"), answer: blocks.length ? answer.trim() : text };
+}
+
 export type RunResult = Omit<OutputData, "sourceId" | "sourceLabel" | "createdAt">;
 
 /**
@@ -174,18 +184,29 @@ export function commitRun(
   results: RunResult[],
   options: { append?: boolean } = {},
 ): { nodes: GraphNode[]; edges: GraphEdge[]; outputIds: string[] } {
-  const existing = new Map(nodes.filter(isOutput).filter((n) => n.data.execId).map((n) => [n.data.execId, n.id]));
+  const existing = new Map(nodes.filter(isOutput).filter((n) => n.data.execId && n.data.kind !== "thinking").map((n) => [n.data.execId, n.id]));
   const unique = results.filter((result, i) => !result.execId || (!existing.has(result.execId) && results.findIndex((r) => r.execId === result.execId) === i));
   if (!unique.length) return { nodes, edges, outputIds: results.map((r) => existing.get(r.execId)!).filter(Boolean) };
   const map = byId(nodes);
 
-  const activeOutputIds = new Set(
+  const activeRootIds = new Set(
     edges
       .filter((e) => e.source === producer.id)
       .map((e) => map.get(e.target))
       .filter((n): n is OutputNode => !!n && isOutput(n))
       .map((n) => n.id),
   );
+
+  const activeOutputIds = new Set([...activeRootIds].filter((id) => {
+    const node = map.get(id);
+    return node && isOutput(node) && node.data.kind !== "thinking";
+  }));
+  for (const edge of edges) {
+    const root = map.get(edge.source);
+    const target = map.get(edge.target);
+    if (activeRootIds.has(edge.source) && root && isOutput(root) && root.data.kind === "thinking"
+        && target && isOutput(target) && target.data.kind !== "thinking") activeOutputIds.add(target.id);
+  }
 
   // Pre-wiring materialises once there is an artifact: a step pointing straight at another step
   // gets that edge re-pointed at the new artifact.
@@ -201,15 +222,35 @@ export function commitRun(
   const beside = { x: producer.position.x + boxOf(producer).w + GAP, y: producer.position.y };
   const createdAt = Date.now();
 
+  const thinkingNodes: OutputNode[] = [];
+  const resultEdges: GraphEdge[] = [];
   const outputs: OutputNode[] = unique.map((result) => {
-    const position = freeSpot(beside, taken);
+    const { thinking, answer } = splitThinking(result.text);
+    let source = producer.id;
+    let desired = beside;
+    if (thinking) {
+      const position = freeSpot(beside, taken);
+      taken.push({ ...position, w: NODE_SIZE.width, h: NODE_SIZE.height });
+      const node: OutputNode = { id: uid(), type: "artifact", position, data: {
+        kind: "thinking", text: thinking, sourceId: producer.id, sourceLabel: producer.data.label,
+        model: result.model, effort: result.effort, createdAt, runId: result.runId,
+      } };
+      thinkingNodes.push(node);
+      resultEdges.push({ id: uid(), source: producer.id, target: node.id });
+      source = node.id;
+      desired = { x: position.x + NODE_SIZE.width + GAP, y: position.y };
+    }
+    const position = freeSpot(desired, taken);
     taken.push({ x: position.x, y: position.y, w: NODE_SIZE.width, h: NODE_SIZE.height });
+    const id = uid();
+    resultEdges.push({ id: uid(), source, target: id });
     return {
-      id: uid(),
+      id,
       type: "artifact",
       position,
       data: {
         ...result,
+        text: answer,
         sourceId: producer.id,
         sourceLabel: producer.data.label,
         createdAt,
@@ -218,7 +259,7 @@ export function commitRun(
   });
   const stale = new Set([...(options.append ? [] : inherited), ...prewired].map((e) => e.id));
   const kept = edges.filter(
-    (e) => !stale.has(e.id) && !(!options.append && e.source === producer.id && activeOutputIds.has(e.target)),
+    (e) => !stale.has(e.id) && !(!options.append && e.source === producer.id && activeRootIds.has(e.target)),
   );
 
   // Every sibling of a fan-out feeds the same consumers, so a downstream step sees all N
@@ -230,12 +271,12 @@ export function commitRun(
   );
 
   return {
-    nodes: [...nodes, ...outputs],
+    nodes: [...nodes, ...thinkingNodes, ...outputs],
     edges: [
       ...kept,
-      ...outputs.map((o) => ({ id: uid(), source: producer.id, target: o.id })),
+      ...resultEdges,
       ...migrated,
     ],
-    outputIds: results.map((r) => existing.get(r.execId) ?? outputs.find((o) => r.execId ? o.data.execId === r.execId : o.data.text === r.text)?.id).filter((id): id is string => !!id),
+    outputIds: results.map((r) => existing.get(r.execId) ?? outputs[r.execId ? unique.findIndex((u) => u.execId === r.execId) : unique.indexOf(r)]?.id).filter((id): id is string => !!id),
   };
 }

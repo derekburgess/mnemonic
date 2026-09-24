@@ -130,20 +130,6 @@ test("a newer remote revision cannot overwrite local edits silently", async ({ p
   expect(state.graph.nodes[0].data.label).toBe("Local branch");
 });
 
-test("local model download progress shares the header with save status", async ({ page }) => {
-  await setup(page);
-  await page.route("**/api/local-model/status", (route) => route.fulfill({ json: {
-    activity: { phase: "Downloading", model: "org/model", downloaded: 52428800, total: 104857600, queued: 1 },
-  } }));
-  await page.goto("/");
-  const header = page.locator("header.toolbar");
-  await expect(header.getByText("Downloading · org/model · 1 queued")).toBeVisible();
-  await expect(header.getByRole("progressbar")).toHaveAttribute("value", "52428800");
-  await expect(header.getByText("50 MB / 100 MB")).toBeVisible();
-  await expect(header.locator(".save-status")).toBeVisible();
-});
-
-
 test("local models force container switches on and unlock them when disabled", async ({ page }) => {
   await setup(page);
   let settings = { provider: "huggingface", runLocally: true, keySource: "none", baseUrl: "", hasPanelKey: false };
@@ -161,6 +147,7 @@ test("local models force container switches on and unlock them when disabled", a
   await expect(switches.nth(1)).toBeDisabled();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("checkbox", { name: "Download and run models locally" }).press("Space");
+
   await expect(page.getByRole("region", { name: "Downloaded models" })).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: /Base URL/ })).toBeVisible();
   await expect(switches.first()).toBeEnabled();
@@ -177,6 +164,11 @@ test("Hugging Face library downloads before runs, shows progress, and deletes ca
     keySource: "none", hasPanelKey: false, baseUrl: "" } }));
   await page.route("**/api/local-model/**", async (route) => {
     const endpoint = new URL(route.request().url()).pathname;
+    if (endpoint.endsWith("/gpu")) {
+      const { model, useGpu } = route.request().postDataJSON();
+      models = models.map((entry) => entry.model === model ? { ...entry, useGpu } : entry);
+      return route.fulfill({ json: { saved: true } });
+    }
     if (endpoint.endsWith("/download")) {
       expect(route.request().postDataJSON().model).toBe("org/model");
       models = [{ model: "org/model", status: "Downloading", active: true, bytes: 0, downloaded: 50, total: 100 }];
@@ -192,12 +184,37 @@ test("Hugging Face library downloads before runs, shows progress, and deletes ca
   await library.getByRole("button", { name: "Download", exact: true }).click();
   await expect(library.getByRole("progressbar")).toHaveAttribute("value", "50");
   await expect(library.getByRole("button", { name: "Cancel download" })).toBeVisible();
+  await expect(library.getByRole("checkbox", { name: "Use GPU" })).toHaveCount(0);
   models = [{ model: "org/model", status: "Downloaded", active: false, bytes: 1048576 }];
   await expect(library.getByText("Downloaded · 1 MB cached")).toBeVisible();
+  const gpu = library.getByRole("checkbox", { name: "Use GPU" });
+  await expect(gpu).not.toBeChecked();
+  await gpu.press("Space");
+  await expect(gpu).toBeChecked();
+  expect(models[0].useGpu).toBe(true);
   const modelSelect = page.getByRole("combobox", { name: "Model", exact: true });
   await expect(modelSelect).toBeVisible();
   await modelSelect.selectOption("org/model");
   await expect(modelSelect).toHaveValue("org/model");
   await library.getByRole("button", { name: "Delete", exact: true }).click();
   await expect(library.getByText("No local models downloaded yet.")).toBeVisible();
+});
+
+test("tagged thinking appears between the step and answer with visible tags", async ({ page }) => {
+  await setup(page);
+  await page.route("**/api/executions/**", (route) => route.fulfill({ json: {
+    status: "ok", text: "<think>Keep these tags.</think>\n\nHello!", model: "test",
+  } }));
+  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  const artifacts = page.locator(".react-flow__node-artifact");
+  await expect(artifacts).toHaveCount(2);
+  const thinking = artifacts.filter({ hasText: "<think>Keep these tags.</think>" });
+  await expect(thinking.locator(".node-head strong")).toHaveText("test");
+  await expect(thinking.locator(".text")).toHaveText("<think>Keep these tags.</think>");
+  const answer = artifacts.filter({ has: page.getByText("Hello!", { exact: true }) });
+  await expect(answer.locator(".text")).toHaveText("Hello!");
+  await expect(page.locator(".save-status")).toHaveText("Saved");
+  await page.reload();
+  await expect(artifacts).toHaveCount(2);
+  await expect(thinking.locator(".text")).toHaveText("<think>Keep these tags.</think>");
 });

@@ -17,6 +17,34 @@ def send(**payload):
     protocol.flush()
 
 
+def download_progress(tqdm, report):
+    """Keep byte accounting independent of tqdm's disabled/non-TTY counter."""
+    class Progress(tqdm):
+        def __init__(self, *args, **kwargs):
+            self.download_bytes = kwargs.get("initial", 0)
+            self.last_report = 0.0
+            super().__init__(*args, **kwargs)
+            self.report_bytes(force=True)
+
+        def report_bytes(self, force=False):
+            now = time.monotonic()
+            if force or now - self.last_report >= 0.25:
+                self.last_report = now
+                report(int(self.download_bytes))
+
+        def update(self, n=1):
+            self.download_bytes += n
+            result = super().update(n)
+            self.report_bytes()
+            return result
+
+        def close(self):
+            self.report_bytes(force=True)
+            return super().close()
+
+    return Progress
+
+
 def describe_error(error, phase):
     message = str(error)
     low = message.lower()
@@ -53,7 +81,7 @@ def main():
         repo_root = os.path.join(config["cache"], "models--" + repo.replace("/", "--"))
         marker_path = os.path.join(repo_root, ".mnemonic-ready.json")
         if config.get("mode") == "download":
-            phase = "Downloading"
+            phase = "Checking files"
             send(phase=phase)
             repo = config["model"]
             token = config.get("token") or False
@@ -63,22 +91,17 @@ def main():
             files = snapshot_download(**common, allow_patterns=patterns, dry_run=True)
             if not any(f.filename.endswith(".safetensors") for f in files):
                 raise ValueError("This runtime needs Transformers safetensors weights. GGUF, adapter-only, and other unsupported repositories need a compatible model repository.")
-            total = sum(f.file_size for f in files if f.will_download)
-            completed = 0
-            last = 0.0
-
-            class Progress(tqdm):
-                def update(self, n=1):
-                    nonlocal last
-                    result = super().update(n)
-                    now = time.monotonic()
-                    if now - last > 0.25:
-                        last = now
-                        send(phase="Downloading", downloaded=min(total, completed + int(self.n)), total=total)
-                    return result
+            total = sum(f.file_size for f in files)
+            completed = sum(f.file_size for f in files if not f.will_download)
+            phase = "Downloading"
+            send(phase=phase, downloaded=completed, total=total)
 
             snapshot = None
             for info in files:
+                # Capture each file's offset; resumed HTTP transfers include their initial bytes.
+                offset, file_size = completed, info.file_size if info.will_download else 0
+                Progress = download_progress(tqdm, lambda count, offset=offset, file_size=file_size:
+                    send(phase="Downloading", downloaded=offset + min(file_size, max(0, count)), total=total))
                 filename = hf_hub_download(**common, revision=info.commit_hash, filename=info.filename, tqdm_class=Progress)
                 if info.will_download:
                     completed += info.file_size
@@ -112,6 +135,8 @@ def main():
         tokenizer = AutoTokenizer.from_pretrained(snapshot, local_files_only=True, trust_remote_code=False)
         if not tokenizer.chat_template:
             raise ValueError("This model has no chat template. Select a chat/instruction model with a tokenizer chat template.")
+        if config.get("useGpu") and not torch.cuda.is_available():
+            raise RuntimeError("GPU was requested but CUDA is unavailable in the container. Check Docker GPU support or turn off Use GPU in Settings.")
         device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
         model = AutoModelForCausalLM.from_pretrained(snapshot, local_files_only=True, trust_remote_code=False,
                                                    use_safetensors=True, dtype="auto", device_map=device)

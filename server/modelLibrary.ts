@@ -7,7 +7,7 @@ import { redactText } from "./events.js";
 
 const cache = path.resolve("data/models");
 const indexFile = path.resolve("data/model-downloads.json");
-type RecordEntry = { status: string; error?: string };
+type RecordEntry = { status: string; error?: string; useGpu?: boolean };
 export type LibraryModel = RecordEntry & { model: string; bytes: number; active: boolean; downloaded?: number; total?: number };
 const tasks = new Map<string, { controller: AbortController; status: string; downloaded?: number; total?: number }>();
 let index: Record<string, RecordEntry> = Object.create(null);
@@ -61,9 +61,25 @@ export function listLibrary(): LibraryModel[] {
     const task = tasks.get(model);
     const ready = modelDownloaded(model);
     const stored = index[model];
-    return { model, bytes: diskBytes(model), active: !!task, status: task?.status ?? (ready ? "Downloaded" : stored?.status === "Error" || stored?.status === "Cancelled" ? stored.status : "Incomplete"),
+    return { model, useGpu: modelUsesGpu(model), bytes: diskBytes(model), active: !!task, status: task?.status ?? (ready ? "Downloaded" : stored?.status === "Error" || stored?.status === "Cancelled" ? stored.status : "Incomplete"),
       error: task || ready ? undefined : stored?.error, downloaded: task?.downloaded, total: task?.total };
   });
+}
+
+export function modelUsesGpu(model: string): boolean {
+  return index[validateModelId(model)]?.useGpu === true;
+}
+
+export function setModelGpu(value: unknown, useGpu: unknown) {
+  const model = validateModelId(value);
+  if (typeof useGpu !== "boolean") throw new Error("useGpu must be a boolean");
+  if (tasks.has(model) || !modelDownloaded(model)) throw new Error("Download this model before changing its GPU setting.");
+  const previous = index[model];
+  index[model] = { ...previous, status: "Downloaded", useGpu };
+  try { saveIndex(); } catch (err) {
+    if (previous) index[model] = previous; else delete index[model];
+    throw err;
+  }
 }
 
 export function startDownload(value: unknown) {

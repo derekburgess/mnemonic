@@ -1123,13 +1123,6 @@ body.resizing-col { cursor: col-resize; user-select: none; }
 .save-status-actions button { min-height: 24px; padding: 2px 8px; font-size: inherit; }
 .trace-overview { padding: 10px 0; }
 
-/* Model activity shares the header with the graph save indicator. */
-.local-model-status { min-width: 0; max-width: 240px; color: var(--dim); font-size: 11px; }
-.local-model-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.local-model-progress { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
-.local-model-progress progress { min-width: 40px; width: 90px; height: 6px; accent-color: var(--accent); }
-.local-model-progress span { white-space: nowrap; }
-
 .model-library { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 10px; }
 .model-library h3 { margin: 0; font-size: 12px; font-weight: 600; }
 .model-download-form { display: flex; align-items: flex-end; gap: 8px; margin-bottom: 10px; }

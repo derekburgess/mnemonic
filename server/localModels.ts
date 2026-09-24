@@ -38,6 +38,7 @@ export async function localCompletion(token: string, body: { model?: string }): 
 
 export async function withLocalModel<T>(options: {
   mode?: "download";
+  useGpu?: boolean;
   model: string; nodeId?: string; token?: string; signal: AbortSignal; emit: EmitEvent;
   /** Explicit test transport; production always uses Docker. */
   testWorker?: { command: string; script: string };
@@ -60,7 +61,7 @@ export async function withLocalModel<T>(options: {
     mkdirSync(path.resolve("data/models"), { recursive: true });
     const transport = options.testWorker
       ? { command: options.testWorker.command, args: ["-u", options.testWorker.script], cache: path.resolve("data/models") }
-      : await prepareModelContainer(options.signal, options.emit, (phase) => update({ phase }), options.mode === "download");
+      : await prepareModelContainer(options.signal, options.emit, (phase) => update({ phase }), options.mode === "download", options.useGpu);
     if ("name" in transport) containerName = transport.name;
     child = spawn(transport.command, transport.args, { stdio: ["pipe", "pipe", "pipe"] });
     const worker = child;
@@ -94,9 +95,10 @@ export async function withLocalModel<T>(options: {
           const state = await inspectModelContainer(containerName);
           options.emit(event("proxy", "local.container_state", state));
           if (state.OOMKilled) failure = new Error("Insufficient memory: Docker killed the model container. Choose a smaller model or increase Docker's memory allocation.");
+          else if (state.Error) failure = new Error(`Model container failed: ${redactText(state.Error, [options.token ?? ""])}`);
         } catch { /* Retain uncertainty when Docker inspection is unavailable. */ }
       }
-      fail(failure ?? new Error(`Model worker exited unexpectedly (code ${code}, signal ${signal ?? "none"}). Memory exhaustion is possible but not confirmed. See the local worker trace.`));
+      fail(failure ?? new Error(`Model worker exited unexpectedly (code ${code}, signal ${signal ?? "none"}). ${stderr.trim() || "See the local worker trace."}`));
     });
     const lines = createInterface({ input: worker.stdout });
     lines.on("line", (line) => {
@@ -110,7 +112,7 @@ export async function withLocalModel<T>(options: {
         else if (reply.phase) { update(reply); if (reply.phase === "Ready") readyResolve(); }
       } catch { /* Third-party stdout is not part of the worker protocol. */ }
     });
-    worker.stdin.write(JSON.stringify({ model: options.model, token: options.token || null, mode: options.mode ?? "inference", cache: transport.cache }) + "\n");
+    worker.stdin.write(JSON.stringify({ model: options.model, token: options.token || null, mode: options.mode ?? "inference", useGpu: !!options.useGpu, cache: transport.cache }) + "\n");
     if (options.signal.aborted) abort();
     await ready;
     key = crypto.randomUUID();
