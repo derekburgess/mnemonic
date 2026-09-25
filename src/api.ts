@@ -64,7 +64,7 @@ export function toolSpec(d: ToolConfig): Record<string, unknown> {
   };
 }
 
-export type SandboxStatus = { available: boolean; runtime?: string; version?: string; reason?: string };
+export type SandboxStatus = { available: boolean; gpuSupported?: boolean; runtime?: string; version?: string; reason?: string };
 
 /** Whether the proxy could run a step in a container, so the toggle can say why not. */
 export async function fetchSandboxStatus(): Promise<SandboxStatus> {
@@ -281,6 +281,7 @@ export async function runStep(
     links?: string[];
     workspaces?: string[];
     sandbox?: boolean;
+    useGpu?: boolean;
     trace?: TraceMeta;
   },
   signal?: AbortSignal,

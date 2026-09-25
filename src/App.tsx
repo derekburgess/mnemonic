@@ -291,6 +291,7 @@ function Canvas() {
               links: producer.data.links?.map((l) => l.url).filter((url) => url.trim()),
               workspaces: producer.data.workspaces?.map((w) => w.path).filter((p) => p.trim()),
               sandbox: localModelsRequired || producer.data.sandbox,
+              useGpu: localModelsRequired && !!producer.data.useGpu,
               ...(execution
                 ? {
                     trace: {

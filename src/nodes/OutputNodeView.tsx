@@ -72,7 +72,7 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
             {data.edited && " · edited"}
           </span>
         </div>
-        <SkipToggle on={skipped} onChange={(v) => setSkipped(id, v)} title="Withhold this output from downstream context" />
+        <SkipToggle on={skipped} onChange={(v) => setSkipped(id, v)} title="Skip this node" />
         <DeleteButton onClick={() => onDelete(id)} title="Delete output" />
       </header>
 

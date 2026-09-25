@@ -11,7 +11,7 @@ import { fetchSandboxStatus, type SandboxStatus } from "../api";
 let asked: Promise<SandboxStatus> | null = null;
 const sandboxStatus = () => (asked ??= fetchSandboxStatus());
 
-export function SandboxToggle({ on, onChange, required = false }: { on: boolean; required?: boolean; onChange: (v: boolean) => void }) {
+export function SandboxToggle({ on, onChange, required = false, useGpu = false, onGpuChange }: { useGpu?: boolean; onGpuChange: (v: boolean) => void; on: boolean; required?: boolean; onChange: (v: boolean) => void }) {
   const [status, setStatus] = useState<SandboxStatus | null>(null);
 
   useEffect(() => {
@@ -29,15 +29,10 @@ export function SandboxToggle({ on, onChange, required = false }: { on: boolean;
 
   return (
     <div className="stack">
+      <div className="sandbox-row sandbox-controls nodrag">
       <label
-        className={`sandbox-row nodrag${on ? " on" : ""}${locked ? " locked" : ""}`}
-        title={
-          required
-            ? "Required for local models. Disable Download and run models locally in Settings to unlock this switch."
-            : available
-            ? `Each run of this step gets its own container (${status?.runtime} ${status?.version}), destroyed when the step returns.`
-            : (status?.reason ?? "Checking whether this machine can run containers…")
-        }
+        className={`sandbox-control${on ? " on" : ""}${locked ? " locked" : ""}`}
+        title="Required for running local models."
       >
         <span className="skip sandbox">
           <input
@@ -48,10 +43,18 @@ export function SandboxToggle({ on, onChange, required = false }: { on: boolean;
           />
           <span className="track" aria-hidden="true" />
         </span>
-        <span>Run this node in a sandbox container</span>
+        <span>Run in a sandbox</span>
       </label>
 
-      {required && <p className="ws-note nodrag">Required for local models. Disable local model mode in Settings to unlock.</p>}
+      {required && <label className="sandbox-control">
+        <span className="skip sandbox">
+          <input type="checkbox" checked={useGpu} disabled={!on || status?.gpuSupported === false}
+            onChange={(e) => onGpuChange(e.target.checked)} />
+          <span className="track" aria-hidden="true" />
+        </span>
+        <span>Use GPU</span>
+      </label>}
+      </div>
 
       {/* A step that asked to be contained and cannot be will fail rather than quietly run on
           the host, so the reason belongs here, before it is run. */}

@@ -1,6 +1,6 @@
 import { event, sanitize, redactText, errorDetail, type EmitEvent } from "./events.js";
 import express from "express";
-import { listLibrary, startDownload, cancelDownload, deleteDownload, modelDownloaded, setModelGpu, modelUsesGpu } from "./modelLibrary.js";
+import { listLibrary, startDownload, cancelDownload, deleteDownload, modelDownloaded } from "./modelLibrary.js";
 import { sweepLocalModels } from "./localModelContainer.js";
 import { localActivity, localCompletion, withLocalModel } from "./localModels.js";
 import cors from "cors";
@@ -73,10 +73,6 @@ function usableModels(models: { id: string; created?: number }[]): string[] {
 
 /** The key itself is never sent back to the browser, only whether one is configured. */
 app.get("/api/local-model/models", (_req, res) => res.json({ models: listLibrary(), activity: localActivity() }));
-app.post("/api/local-model/gpu", (req, res) => {
-  try { setModelGpu(req.body?.model, req.body?.useGpu); res.json({ saved: true }); }
-  catch (err) { res.status(400).json({ error: (err as Error).message }); }
-});
 app.post("/api/local-model/download", (req, res) => {
   try { startDownload(req.body?.model); res.status(202).json({ accepted: true }); }
   catch (err) { res.status(400).json({ error: (err as Error).message }); }
@@ -164,7 +160,7 @@ app.post("/api/mcp/tools", async (req, res) => {
 
 /** Whether a step could be contained here, so the toggle can disable itself with a reason. */
 app.get("/api/sandbox", async (_req, res) => {
-  res.json(await sandboxStatus());
+  res.json({ ...await sandboxStatus(), gpuSupported: process.platform !== "darwin" });
 });
 
 /**
@@ -266,12 +262,14 @@ app.post("/api/executions/:runId/:execId/cancel", async (req, res) => {
 });
 
 app.post("/api/run", async (req, res) => {
-  const { model, effort, input, instructions, tools: toolSpecs, maxRounds, timeoutSec, files, links, workspaces, sandbox, trace: suppliedTrace } =
+  const { model, effort, input, instructions, tools: toolSpecs, maxRounds, timeoutSec, files, links, workspaces, sandbox, useGpu, trace: suppliedTrace } =
     req.body ?? {};
 
   if (typeof model !== "string" || typeof input !== "string" || !input.trim()) {
     return res.status(400).json({ error: "model and a non-empty input are required" });
   }
+
+  if (useGpu !== undefined && typeof useGpu !== "boolean") return res.status(400).json({ error: "useGpu must be a boolean" });
 
   const trace = { ...suppliedTrace, runId: suppliedTrace?.runId ?? crypto.randomUUID(), execId: suppliedTrace?.execId ?? crypto.randomUUID() };
   if (typeof trace.runId !== "string" || trace.runId.length > 200 || typeof trace.execId !== "string" || trace.execId.length > 200) {
@@ -469,7 +467,7 @@ app.post("/api/run", async (req, res) => {
     const address = server.address();
     const result = managedLocal
       ? await withLocalModel({ model, nodeId: trace.nodeId, token: readSettings().localApiKey,
-          signal: localSignal, useGpu: modelUsesGpu(model), emit }, execute,
+          signal: localSignal, useGpu: useGpu === true, emit }, execute,
           typeof address === "object" && address ? address.port : PORT)
       : await execute(credentials);
 

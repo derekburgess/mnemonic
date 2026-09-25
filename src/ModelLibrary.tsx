@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./icons";
 
-type CachedModel = { useGpu?: boolean; model: string; status: string; bytes: number; active: boolean; error?: string; downloaded?: number; total?: number };
+type CachedModel = { model: string; status: string; bytes: number; active: boolean; error?: string; downloaded?: number; total?: number };
 const size = (bytes: number) => bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(0)} MB`;
 
 export function ModelLibrary({ onChange }: { onChange: () => void }) {
@@ -35,16 +35,15 @@ export function ModelLibrary({ onChange }: { onChange: () => void }) {
     return () => { controller.abort(); clearTimeout(timer); };
   }, []);
 
-  async function action(kind: "download" | "cancel" | "delete" | "gpu", id: string, useGpu?: boolean) {
+  async function action(kind: "download" | "cancel" | "delete", id: string) {
     setBusy(true); setError(null);
     try {
       const response = await fetch(`/api/local-model/${kind === "delete" ? "models" : kind}`, {
-        method: kind === "delete" ? "DELETE" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: id, ...(kind === "gpu" ? { useGpu } : {}) }),
+        method: kind === "delete" ? "DELETE" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: id }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Model action failed.");
       if (kind === "download") { setModels((current) => [...current.filter((m) => m.model !== id), { model: id, status: "Queued", active: true, bytes: 0 }]); setModel(""); }
-      if (kind === "gpu") setModels((current) => current.map((entry) => entry.model === id ? { ...entry, useGpu } : entry));
       if (kind === "delete") { setModels((current) => current.filter((m) => m.model !== id)); changed.current(); }
     } catch (err) { setError((err as Error).message); }
     finally { setBusy(false); }
@@ -67,12 +66,6 @@ export function ModelLibrary({ onChange }: { onChange: () => void }) {
           value={entry.total && entry.total > 0 ? entry.downloaded ?? 0 : undefined} />
         {!!entry.total && <span className="dim">{size(entry.downloaded ?? 0)} / {size(entry.total)}</span>}
       </>}
-      {entry.status === "Downloaded" && !entry.active && <label className="sandbox-row">
-        <span className="skip sandbox"><input type="checkbox" checked={!!entry.useGpu}
-          disabled={busy} onChange={(e) => void action("gpu", entry.model, e.target.checked)} />
-          <span className="track" aria-hidden="true" /></span>
-        <span>Use GPU</span>
-      </label>}
       {entry.error && <p className="error">{entry.error}</p>}
       <div className="settings-actions">
         {entry.active ? <button className="icon tinted tint-err" title="Cancel download" aria-label="Cancel download" disabled={busy || entry.status === "Cancelling"} onClick={() => void action("cancel", entry.model)}><Icon name="stop" size={13} /></button>

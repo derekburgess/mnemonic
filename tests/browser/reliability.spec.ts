@@ -138,13 +138,20 @@ test("local models force container switches on and unlock them when disabled", a
     await route.fulfill({ json: settings });
   });
   await page.reload();
-  const switches = page.getByRole("checkbox", { name: "Run this node in a sandbox container" });
+  const switches = page.getByRole("checkbox", { name: "Run in a sandbox" });
   await expect(switches.first()).toBeChecked();
   await expect(switches.first()).toBeDisabled();
   await page.getByRole("button", { name: "Add Step", exact: true }).click();
   await expect(switches).toHaveCount(2);
   await expect(switches.nth(1)).toBeChecked();
   await expect(switches.nth(1)).toBeDisabled();
+  const gpu = page.getByRole("checkbox", { name: "Use GPU", exact: true });
+  await expect(gpu).toHaveCount(2);
+  await expect(gpu.first()).not.toBeChecked();
+  await gpu.first().press("Space");
+  await expect(gpu.first()).toBeChecked();
+  await expect(gpu.nth(1)).not.toBeChecked();
+  await expect(page.locator(".sandbox-controls").first().getByRole("checkbox")).toHaveCount(2);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("checkbox", { name: "Download and run models locally" }).press("Space");
 
@@ -164,11 +171,6 @@ test("Hugging Face library downloads before runs, shows progress, and deletes ca
     keySource: "none", hasPanelKey: false, baseUrl: "" } }));
   await page.route("**/api/local-model/**", async (route) => {
     const endpoint = new URL(route.request().url()).pathname;
-    if (endpoint.endsWith("/gpu")) {
-      const { model, useGpu } = route.request().postDataJSON();
-      models = models.map((entry) => entry.model === model ? { ...entry, useGpu } : entry);
-      return route.fulfill({ json: { saved: true } });
-    }
     if (endpoint.endsWith("/download")) {
       expect(route.request().postDataJSON().model).toBe("org/model");
       models = [{ model: "org/model", status: "Downloading", active: true, bytes: 0, downloaded: 50, total: 100 }];
@@ -187,11 +189,7 @@ test("Hugging Face library downloads before runs, shows progress, and deletes ca
   await expect(library.getByRole("checkbox", { name: "Use GPU" })).toHaveCount(0);
   models = [{ model: "org/model", status: "Downloaded", active: false, bytes: 1048576 }];
   await expect(library.getByText("Downloaded · 1 MB cached")).toBeVisible();
-  const gpu = library.getByRole("checkbox", { name: "Use GPU" });
-  await expect(gpu).not.toBeChecked();
-  await gpu.press("Space");
-  await expect(gpu).toBeChecked();
-  expect(models[0].useGpu).toBe(true);
+  await expect(library.getByRole("checkbox", { name: "Use GPU" })).toHaveCount(0);
   const modelSelect = page.getByRole("combobox", { name: "Model", exact: true });
   await expect(modelSelect).toBeVisible();
   await modelSelect.selectOption("org/model");

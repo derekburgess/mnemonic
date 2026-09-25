@@ -13,6 +13,7 @@ export type InputData = {
   instructions?: string;
   /** Run this step inside an ephemeral container instead of in the proxy's own process. */
   sandbox?: boolean;
+  useGpu?: boolean;
   /** Folders on this machine the step lends the model, reachable with the workspace tools. */
   workspaces?: Workspace[];
   /** Markdown documents appended to the system prompt, after the instructions. */

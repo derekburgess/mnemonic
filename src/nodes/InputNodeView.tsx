@@ -159,7 +159,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
           onChange={(e) => onChange(id, { label: e.target.value })}
           aria-label="Step name"
         />
-        <SkipToggle on={skipped} onChange={(v) => setSkipped(id, v)} title="Skip this step when running" />
+        <SkipToggle on={skipped} onChange={(v) => setSkipped(id, v)} title="Skip this node" />
         <DeleteButton onClick={() => onDelete(id)} title="Delete step" />
       </header>
 
@@ -249,13 +249,12 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         </label>
       </div>
 
-      <SandboxToggle required={localModelsRequired} on={localModelsRequired || !!data.sandbox} onChange={(v) => onChange(id, { sandbox: v })} />
+      <SandboxToggle useGpu={!!data.useGpu} onGpuChange={(v) => onChange(id, { useGpu: v })} required={localModelsRequired} on={localModelsRequired || !!data.sandbox} onChange={(v) => onChange(id, { sandbox: v })} />
 
       <div className="stack">
         <button
           className="file nodrag attach"
           onClick={addWorkspace}
-          title="Opens your desktop's folder chooser"
         >
           <Icon name="folder" /> Add workspace
         </button>
@@ -283,6 +282,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
           <input
             type="file"
             accept=".md,.markdown,.txt,text/markdown,text/plain"
+            title=""
             multiple
             onChange={(e) => {
               if (e.target.files?.length) void attach(e.target.files);
@@ -336,6 +336,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
           <input
             type="file"
             accept=".pdf,.txt,.png,.jpg,.jpeg,application/pdf,text/plain,image/png,image/jpeg"
+            title=""
             multiple
             onChange={(e) => {
               if (e.target.files?.length) void attachFiles(e.target.files);

@@ -502,7 +502,7 @@ src/TracePanel.tsx  the trace accordion
 Local inference requires Docker. The first run builds a dedicated Transformers image, with
 Python and model dependencies installed inside it; no host Python environment is required.
 The runtime image is rebuilt automatically when its Dockerfile, dependencies or worker change.
-Inference uses CPU by default. Enable **Use GPU** on a downloaded model’s card in Settings for
+Inference uses CPU by default. Enable **Use GPU** in a node’s container controls for
 NVIDIA inference. This replaces automatic detection and `MNEMONIC_MODEL_DEVICE` overrides.
 Downloads always use CPU containers. GPU inference requires NVIDIA Container Toolkit configured for Docker. Apple Metal is not available inside this Linux runtime.
 Select **Hugging Face** in Settings and enable **Download and run models locally**.
