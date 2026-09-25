@@ -1029,11 +1029,14 @@ body.resizing-col { cursor: col-resize; user-select: none; }
 .trace-facts dt { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
 .trace-facts dd { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
 
-.trace-section { border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); }
+.trace-section { min-width: 0; max-width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); }
 .trace-section > summary {
   padding: 6px 9px;
   cursor: pointer;
   user-select: none;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .trace-section > summary, .trace-filter > span {
   font-size: 11px;
