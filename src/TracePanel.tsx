@@ -87,7 +87,7 @@ function StepDetail({ step, onRecover, outputExecIds }: { step: TraceStep; onRec
           {["all", "model", "local", "tool", "container", "delivery", "graph"].map((name) => <option key={name}>{name}</option>)}
         </select></label>
         {timeline.length === 0 && <p className="dim">No events recorded.</p>}
-        {[...groups].map(([label, entries]) => <details key={label} className="trace-section"><summary>{label} · {entries.length} events</summary>
+        {[...groups].map(([label, entries]) => <details key={label} className="trace-section"><summary className="trace-group-summary"><span className="trace-group-label">{label}</span><span className="trace-group-count">· {entries.length} events</span></summary>
         {entries.map((entry) => <details key={entry.id} className="trace-section">
           <summary title={`Received by proxy: ${time(entry.receivedMs ?? null)}`}>
             <span className="dim">{((entry.at - step.startedMs) / 1000).toFixed(2)}s · {entry.source}</span>{" "}
