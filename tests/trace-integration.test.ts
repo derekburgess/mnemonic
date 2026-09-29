@@ -58,7 +58,14 @@ test("async admission is idempotent and result delivery is independent of the re
   assert.equal(accepted.status, 202);
   assert.equal((await accepted.json()).execId, "exec");
   await started;
-  const live = await (await fetch(`${base}/api/trace/runs/run/progress`)).json();
+  // Trace writes are queued asynchronously; receiving the HTTP model request does not mean
+  // its model.started event has committed to the database yet.
+  let live;
+  for (let i = 0; i < 100; i++) {
+    live = await (await fetch(`${base}/api/trace/runs/run/progress`)).json();
+    if (live.events.some((e: { kind: string }) => e.kind === "model.started")) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
   assert.equal(live.steps[0].status, "running");
   assert.ok(live.events.some((e: { kind: string }) => e.kind === "model.started"));
   controller.abort();
@@ -86,4 +93,20 @@ test("async admission is idempotent and result delivery is independent of the re
   assert.equal(steps[0].events.filter((e: { kind: string }) => e.kind === "graph.committed").length, 1);
   assert.ok(steps[0].events.some((e: { kind: string }) => e.kind === "response.sent"));
   assert.ok(!JSON.stringify(steps).includes("test-secret"));
+
+  // A short node budget cancels a hanging model and persists the timeout, even when the SDK
+  // surfaces its own abort exception. It must not get lost by mutating DOMException.message.
+  const timed = await fetch(`${base}/api/run`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "test", input: "test", timeoutSec: 0.1,
+      trace: { runId: "timeout", execId: "timeout", nodeId: "step" } }) });
+  assert.equal(timed.status, 202);
+  let expired;
+  for (let i = 0; i < 100; i++) {
+    expired = await (await fetch(`${base}/api/executions/timeout/timeout`)).json();
+    if (expired.status === "error") break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(expired.status, "error");
+  assert.match(expired.error, /step hit its timeout/);
+  assert.equal(modelCalls, 2, "one request per run, with no retry after the budget expires");
 });

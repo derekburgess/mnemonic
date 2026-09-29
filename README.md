@@ -308,13 +308,16 @@ Each round is one request to the model, so a step that made five tool calls reco
 the trace - five calls plus the final answer. Two step parameters bound how far that can go:
 
 - **Rounds** (default 12) - how many times the model may come back asking for more tools.
-- **Timeout** (default 5m) - a budget for the whole step: every round plus the tools they call.
-  Enforced on the server as well as in the browser, so an abandoned run stops costing tokens.
+- **Timeout** (default 5m) - one budget for the whole step, including queueing, Docker preparation,
+  model loading, attached links, every model round, and tool calls. The proxy and sandbox share
+  the same deadline; entering the container does not restart the clock. Model HTTP requests use
+  that deadline instead of a separate five-minute inactivity timeout. Managed local generation
+  is never automatically retried, since disconnecting does not stop its original generation.
 
-Each MCP and custom tool has its own **Timeout** too, since how long a tool needs is a property of
-the tool rather than of the step calling it. MCP defaults to 5 minutes (the SDK's own default is
-60s, short for tools that do real work), reset whenever the server reports progress, with a ceiling
-of three times the budget. Custom code defaults to 5 seconds.
+MCP and custom tools default to **Use node timeout**. Set a tool's **Timeout** to apply a shorter
+limit to that invocation; it can never extend the node's remaining budget. Progress reports do
+not reset either deadline. After timeout, container cleanup and delivery of the error may take
+additional time, but execution does not receive a new budget.
 
 ## The graph is stateless
 

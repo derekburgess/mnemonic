@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import { TIMEOUT_MESSAGE } from "./providers.js";
+import { TIMEOUT_MESSAGE, waitForSignal } from "./execution.js";
 import type { Job, JobResult } from "./runner.js";
 import { workspaceNames } from "./workspace.js";
 import { containerLogger, type ContainerTrace } from "./containerTrace.js";
@@ -75,6 +75,7 @@ const IMAGE_INPUTS = [
   "server/workspace.ts",
   "server/runner.ts",
   "server/events.ts",
+  "server/execution.ts",
 ];
 
 let imageTag: string | null = null;
@@ -92,37 +93,48 @@ function tagFor(): string {
 }
 
 /** One build at a time, however many steps ask for it at once. */
-let building: Promise<string> | null = null;
+let building: { promise: Promise<string>; controller: AbortController; waiters: number } | null = null;
 
-async function ensureImage(emit?: EmitEvent): Promise<string> {
+async function ensureImage(emit?: EmitEvent, signal?: AbortSignal): Promise<string> {
   const tag = tagFor();
   try {
-    await run("docker", ["image", "inspect", tag], { timeout: 10_000 });
+    await run("docker", ["image", "inspect", tag], { timeout: signal ? 0 : 10_000, signal });
     emit?.(event("proxy", "image.cached", { image: tag }));
     return tag;
   } catch {
+    signal?.throwIfAborted();
     /* not built yet */
   }
 
+  if (building?.controller.signal.aborted) building = null;
   emit?.(event("proxy", building ? "image.waiting" : "image.build_started", { image: tag }));
   const waitingSince = Date.now();
-  building ??= (async () => {
-    console.log(`[mnemonic] building sandbox image ${tag} (first contained run only)…`);
-    const started = Date.now();
-    try {
-      await run("docker", ["build", "-t", tag, "-f", "sandbox/Dockerfile", "."], {
-        cwd: ROOT,
-        timeout: BUILD_TIMEOUT_MS,
-        maxBuffer: 32 * 1024 * 1024,
-      });
-      console.log(`[mnemonic] sandbox image ready in ${Math.round((Date.now() - started) / 1000)}s`);
-      return tag;
-    } finally {
-      building = null;
-    }
-  })();
-
-  const ready = await building;
+  const build = building ?? { promise: Promise.resolve(tag), controller: new AbortController(), waiters: 0 };
+  if (!building) {
+    building = build;
+    build.promise = (async () => {
+      console.log(`[mnemonic] building sandbox image ${tag} (first contained run only)…`);
+      const started = Date.now();
+      try {
+        await run("docker", ["build", "-t", tag, "-f", "sandbox/Dockerfile", "."], {
+          cwd: ROOT,
+          timeout: signal ? 0 : BUILD_TIMEOUT_MS,
+          signal: build.controller.signal,
+          maxBuffer: 32 * 1024 * 1024,
+        });
+        console.log(`[mnemonic] sandbox image ready in ${Math.round((Date.now() - started) / 1000)}s`);
+        return tag;
+      } finally {
+        if (building === build) building = null;
+      }
+    })();
+  }
+  // Each node can stop waiting at its own deadline. Stop the shared build only when no
+  // other node still needs it, so one timed-out generation cannot cancel another node.
+  build.waiters++;
+  let ready: string;
+  try { ready = await waitForSignal(build.promise, signal); }
+  finally { if (--build.waiters === 0) build.controller.abort(); }
   emit?.(event("proxy", "image.build_ready", { image: ready, ms: Date.now() - waitingSince }));
   return ready;
 }
@@ -137,13 +149,14 @@ export type SandboxStatus = { available: boolean; runtime?: string; version?: st
  * Whether a step could be contained right now. The UI asks so the toggle can disable itself
  * rather than offering a guarantee this machine cannot keep.
  */
-export async function sandboxStatus(): Promise<SandboxStatus> {
+export async function sandboxStatus(signal?: AbortSignal): Promise<SandboxStatus> {
   try {
     const { stdout } = await run("docker", ["version", "--format", "{{.Server.Version}}"], {
-      timeout: 10_000,
+      timeout: signal ? 0 : 10_000, signal,
     });
     return { available: true, runtime: "docker", version: stdout.trim() };
   } catch (err) {
+    signal?.throwIfAborted();
     const message = (err as Error).message;
     return {
       available: false,
@@ -231,7 +244,7 @@ export async function runInSandbox(
   try {
     opts.signal?.throwIfAborted();
     log.event("Checking Docker availability");
-    const status = await sandboxStatus();
+    const status = await sandboxStatus(opts.signal);
     if (!status.available) {
       throw Object.assign(new Error(`This step is set to run in a container. ${status.reason}`), {
         status: 503,
@@ -239,7 +252,7 @@ export async function runInSandbox(
     }
 
     log.event("Preparing sandbox image (building if needed)");
-    const tag = await ensureImage(opts.onEvent);
+    const tag = await waitForSignal(ensureImage(opts.onEvent, opts.signal), opts.signal);
     opts.signal?.throwIfAborted();
     log.trace.image = tag;
     log.event("Sandbox image ready");
@@ -323,7 +336,7 @@ export async function runInSandbox(
         log.trace.termination = `${reason}; forced termination`;
         void run("docker", ["kill", name], { timeout: 10_000 }).catch(() => {}).finally(() => child.kill("SIGKILL"));
       };
-      const cancel = () => terminate("cancelled");
+      const cancel = () => terminate(opts.signal?.reason?.name === "TimeoutError" ? "deadline exceeded" : "cancelled");
       const timer = setTimeout(() => terminate("deadline exceeded"), Math.max(30, opts.timeoutSec + 30) * 1000);
       opts.signal?.addEventListener("abort", cancel, { once: true });
       if (opts.signal?.aborted) cancel();
@@ -351,7 +364,7 @@ export async function runInSandbox(
         log.trace.signal = signal;
         log.event(`Container process closed (exit ${code}, signal ${signal ?? "none"})`);
         const stderr = log.snapshot().stderr;
-        if (opts.signal?.aborted) return reject(new Error("cancelled"));
+        if (opts.signal?.aborted) return reject(opts.signal.reason);
         if (timedOut) {
           return reject(
             Object.assign(new Error(TIMEOUT_MESSAGE), { status: 504 }),
@@ -366,7 +379,7 @@ export async function runInSandbox(
         }
         try {
           const result = JSON.parse(stdout) as JobResult;
-          log.event(result.ok ? "Runner returned a successful result" : "Runner returned an error");
+          log.event(result.ok ? "Runner returned a successful result" : `Runner returned an error: ${result.error}`);
           resolve({ result, stderr });
         } catch {
           reject(new Error("The container returned an unreadable result; see container diagnostics in Trace Logs."));

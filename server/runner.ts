@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { event, sanitize, type TraceEvent } from "./events.js";
 import net from "node:net";
 import { Console } from "node:console";
-import OpenAI from "openai";
+import { ExecutionBudget, executionClient } from "./execution.js";
 import { buildTools, type ToolSpec } from "./tools.js";
 import { TIMEOUT_MESSAGE, runChat, runResponses, type RunFile } from "./providers.js";
 
@@ -33,6 +33,8 @@ export type Job = {
   tools?: ToolSpec[];
   maxRounds?: number;
   timeoutSec?: number;
+  deadlineMs?: number;
+  managedLocal?: boolean;
   files?: RunFile[];
   links?: string[];
   /** Already rewritten to the paths they are mounted at in here. */
@@ -129,25 +131,23 @@ async function main() {
   const emit = (entry: TraceEvent) => process.stderr.write(`\x1e${JSON.stringify({ ...entry, detail: sanitize(entry.detail, [job.apiKey]) })}\n`);
   emit(event("container", "runner.accepted"));
 
-  // Started before buildTools, which connects to each MCP server to list what it offers.
-  const stopForwarding = await forwardHostPorts(hostPortsUsedBy(job.tools ?? []));
-
+  const budget = new ExecutionBudget(job.timeoutSec ?? 300, undefined, job.deadlineMs);
+  let stopForwarding = () => {};
   try {
-    const client = new OpenAI({
-      apiKey: job.apiKey,
-      ...(job.baseUrl ? { baseURL: job.baseUrl } : {}),
-    });
+    budget.remainingMs();
+    stopForwarding = await budget.wait(forwardHostPorts(hostPortsUsedBy(job.tools ?? [])));
+    const client = executionClient(job, budget, job.managedLocal);
 
-    const { tools, dispatch } = await buildTools(job.tools ?? [], job.workspaces ?? [], (e) => emit({ ...e, source: "container" }));
+    const { tools, dispatch } = await budget.wait(buildTools(job.tools ?? [], job.workspaces ?? [], (e) => emit({ ...e, source: "container" }), budget));
     console.info(`[sandbox] Tools ready (${tools.length}); starting model run`);
-    const budgetSec = job.timeoutSec && job.timeoutSec > 0 ? job.timeoutSec : 300;
     const run = job.provider !== "openai" ? runChat : runResponses;
 
-    const result = await run({
+    const result = await budget.wait(run({
       onEvent: emit,
       eventSource: "container",
-      signal: AbortSignal.timeout(budgetSec * 1000),
+      signal: budget.signal,
       client,
+      transport: budget.fetch,
       model: job.model,
       effort: job.effort,
       input: job.input,
@@ -162,20 +162,22 @@ async function main() {
         emit(event("container", "round.recorded", { round: rounds.length, ...round }));
         console.info(`[sandbox] Round ${rounds.length} completed`);
       },
-    });
+    }));
 
     console.info("[sandbox] Run completed; returning result");
     emit(event("container", "runner.completed"));
     write({ ok: true, result, rounds });
   } catch (err) {
-    const e = err as { status?: number; message?: string; name?: string };
-    if (/abort|timeout/i.test(`${e.name} ${e.message}`)) {
+    const raw = err as { status?: number; message?: string; name?: string };
+    const e = Object.assign(new Error(raw.message ?? "request failed", { cause: err }), { name: raw.name ?? "Error", status: raw.status });
+    if (budget.signal.aborted || /abort|timeout/i.test(`${e.name} ${e.message}`)) {
       e.message = TIMEOUT_MESSAGE;
       e.status = 504;
     }
     emit(event("container", "runner.failed", { error: e.message, status: e.status }));
     write({ ok: false, error: e.message ?? "request failed", status: e.status, rounds });
   } finally {
+    await budget.dispose();
     let peakMemoryBytes: number | undefined;
     for (const file of ["/sys/fs/cgroup/memory.peak", "/sys/fs/cgroup/memory/memory.max_usage_in_bytes"]) {
       try { const value = Number(readFileSync(file, "utf8")); if (Number.isFinite(value)) { peakMemoryBytes = value; break; } } catch { /* unavailable */ }

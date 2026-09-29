@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync, renameSync, statSy
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { acquireModelIfIdle, withLocalModel } from "./localModels.js";
-import { readSettings } from "./settings.js";
+import { resolveCredentials } from "./settings.js";
 import { redactText } from "./events.js";
 
 const cache = path.resolve("data/models");
@@ -75,7 +75,8 @@ export function startDownload(value: unknown) {
   tasks.set(model, task);
   index[model] = { status: "Queued" };
   try { saveIndex(); } catch (err) { tasks.delete(model); throw err; }
-  const token = readSettings().localApiKey;
+  const credentials = resolveCredentials("huggingface");
+  const token = credentials.source === "none" ? undefined : credentials.apiKey;
   let diagnostic = "";
   void withLocalModel({ model, token, signal: controller.signal, mode: "download", emit: (entry) => {
     const detail = entry.detail as { phase?: string; downloaded?: number; total?: number; log?: string; text?: string } | undefined;

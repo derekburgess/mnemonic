@@ -1,5 +1,6 @@
 import { event, errorDetail, type EmitEvent } from "./events.js";
 import vm from "node:vm";
+import type { ExecutionBudget } from "./execution.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -25,21 +26,16 @@ export type ToolSpec =
       timeoutSec?: number;
     };
 
-/** Defaults when a tool does not set its own. Custom code is yours and should be quick. */
+/** Fallbacks for calls outside node execution (for example the settings tool browser). */
 export const DEFAULT_CODE_TIMEOUT_SEC = 5;
 export const DEFAULT_MCP_TIMEOUT_SEC = 300;
 
-/**
- * The MCP SDK defaults to a 60s request timeout, which is short for tools that do real work --
- * a 60-second packet capture or a long embedding run times out on our side and the model is
- * told the tool failed. The clock resets whenever the server reports progress, with a ceiling
- * of three times the budget so a genuinely hung tool still ends.
- */
-const mcpCallOptions = (timeoutSec = DEFAULT_MCP_TIMEOUT_SEC) => ({
-  timeout: timeoutSec * 1000,
-  resetTimeoutOnProgress: true,
-  maxTotalTimeout: timeoutSec * 3000,
-});
+/** A tool may opt into a shorter limit, but never extend the node's deadline. */
+const mcpCallOptions = (timeoutSec?: number, budget?: ExecutionBudget) => {
+  const timeout = Math.max(1, Math.min(timeoutSec !== undefined ? timeoutSec * 1000 : Infinity,
+    budget?.remainingMs() ?? DEFAULT_MCP_TIMEOUT_SEC * 1000));
+  return { timeout, maxTotalTimeout: timeout, resetTimeoutOnProgress: false, signal: budget?.signal };
+};
 
 /** MCP tool names are namespaced so two servers can expose the same tool name. */
 const mcpToolName = (label: string, tool: string) =>
@@ -81,6 +77,7 @@ async function connectMcp(
   serverUrl: string,
   authorization?: string,
   emit?: EmitEvent,
+  budget?: ExecutionBudget,
 ): Promise<{ client: Client; url: string }> {
   const requestInit = authorization ? { headers: { Authorization: authorization } } : undefined;
   const newClient = () => new Client({ name: "mnemonic", version: "0.1.0" }, { capabilities: {} });
@@ -91,17 +88,21 @@ async function connectMcp(
     for (const kind of ["streamable", "sse"] as const) {
       const started = Date.now();
       emit?.(event("proxy", "tool.connection_attempt", { attempt: ++attempt, transport: kind, url: url.toString() }));
+      budget?.signal.throwIfAborted();
+      const client = newClient();
       try {
         // Always a fresh client: a failed connect has already torn its transport down.
-        const client = newClient();
         const transport =
           kind === "streamable"
-            ? new StreamableHTTPClientTransport(url, { requestInit })
-            : new SSEClientTransport(url, { requestInit });
-        await client.connect(transport);
+            ? new StreamableHTTPClientTransport(url, { requestInit, fetch: budget?.fetch })
+            : new SSEClientTransport(url, { requestInit, fetch: budget?.fetch });
+        const connecting = client.connect(transport, budget ? mcpCallOptions(undefined, budget) : undefined);
+        await (budget ? budget.wait(connecting) : connecting);
         emit?.(event("proxy", "tool.connected", { attempt, transport: kind, ms: Date.now() - started }));
         return { client, url: url.toString() };
       } catch (err) {
+        await client.close().catch(() => {});
+        budget?.signal.throwIfAborted();
         emit?.(event("proxy", "tool.connection_failed", { attempt, transport: kind, ms: Date.now() - started, error: errorDetail(err) }));
         failures.push(`${url.pathname} (${kind}): ${(err as Error).message.slice(0, 120)}`);
       }
@@ -116,8 +117,9 @@ async function withMcpClient<T>(
   authorization: string | undefined,
   fn: (client: Client) => Promise<T>,
   emit?: EmitEvent,
+  budget?: ExecutionBudget,
 ): Promise<T> {
-  const { client } = await connectMcp(serverUrl, authorization, emit);
+  const { client } = await connectMcp(serverUrl, authorization, emit, budget);
   try {
     return await fn(client);
   } finally {
@@ -126,10 +128,10 @@ async function withMcpClient<T>(
 }
 
 /** Also reports the URL that actually worked, so the UI can correct the one you typed. */
-export async function listMcpTools(serverUrl: string, authorization?: string, emit?: EmitEvent) {
-  const { client, url } = await connectMcp(serverUrl, authorization, emit);
+export async function listMcpTools(serverUrl: string, authorization?: string, emit?: EmitEvent, budget?: ExecutionBudget) {
+  const { client, url } = await connectMcp(serverUrl, authorization, emit, budget);
   try {
-    const { tools } = await client.listTools();
+    const { tools } = await client.listTools({}, budget ? mcpCallOptions(undefined, budget) : undefined);
     return {
       resolvedUrl: url,
       tools: tools.map((t) => ({
@@ -163,6 +165,7 @@ export async function buildTools(
   specs: ToolSpec[],
   workspaces: string[] = [],
   emit?: EmitEvent,
+  budget?: ExecutionBudget,
 ): Promise<{ tools: unknown[]; dispatch: Dispatch }> {
   const tools: unknown[] = [];
   const handlers = new Map<string, (args: unknown, context?: CallContext) => Promise<string>>();
@@ -175,7 +178,7 @@ export async function buildTools(
   }
 
   for (const spec of specs) {
-    emit?.(event("proxy", "tool.configured", { kind: spec.kind, name: spec.kind === "custom" ? spec.fnName : spec.kind === "mcp" ? spec.label : "web_search", timeoutSec: spec.kind === "web_search" ? null : spec.timeoutSec ?? (spec.kind === "mcp" ? DEFAULT_MCP_TIMEOUT_SEC : DEFAULT_CODE_TIMEOUT_SEC), automaticToolRetries: 0 }));
+    emit?.(event("proxy", "tool.configured", { kind: spec.kind, name: spec.kind === "custom" ? spec.fnName : spec.kind === "mcp" ? spec.label : "web_search", timeoutSec: spec.kind === "web_search" ? null : spec.timeoutSec ?? (budget ? "node deadline" : spec.kind === "mcp" ? DEFAULT_MCP_TIMEOUT_SEC : DEFAULT_CODE_TIMEOUT_SEC), automaticToolRetries: 0 }));
     if (spec.kind === "web_search") {
       const domains = (spec.allowedDomains ?? "")
         .split(",")
@@ -192,7 +195,7 @@ export async function buildTools(
     if (spec.kind === "mcp") {
       // We are the MCP client, so private and localhost servers work; OpenAI only ever sees
       // ordinary function tools that call back into this proxy.
-      const { tools: available } = await listMcpTools(spec.serverUrl, spec.authorization, emit);
+      const { tools: available } = await listMcpTools(spec.serverUrl, spec.authorization, emit, budget);
       const wanted = spec.selectedTools?.length
         ? available.filter((t) => spec.selectedTools!.includes(t.name))
         : available;
@@ -211,9 +214,10 @@ export async function buildTools(
             client.callTool(
               { name: tool.name, arguments: (args ?? {}) as Record<string, unknown> },
               undefined,
-              mcpCallOptions(spec.timeoutSec),
+              mcpCallOptions(spec.timeoutSec, budget),
             ),
             emit ? (entry) => emit({ ...entry, detail: { ...(entry.detail as Record<string, unknown>), name, ...context } }) : undefined,
+            budget,
           );
           return JSON.stringify(result.isError ? { isError: true, content: result.content } : result.content ?? result);
         });
@@ -240,12 +244,13 @@ export async function buildTools(
     });
 
     handlers.set(spec.fnName, async (args) => {
-      const result = await runUserCode(spec.fnCode ?? "", args, spec.timeoutSec);
+      const result = await runUserCode(spec.fnCode ?? "", args, spec.timeoutSec, budget);
       return typeof result === "string" ? result : JSON.stringify(result ?? null);
     });
   }
 
   const dispatch: Dispatch = async (name, rawArgs, context) => {
+    budget?.signal.throwIfAborted();
     const handler = handlers.get(name);
     if (!handler) return JSON.stringify({ error: `unknown tool ${name}` });
     let args: unknown = {};
@@ -255,8 +260,10 @@ export async function buildTools(
       return JSON.stringify({ error: "arguments were not valid JSON" });
     }
     try {
-      return await handler(args, context);
+      const work = handler(args, context);
+      return await (budget ? budget.wait(work) : work);
     } catch (err) {
+      budget?.signal.throwIfAborted();
       return JSON.stringify({ error: (err as Error).message, errorDetails: errorDetail(err) });
     }
   };
@@ -268,39 +275,53 @@ export async function buildTools(
  * Runs a custom tool body with `args` in scope. node:vm is NOT a security boundary — this is
  * for code you wrote yourself on your own machine, never for untrusted input.
  */
-async function runUserCode(code: string, args: unknown, timeoutSec?: number): Promise<unknown> {
-  const budget = (timeoutSec ?? DEFAULT_CODE_TIMEOUT_SEC) * 1000;
+async function runUserCode(code: string, args: unknown, timeoutSec?: number, execution?: ExecutionBudget): Promise<unknown> {
+  const budget = Math.max(1, Math.ceil(Math.min(timeoutSec !== undefined ? timeoutSec * 1000 : Infinity,
+    execution?.remainingMs() ?? DEFAULT_CODE_TIMEOUT_SEC * 1000)));
+  const controller = new AbortController();
+  const signal = execution ? AbortSignal.any([execution.signal, controller.signal]) : controller.signal;
+  const timers = new Set<NodeJS.Timeout>();
+  const transport = execution?.fetch ?? fetch;
   // A fresh vm context has the JS built-ins but none of Node's globals, so timers and fetch
   // have to be handed in explicitly or any async tool body fails on `setTimeout is not defined`.
   const context = vm.createContext({
     args,
     console,
-    fetch,
+    fetch: (input: Parameters<typeof fetch>[0], init?: RequestInit) => transport(input, {
+      ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
+    }),
     URL,
     URLSearchParams,
     TextDecoder,
     TextEncoder,
-    setTimeout,
+    setTimeout: (fn: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+      const timer = setTimeout(fn, ms, ...args); timers.add(timer); return timer;
+    },
     clearTimeout,
-    setInterval,
+    setInterval: (fn: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+      const timer = setInterval(fn, ms, ...args); timers.add(timer); return timer;
+    },
     clearInterval,
     queueMicrotask,
     structuredClone,
     AbortController,
   });
   // The vm timeout only covers synchronous execution, so an async body is raced separately.
-  const started = vm.runInContext(`(async () => {\n${code}\n})()`, context, {
-    timeout: budget,
-  }) as Promise<unknown>;
-
-  let timer: NodeJS.Timeout;
-  const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`tool code exceeded ${budget}ms`)), budget);
-  });
-
+  let timer: NodeJS.Timeout | undefined;
   try {
-    return await Promise.race([started, deadline]);
+    const started = vm.runInContext(`(async () => {\n${code}\n})()`, context, {
+      timeout: budget,
+    }) as Promise<unknown>;
+
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { controller.abort(); reject(new Error(`tool code exceeded ${budget}ms`)); }, budget);
+    });
+
+    const work = Promise.race([started, deadline]);
+    return await (execution ? execution.wait(work) : work);
   } finally {
-    clearTimeout(timer!);
+    clearTimeout(timer);
+    controller.abort();
+    for (const timer of timers) clearTimeout(timer);
   }
 }

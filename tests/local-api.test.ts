@@ -43,7 +43,7 @@ elif sys.argv[1] == 'version':
   const settings = await post("/api/settings", { provider: "huggingface", runLocally: true });
   assert.equal(settings.status, 200);
   assert.equal((await settings.json()).runLocally, true);
-  assert.deepEqual((await (await fetch(`${base}/api/models`)).json()).models, []);
+  assert.deepEqual((await (await fetch(`${base}/api/models?provider=huggingface`)).json()).models, []);
   for (const model of ["test", "load-error", "inference-error"]) {
     assert.equal((await post("/api/local-model/download", { model })).status, 202);
     for (let i = 0; i < 150; i++) {
@@ -51,7 +51,7 @@ elif sys.argv[1] == 'version':
       if (library.models.some((m: any) => m.model === model && m.status === "Downloaded")) break;
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    assert.equal((await post("/api/run", { model, sandbox: false, input: "Hello", effort: "off", timeoutSec: 5,
+    assert.equal((await post("/api/run", { provider: "huggingface", model, sandbox: false, input: "Hello", effort: "off", timeoutSec: 5,
       trace: { runId: "local", execId: model, nodeId: "step" } })).status, 202);
     let result;
     for (let i = 0; i < 150; i++) {

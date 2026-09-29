@@ -6,9 +6,8 @@ import { CopyButton } from "./CopyButton";
 import { DeleteButton } from "./DeleteButton";
 import { useFieldWidth } from "./useFieldWidth";
 
-/** Seconds. MCP tools can do real work; custom code is yours and should be quick. */
+/** Optional invocation limits, capped by the node’s remaining budget. */
 const TIMEOUT_CHOICES = [5, 15, 30, 60, 120, 300, 600, 900, 1800];
-const DEFAULT_TIMEOUT: Partial<Record<ToolKind, number>> = { mcp: 300, custom: 5 };
 const asDuration = (sec: number) => (sec < 60 ? `${sec}s` : `${sec / 60}m`);
 
 const KINDS: { value: ToolKind; label: string }[] = [
@@ -113,13 +112,14 @@ export function ToolEditor({
             </select>
           </label>
           {tool.kind !== "web_search" && (
-            <label title="How long one invocation of this tool may take">
+            <label title="Use the node’s remaining timeout, or set a shorter limit for each tool invocation">
               Timeout
               <select
                 className="nodrag"
-                value={tool.timeoutSec ?? DEFAULT_TIMEOUT[tool.kind]}
-                onChange={(e) => onChange({ timeoutSec: Number(e.target.value) })}
+                value={tool.timeoutSec ?? ""}
+                onChange={(e) => onChange({ timeoutSec: e.target.value ? Number(e.target.value) : undefined })}
               >
+                <option value="">Use node timeout</option>
                 {TIMEOUT_CHOICES.map((n) => (
                   <option key={n} value={n}>
                     {asDuration(n)}

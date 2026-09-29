@@ -6,9 +6,10 @@ import { localActivity, localCompletion, withLocalModel } from "./localModels.js
 import cors from "cors";
 import dotenv from "dotenv";
 import OpenAI from "openai";
+import { ExecutionBudget, executionClient } from "./execution.js";
 import { buildTools, listMcpTools, type ToolSpec } from "./tools.js";
 import { deleteRun, getRun, getStepResult, listRuns, recordStep, recordEvent, markInterrupted, getRunProgress } from "./trace.js";
-import { readSettings, resolveCredentials, writeSettings, sandboxModelUrl, type Provider } from "./settings.js";
+import { readSettings, publicSettings, PROVIDERS, resolveCredentials, writeSettings, sandboxModelUrl, type Provider } from "./settings.js";
 import { loadGraph, saveGraph, graphDb } from "./graphstore.js";
 import { TIMEOUT_MESSAGE, runChat, runResponses } from "./providers.js";
 import { check, describeWorkspaces, findFolder, nativePick } from "./workspace.js";
@@ -30,8 +31,8 @@ if (!resolveCredentials().apiKey) console.warn(`[mnemonic] ${MISSING_KEY}`);
 // Constructed lazily and rebuilt whenever the credentials change: the SDK throws on a missing
 // key, and the UI is still worth serving so the graph can be built before a key is in place.
 let cached: { client: OpenAI; signature: string } | null = null;
-function getClient(): OpenAI {
-  const { apiKey, baseUrl } = resolveCredentials();
+function getClient(provider?: Provider): OpenAI {
+  const { apiKey, baseUrl } = resolveCredentials(provider);
   if (!apiKey) throw Object.assign(new Error(MISSING_KEY), { status: 401 });
 
   const signature = `${apiKey}::${baseUrl ?? ""}`;
@@ -94,9 +95,10 @@ app.post("/api/local-inference/chat/completions", async (req, res) => {
   } catch (err) { res.status(400).json({ error: { message: (err as Error).message } }); }
 });
 
-app.get("/api/settings", (_req, res) => {
-  const { source, baseUrl, provider } = resolveCredentials();
-  res.json({ keySource: source, baseUrl: baseUrl ?? "", provider, runLocally: !!readSettings().runLocally, hasPanelKey: !!(resolveCredentials().provider === "huggingface" ? readSettings().localApiKey : readSettings().apiKey) });
+app.get("/api/settings", (req, res) => {
+  const provider = req.query.provider as Provider | undefined;
+  if (provider && !PROVIDERS.includes(provider)) return res.status(400).json({ error: "Unknown provider" });
+  res.json(publicSettings(provider));
 });
 
 app.post("/api/settings", (req, res) => {
@@ -120,28 +122,29 @@ app.post("/api/settings", (req, res) => {
       ...(apiKey !== undefined ? { apiKey } : {}),
       ...(baseUrl !== undefined ? { baseUrl: String(baseUrl) } : {}),
       ...(provider !== undefined ? { provider: provider as Provider } : {}),
-    });
-    const { source, baseUrl: url, provider: p } = resolveCredentials();
-    res.json({ keySource: source, baseUrl: url ?? "", provider: p, runLocally: !!readSettings().runLocally, hasPanelKey: !!(resolveCredentials().provider === "huggingface" ? readSettings().localApiKey : readSettings().apiKey) });
+    }, false);
+    res.json(publicSettings(provider));
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
 });
 
-app.get("/api/models", async (_req, res) => {
-  if (readSettings().provider === "huggingface" && readSettings().runLocally) return res.json({ models: listLibrary().filter((model) => model.status === "Downloaded").map((model) => model.model) });
+app.get("/api/models", async (req, res) => {
+  const provider = (req.query.provider ?? readSettings().provider ?? "openai") as Provider;
+  if (!PROVIDERS.includes(provider)) return res.status(400).json({ error: "Unknown provider" });
+  if (provider === "huggingface" && readSettings().runLocally) return res.json({ models: listLibrary().filter((model) => model.status === "Downloaded").map((model) => model.model) });
   try {
-    const list = await getClient().models.list();
+    const list = await getClient(provider).models.list();
     // Another provider's catalogue is its own; curating it against OpenAI's naming would
     // throw away everything it offers.
     const ids =
-      resolveCredentials().provider !== "openai"
+      provider !== "openai"
         ? list.data.map((m) => m.id).sort()
         : usableModels(list.data);
-    res.json({ models: ids.length ? ids : resolveCredentials().provider === "openai" ? FALLBACK_MODELS : [] });
+    res.json({ models: ids.length ? ids : provider === "openai" ? FALLBACK_MODELS : [] });
   } catch (err) {
     console.warn("[mnemonic] model listing failed, serving fallback list:", (err as Error).message);
-    res.json({ models: resolveCredentials().provider === "openai" ? FALLBACK_MODELS : [], fallback: true });
+    res.json({ models: provider === "openai" ? FALLBACK_MODELS : [], fallback: true });
   }
 });
 
@@ -269,6 +272,8 @@ app.post("/api/run", async (req, res) => {
     return res.status(400).json({ error: "model and a non-empty input are required" });
   }
 
+  if (timeoutSec !== undefined && (typeof timeoutSec !== "number" || !Number.isFinite(timeoutSec) || timeoutSec <= 0 || timeoutSec * 1000 > 2_147_483_647)) return res.status(400).json({ error: "timeoutSec must be a positive finite duration" });
+
   if (useGpu !== undefined && typeof useGpu !== "boolean") return res.status(400).json({ error: "useGpu must be a boolean" });
 
   const trace = { ...suppliedTrace, runId: suppliedTrace?.runId ?? crypto.randomUUID(), execId: suppliedTrace?.execId ?? crypto.randomUUID() };
@@ -282,7 +287,9 @@ app.post("/api/run", async (req, res) => {
   // A contained step sees its workspaces where they are mounted, not where they live on the
   // host. Naming is shared with the tools, so a prompt reads the same either way -- only the
   // location behind the name changes, and the host's directory shape stays out of the prompt.
-  const credentials = resolveCredentials();
+  const selectedProvider = req.body?.provider;
+  if (selectedProvider !== undefined && !PROVIDERS.includes(selectedProvider)) return res.status(400).json({ error: "Unknown provider" });
+  const credentials = resolveCredentials(selectedProvider);
   const managedLocal = credentials.provider === "huggingface" && !!readSettings().runLocally;
   const contained = managedLocal || sandbox === true;
   const mounts = contained ? mountsFor(roots) : [];
@@ -403,12 +410,14 @@ app.post("/api/run", async (req, res) => {
   });
   res.on("finish", () => emit(event("proxy", "response.sent", { status: res.statusCode })));
   res.status(202).json(acknowledgement);
+  const budget = new ExecutionBudget(timeoutSec ?? 300, controller.signal);
+  emit(event("proxy", "execution.budget", { deadlineMs: budget.deadlineMs, timeoutSec: timeoutSec ?? 300 }));
   try {
     controller.signal.throwIfAborted();
     const { provider } = credentials;
     if (managedLocal) {
       if (!modelDownloaded(model)) throw new Error("Download this model in Settings > Hugging Face before running the node.");
-      const docker = await sandboxStatus();
+      const docker = await budget.wait(sandboxStatus(budget.signal));
       if (!docker.available) throw new Error(`Local model mode requires Docker. ${docker.reason}`);
     }
     // The browser has its own deadline, but the server needs one too or an abandoned run keeps
@@ -418,7 +427,7 @@ app.post("/api/run", async (req, res) => {
       ? links.filter((l: unknown): l is string => typeof l === "string" && !!l.trim())
       : undefined;
 
-    const localSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(budgetSec * 1000)]);
+    const localSignal = budget.signal;
     const execute = async ({ apiKey, baseUrl }: { apiKey: string; baseUrl?: string }) => contained
       ? await runContained({
           job: {
@@ -432,6 +441,8 @@ app.post("/api/run", async (req, res) => {
             tools: (toolSpecs ?? []) as ToolSpec[],
             maxRounds: typeof maxRounds === "number" ? maxRounds : undefined,
             timeoutSec: budgetSec,
+            deadlineMs: budget.deadlineMs,
+            managedLocal,
             files: Array.isArray(files) ? files : undefined,
             links: cleanLinks,
             workspaces: visibleRoots,
@@ -441,16 +452,17 @@ app.post("/api/run", async (req, res) => {
           rounds,
           onTrace: (trace) => { container = trace; },
           onEvent: emit,
-          signal: managedLocal ? localSignal : controller.signal,
+          signal: budget.signal,
         })
       : await (async () => {
-          const client = new OpenAI({ apiKey, ...(baseUrl ? { baseURL: baseUrl } : {}), ...(managedLocal ? { maxRetries: 0 } : {}) });
+          const client = executionClient({ apiKey, baseUrl }, budget, managedLocal);
           emit(event("proxy", "tools.preparing"));
-          const { tools, dispatch } = await buildTools((toolSpecs ?? []) as ToolSpec[], roots, emit);
+          const { tools, dispatch } = await budget.wait(buildTools((toolSpecs ?? []) as ToolSpec[], roots, emit, budget));
           const run = provider !== "openai" ? runChat : runResponses;
-          return run({
-            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(budgetSec * 1000)]),
+          return budget.wait(run({
+            signal: budget.signal,
             client,
+            transport: budget.fetch,
             model,
             effort,
             input,
@@ -462,11 +474,11 @@ app.post("/api/run", async (req, res) => {
             links: cleanLinks,
             onEvent: emit,
             onRound: (round) => { rounds.push(round); emit(event("proxy", "round.recorded", { round: rounds.length, ...round })); },
-          });
+          }));
         })();
     const address = server.address();
     const result = managedLocal
-      ? await withLocalModel({ model, nodeId: trace.nodeId, token: readSettings().localApiKey,
+      ? await withLocalModel({ model, nodeId: trace.nodeId, token: credentials.source === "none" ? undefined : credentials.apiKey,
           signal: localSignal, useGpu: useGpu === true, emit }, execute,
           typeof address === "object" && address ? address.port : PORT)
       : await execute(credentials);
@@ -493,11 +505,12 @@ app.post("/api/run", async (req, res) => {
     emit(event("proxy", saved ? "result.saved" : "result.persistence_failed"));
     await writes;
   } catch (err) {
-    const e = err as { status?: number; message?: string; name?: string };
+    const raw = err as { status?: number; message?: string; name?: string };
+    const e = Object.assign(new Error(raw.message ?? "request failed", { cause: err }), { name: raw.name ?? "Error", status: raw.status });
     // The SDK reports its own abort as "Request was aborted."; make every route to a spent
     // budget report the same thing.
     if (controller.signal.aborted) { e.message = "cancelled"; e.status = 409; }
-    else if (/abort|timeout/i.test(`${e.name} ${e.message}`)) {
+    else if (budget.signal.aborted || /abort|timeout/i.test(`${e.name} ${e.message}`)) {
       e.message = TIMEOUT_MESSAGE;
       e.status = 504;
     }
@@ -506,6 +519,7 @@ app.post("/api/run", async (req, res) => {
     await writes;
     await save(controller.signal.aborted ? "cancelled" : "error", { error: sanitize(e.message ?? "request failed", secrets) });
   } finally {
+    await budget.dispose();
     activeExecutions.delete(key);
   }
 });
@@ -543,7 +557,7 @@ app.post("/api/trace/events", async (req, res) => {
   }
   try {
     for (const entry of events) await recordEvent(runId, execId, { ...entry, source: "browser",
-      detail: sanitize(entry.detail, [resolveCredentials().apiKey]) });
+      detail: sanitize(entry.detail, PROVIDERS.map((provider) => resolveCredentials(provider).apiKey)) });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });

@@ -33,6 +33,15 @@ test("local provider keeps cloud credentials separate and supports optional auth
     writeSettings({ provider: "compatible" });
     assert.equal(resolveCredentials().apiKey, "cloud-secret");
     assert.equal(resolveCredentials().baseUrl, "https://example.com/v1");
+    writeSettings({ provider: "openai", apiKey: "openai-secret", baseUrl: "https://api.openai.com/v1" }, false);
+    assert.equal(resolveCredentials().provider, "compatible", "configuration does not switch the default");
+    assert.equal(resolveCredentials("openai").apiKey, "openai-secret");
+    assert.equal(resolveCredentials("compatible").apiKey, "cloud-secret");
+    assert.equal(resolveCredentials("huggingface").apiKey, "local-secret");
+    assert.equal(resolveCredentials("compatible").baseUrl, "https://example.com/v1");
+    writeSettings({ provider: "openai", apiKey: "" }, false);
+    assert.equal(resolveCredentials("openai").source, "none");
+    assert.equal(resolveCredentials("compatible").apiKey, "cloud-secret");
     writeSettings({ provider: "huggingface", apiKey: "" });
     assert.equal(resolveCredentials().source, "none");
     assert.equal(resolveCredentials().baseUrl, "http://localhost:8080/v1");

@@ -5,6 +5,7 @@ export type Effort = "off" | "minimal" | "low" | "medium" | "high";
 export type NodeStatus = "idle" | "running" | "done" | "error";
 
 export type InputData = {
+  provider?: import("./api").Provider;
   label: string;
   model: string;
   effort: Effort;

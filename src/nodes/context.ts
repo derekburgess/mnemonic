@@ -2,12 +2,11 @@ import { createContext, useContext } from "react";
 import type { InputData, OutputData } from "../types";
 
 export type GraphActions = {
-  models: string[];
-  localModelsRequired: boolean;
+  providerModels: Partial<Record<import("../api").Provider, string[]>>;
+  providerSettings: import("../api").PlatformSettings | null;
+  defaultProvider: import("../api").Provider;
   /** The step Next would run, highlighted on the canvas. */
   currentId: string | null;
-  /** Step ids in the order they will run, so each node can show its place in the queue. */
-  runOrder: string[];
   /** A function patch is resolved against the node's current data, so an edit made after an
    * await cannot write back a stale copy. */
   updateInput: (

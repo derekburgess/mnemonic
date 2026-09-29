@@ -5,14 +5,14 @@ import type { ContainerTrace } from "../server/containerTrace";
 
 const FALLBACK_MODELS = ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4o", "gpt-4o-mini"];
 
-export async function fetchModels(): Promise<string[]> {
+export async function fetchModels(provider?: Provider): Promise<string[]> {
   try {
-    const res = await fetch("/api/models");
+    const res = await fetch(`/api/models${provider ? `?provider=${provider}` : ""}`);
     if (!res.ok) throw new Error(String(res.status));
     const body = await res.json();
     return Array.isArray(body.models) ? body.models : FALLBACK_MODELS;
   } catch {
-    return FALLBACK_MODELS;
+    return !provider || provider === "openai" ? FALLBACK_MODELS : [];
   }
 }
 
@@ -148,6 +148,7 @@ export async function pushGraph(nodes: unknown[], edges: unknown[], expectedRevi
 export type Provider = "openai" | "compatible" | "huggingface";
 
 export type PlatformSettings = {
+  providers?: (Omit<PlatformSettings, "providers"> & { configured: boolean })[];
   /** Where the key in use came from; the key itself never leaves the server. */
   keySource: "panel" | "env" | "none";
   baseUrl: string;
@@ -156,8 +157,8 @@ export type PlatformSettings = {
   runLocally?: boolean;
 };
 
-export async function fetchSettings(): Promise<PlatformSettings> {
-  const res = await fetch("/api/settings");
+export async function fetchSettings(provider?: Provider): Promise<PlatformSettings> {
+  const res = await fetch(`/api/settings${provider ? `?provider=${provider}` : ""}`);
   if (!res.ok) throw new Error(`could not load settings (${res.status})`);
   return res.json();
 }
@@ -270,6 +271,7 @@ export const DEFAULT_STEP_TIMEOUT_SEC = 300;
 
 export async function runStep(
   args: {
+    provider?: Provider;
     model: string;
     effort: Effort;
     input: string;

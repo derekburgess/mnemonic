@@ -44,7 +44,7 @@ function htmlToText(html: string): string {
  * clients — Wikimedia answers OpenAI's fetcher with a 400. Fetching ourselves also means a page
  * arrives as readable text rather than markup.
  */
-export async function resolveLink(url: string): Promise<ResolvedLink> {
+export async function resolveLink(url: string, signal?: AbortSignal, transport: typeof fetch = fetch): Promise<ResolvedLink> {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -56,8 +56,8 @@ export async function resolveLink(url: string): Promise<ResolvedLink> {
   }
 
   try {
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    const res = await transport(url, {
+      signal: signal ?? AbortSignal.timeout(FETCH_TIMEOUT_MS),
       headers: {
         // Some hosts refuse requests without a recognisable browser user agent.
         "user-agent": "Mozilla/5.0 (compatible; mnemonic/0.1)",
@@ -91,8 +91,10 @@ export async function resolveLink(url: string): Promise<ResolvedLink> {
       text: text.length > MAX_CHARS ? `${text.slice(0, MAX_CHARS)}\n… truncated` : text,
     };
   } catch (err) {
+    signal?.throwIfAborted();
     return { kind: "error", url, text: (err as Error).message };
   }
 }
 
-export const resolveLinks = (urls: string[]) => Promise.all(urls.map(resolveLink));
+export const resolveLinks = (urls: string[], signal?: AbortSignal, transport?: typeof fetch) =>
+  Promise.all(urls.map((url) => resolveLink(url, signal, transport)));

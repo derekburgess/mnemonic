@@ -53,7 +53,7 @@ export function deliveryState(events: TraceEvent[]): string {
 }
 
 /** Observes SDK HTTP attempts, including its internal retries, without logging headers/bodies. */
-export function tracedFetch(emit: EmitEvent, source: TraceEvent["source"]): typeof fetch {
+export function tracedFetch(emit: EmitEvent, source: TraceEvent["source"], transport: typeof fetch = fetch): typeof fetch {
   return async (input, init) => {
     const started = Date.now();
     const headers = new Headers(init?.headers);
@@ -63,7 +63,7 @@ export function tracedFetch(emit: EmitEvent, source: TraceEvent["source"]): type
     const endpoint = `${target.protocol}//${target.host}${target.pathname}`;
     emit(event(source, "model.http_attempt", { retry, endpoint }));
     try {
-      const response = await fetch(input, init);
+      const response = await transport(input, init);
       emit(event(source, "model.http_response", { retry, status: response.status,
         requestId: response.headers.get("x-request-id"), retryAfter: response.headers.get("retry-after"), ms: Date.now() - started }));
       return response;

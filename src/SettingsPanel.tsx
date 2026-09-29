@@ -26,7 +26,7 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
       setError(null);
       setStatus(null);
       try {
-        const next = await saveSettings(patch);
+        const next = await saveSettings({ ...patch, provider: settings?.provider });
         setSettings(next);
         setBaseUrl(next.baseUrl || (next.provider === "openai" ? "https://api.openai.com/v1" : ""));
         setApiKey("");
@@ -39,7 +39,7 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
         setBusy(false);
       }
     },
-    [onSaved],
+    [onSaved, settings?.provider],
   );
 
   return (
@@ -56,10 +56,19 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
         {error && <p className="error">{error}</p>}
 
         <label className="stack">
-          Provider
+          Configure provider
           <select
             value={settings?.provider ?? "openai"}
-            onChange={(e) => save({ provider: e.target.value as Provider })}
+            onChange={(e) => {
+              setBusy(true);
+              setApiKey("");
+              setStatus(null);
+              setError(null);
+              void fetchSettings(e.target.value as Provider)
+                .then((next) => { setSettings(next); setBaseUrl(next.baseUrl); })
+                .catch((err) => setError(err.message))
+                .finally(() => setBusy(false));
+            }}
             disabled={busy || !settings}
           >
             <option value="openai">OpenAI — Responses API</option>

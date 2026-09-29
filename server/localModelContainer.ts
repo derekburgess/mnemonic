@@ -11,7 +11,7 @@ const owner = createHash("sha256").update(process.cwd()).digest("hex").slice(0, 
 const label = `mnemonic.local-model=${owner}`;
 const live = new Set<string>();
 const docker = async (args: string[], signal?: AbortSignal) =>
-  (await exec("docker", args, { signal, timeout: 30_000, maxBuffer: 1024 * 1024 })).stdout;
+  (await exec("docker", args, { signal, timeout: signal ? 0 : 30_000, maxBuffer: 1024 * 1024 })).stdout;
 
 export async function removeModelContainer(name: string) {
   try { await docker(["rm", "--force", name]); live.delete(name); }

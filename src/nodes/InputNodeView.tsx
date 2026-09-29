@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { Attachment, Effort, InputFile, InputNode, ToolConfig, Workspace } from "../types";
 import { Icon } from "../icons";
-import { pickFolderNatively, resolveFolder } from "../api";
+import { pickFolderNatively, resolveFolder, type Provider } from "../api";
 import { pickDirectory } from "../pickDirectory";
 import { uid } from "../graph";
 import { SandboxToggle } from "./SandboxToggle";
@@ -24,9 +24,13 @@ const DEFAULT_TIMEOUT_SEC = 300;
 const asDuration = (sec: number) => (sec < 60 ? `${sec}s` : `${sec / 60}m`);
 
 export function InputNodeView({ id, data }: NodeProps<InputNode>) {
-  const { models, localModelsRequired, currentId, runOrder, updateInput: onChange, runOne: onRun, removeNode: onDelete, setSkipped } =
+  const { providerModels, providerSettings, defaultProvider, currentId, updateInput: onChange, runOne: onRun, removeNode: onDelete, setSkipped } =
     useGraphActions();
-  const place = runOrder.indexOf(id);
+  const provider = data.provider ?? defaultProvider;
+  const models = providerModels[provider] ?? [];
+  const localModelsRequired = provider === "huggingface" && !!providerSettings?.providers?.find((p) => p.provider === provider)?.runLocally;
+  const providers = providerSettings?.providers?.filter((p) => p.configured) ?? [];
+  const providerNames = { openai: "OpenAI", compatible: "OpenAI-compatible", huggingface: "Hugging Face" };
   const busy = data.status === "running";
   const skipped = !!data.skipped;
   const current = currentId === id;
@@ -150,9 +154,6 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
       <Handle type="target" position={Position.Left} />
 
       <header className="node-head">
-        <span className="place" title={place < 0 ? "Not scheduled" : `Runs ${place + 1} of ${runOrder.length}`}>
-          {place < 0 ? "–" : place + 1}
-        </span>
         <input
           className="label nodrag"
           value={data.label}
@@ -162,6 +163,21 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         <SkipToggle on={skipped} onChange={(v) => setSkipped(id, v)} title="Skip this node" />
         <DeleteButton onClick={() => onDelete(id)} title="Delete step" />
       </header>
+
+      <div className="row">
+        <label>
+          Provider
+          <select className="nodrag" value={provider}
+            onChange={(e) => {
+              const next = e.target.value as Provider;
+              onChange(id, { provider: next, model: providerModels[next]?.[0] ?? "" });
+            }}>
+            {!providers.some((p) => p.provider === provider) &&
+              <option value={provider} disabled>{providerNames[provider]} (not configured)</option>}
+            {providers.map((p) => <option key={p.provider} value={p.provider}>{providerNames[p.provider]}</option>)}
+          </select>
+        </label>
+      </div>
 
       <div className="row">
         <label>
@@ -233,7 +249,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
             ))}
           </select>
         </label>
-        <label title="Budget for the whole step: every round plus the tools they call">
+        <label title="Budget for the whole step: preparation, model loading, every round, and tool calls">
           Timeout
           <select
             className="nodrag"

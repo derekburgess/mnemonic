@@ -135,9 +135,10 @@ test("local models force container switches on and unlock them when disabled", a
   let settings = { provider: "huggingface", runLocally: true, keySource: "none", baseUrl: "", hasPanelKey: false };
   await page.route("**/api/settings", async (route) => {
     if (route.request().method() === "POST") settings = { ...settings, ...route.request().postDataJSON() };
-    await route.fulfill({ json: settings });
+    await route.fulfill({ json: { ...settings, providers: [{ ...settings, configured: true }] } });
   });
   await page.reload();
+  await page.getByRole("combobox", { name: "Provider", exact: true }).selectOption("huggingface");
   const switches = page.getByRole("checkbox", { name: "Run in a sandbox" });
   await expect(switches.first()).toBeChecked();
   await expect(switches.first()).toBeDisabled();
@@ -158,17 +159,15 @@ test("local models force container switches on and unlock them when disabled", a
   await expect(page.getByRole("region", { name: "Downloaded models" })).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: /Base URL/ })).toBeVisible();
   await expect(switches.first()).toBeEnabled();
-  await expect(switches.first()).toBeChecked();
-  await switches.first().press("Space");
   await expect(switches.first()).not.toBeChecked();
 });
 
 test("Hugging Face library downloads before runs, shows progress, and deletes cached models", async ({ page }) => {
   await setup(page);
   let models: any[] = [];
-  await page.route("**/api/models", (route) => route.fulfill({ json: { models: models.filter((m) => m.status === "Downloaded").map((m) => m.model) } }));
+  await page.route("**/api/models*", (route) => route.fulfill({ json: { models: models.filter((m) => m.status === "Downloaded").map((m) => m.model) } }));
   await page.route("**/api/settings", (route) => route.fulfill({ json: { provider: "huggingface", runLocally: true,
-    keySource: "none", hasPanelKey: false, baseUrl: "" } }));
+    keySource: "none", hasPanelKey: false, baseUrl: "", providers: [{ provider: "huggingface", runLocally: true, configured: true }] } }));
   await page.route("**/api/local-model/**", async (route) => {
     const endpoint = new URL(route.request().url()).pathname;
     if (endpoint.endsWith("/download")) {
@@ -180,6 +179,7 @@ test("Hugging Face library downloads before runs, shows progress, and deletes ca
     return route.fulfill({ json: { models, activity: models.some((m) => m.active) ? { model: "org/model", phase: "Downloading", downloaded: 50, total: 100 } : null } });
   });
   await page.reload();
+  await page.getByRole("combobox", { name: "Provider", exact: true }).selectOption("huggingface");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const library = page.getByRole("region", { name: "Downloaded models" });
   await library.getByRole("textbox", { name: "Hugging Face model ID" }).fill("org/model");
@@ -215,4 +215,38 @@ test("tagged thinking appears between the step and answer with visible tags", as
   await page.reload();
   await expect(artifacts).toHaveCount(2);
   await expect(thinking.locator(".text")).toHaveText("<think>Keep these tags.</think>");
+});
+
+test("node provider selection filters models, persists, and routes execution", async ({ page }) => {
+  const state = await setup(page);
+  await page.route("**/api/settings*", (route) => route.fulfill({ json: {
+    provider: "openai", keySource: "panel", baseUrl: "", hasPanelKey: true,
+    providers: [
+      { provider: "openai", configured: true, keySource: "panel" },
+      { provider: "compatible", configured: true, keySource: "panel" },
+      { provider: "huggingface", configured: false, keySource: "none" },
+    ],
+  } }));
+  await page.route("**/api/models*", (route) => route.fulfill({ json: {
+    models: new URL(route.request().url()).searchParams.get("provider") === "compatible" ? ["local-model"] : ["test"],
+  } }));
+  await page.reload();
+  const node = page.locator(".react-flow__node-step").first();
+  const provider = node.getByRole("combobox", { name: "Provider", exact: true });
+  await expect(provider.locator("option")).toHaveCount(2);
+  await provider.selectOption("compatible");
+  await expect(node.getByRole("combobox", { name: "Model", exact: true })).toHaveValue("local-model");
+  await expect(page.locator(".save-status")).toHaveText("Saved");
+  await page.reload();
+  await expect(provider).toHaveValue("compatible");
+  await page.getByRole("button", { name: "Add Step", exact: true }).click();
+  const second = page.locator(".react-flow__node-step").nth(1);
+  await expect(second.getByRole("combobox", { name: "Provider", exact: true })).toHaveValue("openai");
+  await second.locator("textarea.prompt").fill("Another provider");
+  state.complete = true;
+  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  await expect.poll(() => state.executions.length).toBe(2);
+  expect(state.executions.map((e) => [e.provider, e.model])).toEqual([
+    ["compatible", "local-model"], ["openai", "test"],
+  ]);
 });

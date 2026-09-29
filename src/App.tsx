@@ -18,7 +18,7 @@ import {
   type IsValidConnection,
 } from "@xyflow/react";
 
-import { fetchSettings, fetchModels, runStep, toolSpec, waitForExecution, cancelExecution, type TraceStep } from "./api";
+import { fetchSettings, fetchModels, runStep, toolSpec, waitForExecution, cancelExecution, type TraceStep, type Provider, type PlatformSettings } from "./api";
 import { Icon } from "./icons";
 import { SettingsPanel } from "./SettingsPanel";
 import { TracePanel } from "./TracePanel";
@@ -60,13 +60,13 @@ export const DEFAULT_TIMEOUT_SEC = 300;
 
 type Snapshot = { nodes: GraphNode[]; edges: GraphEdge[] };
 
-function newInput(model: string, index: number, position: { x: number; y: number }): InputNode {
+function newInput(model: string, position: { x: number; y: number }): InputNode {
   return {
     id: uid(),
     type: "step",
     position,
     data: {
-      label: `Step ${index}`,
+      label: "Name this step",
       model,
       effort: "off",
       role: "",
@@ -139,15 +139,28 @@ function loadSnapshot(): Snapshot | null {
 }
 
 const seed = loadSnapshot() ?? {
-  nodes: [newInput(DEFAULT_MODEL, 1, { x: 260, y: 80 })],
+  nodes: [newInput(DEFAULT_MODEL, { x: 260, y: 80 })],
   edges: [],
 };
 
 function Canvas() {
   const [nodes, setNodes, onNodesChange] = useNodesState<GraphNode>(seed.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<GraphEdge>(seed.edges);
-  const [localModelsRequired, setLocalModelsRequired] = useState(false);
-  const [models, setModels] = useState<string[]>([DEFAULT_MODEL]);
+  const [providerSettings, setProviderSettings] = useState<PlatformSettings | null>(null);
+  const [providerModels, setProviderModels] = useState<Partial<Record<Provider, string[]>>>({});
+  const defaultProvider = providerSettings?.provider ?? "openai";
+  const providerRefresh = useRef(0);
+  const refreshProviders = useCallback((settings: PlatformSettings) => {
+    setProviderSettings(settings);
+    const revision = ++providerRefresh.current;
+    for (const config of settings.providers?.filter((p) => p.configured) ?? [settings]) {
+      void fetchModels(config.provider).then((models) => {
+        if (revision === providerRefresh.current) {
+          setProviderModels((current) => ({ ...current, [config.provider]: models }));
+        }
+      });
+    }
+  }, []);
   const [stepped, setStepped] = useState<string[]>([]);
   const steppedRef = useRef<string[]>([]);
   const abort = useRef<AbortController | null>(null);
@@ -171,17 +184,15 @@ function Canvas() {
   }, [stepped]);
 
   useEffect(() => {
-    fetchModels().then(setModels);
-    fetchSettings().then((settings) => setLocalModelsRequired(settings.provider === "huggingface" && !!settings.runLocally)).catch(() => {});
-  }, []);
-
+    fetchSettings().then(refreshProviders).catch(() => {});
+  }, [refreshProviders]);
 
   useEffect(() => {
-    if (localModelsRequired && nodes.some((node) => isInput(node) && !node.data.sandbox)) {
-      setNodes((current) => current.map((node) => isInput(node) && !node.data.sandbox
-        ? { ...node, data: { ...node.data, sandbox: true } } : node));
-    }
-  }, [localModelsRequired, nodes, setNodes]);
+    if (!providerSettings) return;
+    if (!nodes.some((node) => isInput(node) && !node.data.provider)) return;
+    setNodes((current) => current.map((node) => isInput(node) && !node.data.provider
+      ? { ...node, data: { ...node.data, provider: defaultProvider } } : node));
+  }, [providerSettings, defaultProvider, setNodes, nodes]);
 
   const sync = useRef<GraphSync | null>(null);
   const publish = useCallback(
@@ -280,6 +291,7 @@ function Canvas() {
         executions.map((execution) =>
           runStep(
             {
+              provider: producer.data.provider ?? defaultProvider,
               model: producer.data.model,
               effort: producer.data.effort,
               input,
@@ -290,8 +302,8 @@ function Canvas() {
               files: producer.data.files?.map(({ name, mime, dataUrl }) => ({ name, mime, dataUrl })),
               links: producer.data.links?.map((l) => l.url).filter((url) => url.trim()),
               workspaces: producer.data.workspaces?.map((w) => w.path).filter((p) => p.trim()),
-              sandbox: localModelsRequired || producer.data.sandbox,
-              useGpu: localModelsRequired && !!producer.data.useGpu,
+              sandbox: (producer.data.provider === "huggingface" && providerSettings?.providers?.find((p) => p.provider === "huggingface")?.runLocally) || producer.data.sandbox,
+              useGpu: producer.data.provider === "huggingface" && !!producer.data.useGpu,
               ...(execution
                 ? {
                     trace: {
@@ -362,7 +374,7 @@ function Canvas() {
       else forgetExecutions(executions.filter((_, i) => settled[i].status === "fulfilled" || (settled[i] as PromiseRejectedResult).reason?.terminal).map((e) => e.execId));
       return working;
     },
-    [publish, localModelsRequired],
+    [publish, defaultProvider, providerSettings],
   );
 
   const addSavedOutput = useCallback(async (step: TraceStep) => {
@@ -498,11 +510,13 @@ function Canvas() {
 
   const addStep = useCallback(() => {
     setNodes((current) => {
-      const count = current.filter(isInput).length;
       const position = freeSpot(viewportSpot(), current.map(boxOf));
-      return [...current, newInput(models[0] ?? DEFAULT_MODEL, count + 1, position)];
+      const provider = providerSettings?.providers?.find((p) => p.configured)?.provider ?? defaultProvider;
+      const node = newInput(providerModels[provider]?.[0] ?? "", position);
+      node.data.provider = provider;
+      return [...current, node];
     });
-  }, [models, setNodes, viewportSpot]);
+  }, [providerModels, providerSettings, defaultProvider, setNodes, viewportSpot]);
 
   /** Outputs feed inputs, inputs feed outputs. Output -> output would carry no context. */
   const isValidConnection = useCallback<IsValidConnection<GraphEdge>>(
@@ -617,8 +631,8 @@ function Canvas() {
   );
 
   const actions = useMemo(
-    () => ({ models, localModelsRequired, currentId, runOrder, updateInput, updateOutput, runOne, removeNode, setSkipped }),
-    [models, localModelsRequired, currentId, runOrder, updateInput, updateOutput, runOne, removeNode, setSkipped],
+    () => ({ providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, runOne, removeNode, setSkipped }),
+    [providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, runOne, removeNode, setSkipped],
   );
 
   return (
@@ -727,7 +741,7 @@ function Canvas() {
           </div>
 
           {panel === "trace" && <TracePanel onClose={() => setPanel(null)} onRecover={addSavedOutput} outputExecIds={nodes.filter(isOutput).map((n) => n.data.execId).filter((id): id is string => !!id)} />}
-          {panel === "settings" && <SettingsPanel onClose={() => setPanel(null)} onSaved={(settings) => { setLocalModelsRequired(settings.provider === "huggingface" && !!settings.runLocally); void fetchModels().then(setModels); }} />}
+          {panel === "settings" && <SettingsPanel onClose={() => setPanel(null)} onSaved={() => { void fetchSettings().then(refreshProviders); }} />}
         </div>
       </div>
     </GraphActionsContext.Provider>

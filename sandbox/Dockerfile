@@ -12,7 +12,7 @@ RUN npm install --omit=dev --no-audit --no-fund && npm cache clean --force
 
 # Only the modules a run actually needs. trace.ts, graphstore.ts and index.ts are deliberately
 # absent: the container has no database, no port and no way to reach either.
-COPY server/providers.ts server/tools.ts server/links.ts server/workspace.ts server/runner.ts server/events.ts ./server/
+COPY server/providers.ts server/tools.ts server/links.ts server/workspace.ts server/runner.ts server/events.ts server/execution.ts ./server/
 
 # Read by tools.ts, which rewrites a localhost MCP URL to reach the host rather than this
 # container's own loopback.

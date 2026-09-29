@@ -1,6 +1,8 @@
 import { event, errorDetail, tracedFetch, type EmitEvent, type TraceEvent } from "./events.js";
 import type OpenAI from "openai";
 import type { Dispatch } from "./tools.js";
+import { TIMEOUT_MESSAGE } from "./execution.js";
+export { TIMEOUT_MESSAGE } from "./execution.js";
 import { resolveLinks, type ResolvedLink } from "./links.js";
 
 /**
@@ -49,6 +51,8 @@ function redact(value: unknown): unknown {
 
 export type RunArgs = {
   client: OpenAI;
+  /** The node-scoped transport, also used by tracing and attached links. */
+  transport?: typeof fetch;
   model: string;
   effort?: string;
   input: string;
@@ -93,7 +97,7 @@ const summarise = (links: ResolvedLink[]): LinkSummary[] =>
 
 const uniq = (urls: (string | null | undefined)[]) => [...new Set(urls.filter((u): u is string => !!u))];
 
-export const TIMEOUT_MESSAGE = 'The step hit its timeout. Raise "Timeout" if it legitimately takes longer.';
+
 
 /**
  * Stops waiting on a tool once the step's budget is spent. The tool itself cannot be killed
@@ -134,7 +138,7 @@ async function executeTool(args: RunArgs, name: string, input: string, callId: s
 function modelClient(args: RunArgs, round: number) {
   return args.onEvent ? args.client.withOptions({ fetch: tracedFetch((entry) => args.onEvent?.({
     ...entry, detail: { ...(entry.detail as Record<string, unknown>), round },
-  }), args.eventSource ?? "proxy") }) : args.client;
+  }), args.eventSource ?? "proxy", args.transport) }) : args.client;
 }
 
 async function modelCall<T>(args: RunArgs, round: number, work: () => Promise<T>): Promise<T> {
@@ -192,7 +196,7 @@ export async function runResponses(args: RunArgs): Promise<RunResult> {
   };
 
   const files = args.files ?? [];
-  const links = args.links?.length ? await resolveLinks(args.links) : [];
+  const links = args.links?.length ? await resolveLinks(args.links, args.signal, args.transport) : [];
   const text = [input, inlineText(files), linkText(links)].filter(Boolean).join("\n\n");
 
   const attached = files.filter((f) => isImage(f) || isPdf(f));
@@ -324,7 +328,7 @@ export async function runChat(args: RunArgs): Promise<RunResult> {
 
   const chatTools = tools.length ? asChatTools(tools) : undefined;
   const files = args.files ?? [];
-  const links = args.links?.length ? await resolveLinks(args.links) : [];
+  const links = args.links?.length ? await resolveLinks(args.links, args.signal, args.transport) : [];
   const text = [input, inlineText(files), linkText(links)].filter(Boolean).join("\n\n");
 
   const attached = files.filter((f) => isImage(f) || isPdf(f));
