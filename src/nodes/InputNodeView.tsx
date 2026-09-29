@@ -5,6 +5,7 @@ import { Icon } from "../icons";
 import { pickFolderNatively, resolveFolder, type Provider } from "../api";
 import { pickDirectory } from "../pickDirectory";
 import { uid } from "../graph";
+import { SandboxRunStatus } from "./SandboxRunStatus";
 import { SandboxToggle } from "./SandboxToggle";
 import { WorkspaceRow } from "./WorkspaceRow";
 import { CopyButton } from "./CopyButton";
@@ -266,6 +267,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
       </div>
 
       <SandboxToggle useGpu={!!data.useGpu} onGpuChange={(v) => onChange(id, { useGpu: v })} required={localModelsRequired} on={localModelsRequired || !!data.sandbox} onChange={(v) => onChange(id, { sandbox: v })} />
+      {(localModelsRequired || data.sandbox) && <SandboxRunStatus data={data} />}
 
       <div className="stack">
         <button

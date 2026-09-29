@@ -265,12 +265,17 @@ function Canvas() {
       if (!producer || !isInput(producer) || producer.data.skipped) return snap;
 
       if (!producer.data.prompt.trim()) {
-        const next = patchStatus(snap, id, { status: "error", error: "This step has no input text." });
+        const next = patchStatus(snap, id, { status: "error", error: "This step has no input text.", lastExecution: undefined });
         publish(next);
         return next;
       }
 
-      let working = patchStatus(snap, id, { status: "running", error: undefined });
+      const count = Math.min(MAX_OUTPUTS, Math.max(1, producer.data.outputs ?? 1));
+      const runTrace = trace ?? { runId: uid(), kind: "step" as const, seq: 0 };
+      const executions = Array.from({ length: count }, () => ({ ...runTrace, execId: uid() }));
+      const lastExecution = { runId: executions[0].runId, execIds: executions.map((e) => e.execId),
+        startedMs: Date.now(), timeoutSec: producer.data.timeoutSec || 300 };
+      let working = patchStatus(snap, id, { status: "running", error: undefined, lastExecution });
       publish(working);
 
       const context = resolveContext(id, working.nodes, working.edges);
@@ -282,8 +287,6 @@ function Canvas() {
       );
       const tools = resolveTools(producer).map(toolSpec);
 
-      const count = Math.min(MAX_OUTPUTS, Math.max(1, producer.data.outputs ?? 1));
-      const executions = Array.from({ length: count }, () => ({ ...(trace ?? { runId: uid(), kind: "step" as const, seq: 0 }), execId: uid() }));
       const group = uid();
       rememberExecutions(executions.map((execution) => ({ ...execution, nodeId: id, label: producer.data.label, effort: producer.data.effort, group,
         deadline: Date.now() + ((producer.data.timeoutSec || 300) + (producer.data.sandbox ? 720 : 60)) * 1000 })));
@@ -362,6 +365,7 @@ function Canvas() {
         }
       }
 
+      working = patchStatus(working, id, { lastExecution: { ...lastExecution, finishedMs: Date.now() } });
       try { publish(working); }
       catch (err) {
         successfulExecutions.forEach((execution) => reportTraceEvent(execution, "graph.failed", { error: (err as Error).message }));

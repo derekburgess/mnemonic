@@ -250,3 +250,76 @@ test("node provider selection filters models, persists, and routes execution", a
     ["compatible", "local-model"], ["openai", "test"],
   ]);
 });
+
+test("sandbox status uses trace events, matches the toggle, and preserves completion across reload", async ({ page }, testInfo) => {
+  const state = await setup(page);
+  const events: any[] = [];
+  let polls = 0;
+  let finishedMs: number | null = null;
+  await page.route("**/api/trace/runs/*/progress*", (route) => {
+    polls++;
+    const after = Number(new URL(route.request().url()).searchParams.get("after"));
+    return route.fulfill({ json: { cursor: events.length, events: events.filter((e) => e.order > after),
+      steps: state.executions.map((e) => ({ execId: e.trace.execId, status: state.complete ? "ok" : "running", error: null, finishedMs })) } });
+  });
+  const status = page.getByRole("status", { name: "Sandbox status" });
+  await expect(status).toHaveCount(0);
+  await page.getByRole("checkbox", { name: "Run in a sandbox" }).press("Space");
+  await expect(status).toHaveText("Ready to run in a sandbox");
+  await page.getByRole("textbox", { name: "Step name" }).focus();
+  const node = page.locator(".react-flow__node-step");
+  const styles = await node.evaluate((element) => {
+    const toggle = element.querySelector(".sandbox-controls")!;
+    const block = element.querySelector(".sandbox-status")!;
+    const shell = (el: Element) => {
+      const css = getComputedStyle(el);
+      return [css.backgroundColor, css.borderColor, css.borderRadius, css.padding];
+    };
+    return { toggle: shell(toggle), block: shell(block), cursor: getComputedStyle(block).cursor,
+      afterToggle: !!(toggle.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING),
+      beforeWorkspace: !!(block.compareDocumentPosition(element.querySelector("button.attach")!) & Node.DOCUMENT_POSITION_FOLLOWING) };
+  });
+  expect(styles.block).toEqual(styles.toggle);
+  expect(styles.cursor).toBe("default");
+  expect(styles.afterToggle && styles.beforeWorkspace).toBe(true);
+  await node.getByRole("button", { name: "Run step" }).click();
+  await expect.poll(() => state.executions.length).toBe(1);
+  const emit = (kind: string, detail = {}) => events.push({ kind, detail, id: String(events.length),
+    order: events.length + 1, at: Date.now(), execId: state.executions[0].trace.execId, source: "proxy" });
+  emit("image.build_started");
+  await expect(status).toHaveText("Building sandbox image");
+  emit("execution.budget", { timeoutSec: 900, deadlineMs: Date.now() + 650000 });
+  emit("model.started", { round: 2 });
+  emit("delivery.poll");
+  await expect(status).toHaveText("Generating response · round 2");
+  await node.screenshot({ path: testInfo.outputPath("sandbox-status.png") });
+  const timing = page.getByLabel("Elapsed time and timeout budget");
+  await expect(timing).toContainText("/ 15m");
+  const initialTime = await timing.textContent();
+  await expect(timing).not.toHaveText(initialTime!);
+  emit("tool.started", { name: "read_file" });
+  await expect(status).toHaveText("Running tool: read_file");
+  await expect(page.locator(".save-status")).toHaveText("Saved");
+  await page.reload();
+  await expect(status).toHaveText("Running tool: read_file");
+  emit("runner.completed");
+  await expect(status).toHaveText("Cleaning up containers");
+  state.complete = true;
+  finishedMs = Date.now();
+  await expect(status).toHaveText("Completed");
+  await expect(page.locator(".react-flow__node-artifact")).toHaveCount(1);
+  const finalTime = await timing.textContent();
+  const finalPolls = polls;
+  await page.waitForTimeout(1200);
+  await expect(timing).toHaveText(finalTime!);
+  expect(polls).toBe(finalPolls);
+  await expect(page.locator(".save-status")).toHaveText("Saved");
+  await page.reload();
+  await expect(status).toHaveText("Completed");
+  state.complete = false;
+  finishedMs = null;
+  await node.getByRole("button", { name: "Run step" }).click();
+  await expect.poll(() => state.executions.length).toBe(2);
+  // The new execution's identity resets the line, even when old trace events are replayed.
+  await expect(status).toHaveText("Starting execution");
+});

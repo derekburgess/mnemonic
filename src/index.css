@@ -1149,3 +1149,12 @@ body.resizing-col { cursor: col-resize; user-select: none; }
 .sandbox-control { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .sandbox-control.on { color: var(--accent); }
 .sandbox-control.locked { cursor: not-allowed; }
+
+/* Same shell as the sandbox controls, with one noninteractive live status line. */
+.sandbox-status { min-width: 0; contain: inline-size; height: auto; min-height: 28px; padding-top: 6px; padding-bottom: 6px; cursor: default; user-select: text; }
+.sandbox-status:hover:not(.locked) { border-color: var(--line); }
+.sandbox-status-message { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sandbox-status-time { flex: none; color: var(--dim); font-variant-numeric: tabular-nums; font-size: 10px; white-space: nowrap; }
+.sandbox-status.completed .sandbox-status-message { color: var(--ok); }
+.sandbox-status.failed .sandbox-status-message { color: var(--err); }
+.sandbox-status.cancelled .sandbox-status-message { color: var(--warn); }

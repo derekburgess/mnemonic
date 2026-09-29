@@ -368,8 +368,8 @@ function pause(ms: number, signal?: AbortSignal) {
   });
 }
 
-export async function fetchTraceProgress(runId: string, after: number) {
-  const res = await fetch(`/api/trace/runs/${encodeURIComponent(runId)}/progress?after=${after}`, { signal: AbortSignal.timeout(10_000) });
+export async function fetchTraceProgress(runId: string, after: number, signal?: AbortSignal) {
+  const res = await fetch(`/api/trace/runs/${encodeURIComponent(runId)}/progress?after=${after}`, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`could not load live trace (${res.status})`);
   return res.json() as Promise<{ cursor: number; events: (TraceEvent & { execId: string })[];
     steps: { execId: string; status: string; error: string | null; finishedMs: number | null }[] }>;

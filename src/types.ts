@@ -34,6 +34,8 @@ export type InputData = {
   outputs: number;
   /** Kept in the graph and wired, but never executed. */
   skipped?: boolean;
+  /** Trace identity only; live status is read from the existing execution events. */
+  lastExecution?: import("./executionStatus").NodeExecution;
   status: NodeStatus;
   error?: string;
 };
