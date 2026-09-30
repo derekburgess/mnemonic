@@ -188,6 +188,7 @@ button.tinted:hover:not(:disabled) {
 }
 .label:hover { border-color: var(--line); }
 .label:focus { border-color: var(--accent); outline: none; }
+.node-head .label.unnamed, .node-head .label::placeholder { color: var(--dim); opacity: 1; }
 
 .dim { color: var(--dim); font-size: 11px; }
 

@@ -156,7 +156,8 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
 
       <header className="node-head">
         <input
-          className="label nodrag"
+          className={`label nodrag${data.label === "Name this step" ? " unnamed" : ""}`}
+          placeholder="Name this step"
           value={data.label}
           onChange={(e) => onChange(id, { label: e.target.value })}
           aria-label="Step name"
