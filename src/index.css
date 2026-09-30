@@ -1161,7 +1161,7 @@ body.resizing-col { cursor: col-resize; user-select: none; }
 
 .sandbox-controls { position: relative; }
 .sandbox-controls .sandbox-control { padding-right: 26px; }
-.sandbox-config-open { position: absolute; right: 5px; top: 3px; width: 22px; height: 22px; padding: 0; }
+.sandbox-config-open { position: absolute; right: 5px; top: 5px; width: 22px; height: 22px; padding: 0; }
 .sandbox-config-panel .trace-list { display: flex; flex-direction: column; gap: 12px; }
 .sandbox-config-panel textarea { width: 100%; resize: vertical; min-height: 80px; }
 .sandbox-config-panel .sandbox-config-text { min-height: 260px; font-family: ui-monospace, monospace; font-size: 12px; white-space: pre; overflow: auto; }

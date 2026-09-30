@@ -56,6 +56,12 @@ export function SandboxConfigPanel({ node, onClose }: { node: InputNode; onClose
           onChange={(e) => patch({ draft: e.target.value })} />
       </label>
       {parseError && <p className="error" role="alert">{parseError}</p>}
+      <div className="settings-actions">
+        <button className="tinted tint-ok" disabled={!!parseError} onClick={() => {
+          try { JSON.parse(draft); updateInput(node.id, { sandboxConfig: draft }); } catch { /* Keep invalid drafts. */ }
+        }}>{node.data.sandboxConfig === draft ? "Saved" : "Save"}</button>
+        <button onClick={() => patch({ draft: defaultSandboxText })}>Reset to defaults</button>
+      </div>
       <div className="sandbox-ai">
         <label className="stack">Provider
           <select value={provider} disabled={busy} onChange={(e) => {
@@ -84,11 +90,5 @@ export function SandboxConfigPanel({ node, onClose }: { node: InputNode; onClose
         </div>}
       </div>
     </div>
-    <footer className="sandbox-config-actions">
-      <button className="tinted tint-ok" disabled={!!parseError} onClick={() => {
-        try { JSON.parse(draft); updateInput(node.id, { sandboxConfig: draft }); } catch { /* Keep invalid drafts. */ }
-      }}>{node.data.sandboxConfig === draft ? "Saved" : "Save"}</button>
-      <button onClick={() => patch({ draft: defaultSandboxText })}>Reset to defaults</button>
-    </footer>
   </ResizablePanel>;
 }

@@ -66,7 +66,7 @@ function ProviderSettingsSection({ provider, label, onSaved }: {
   );
 
   return (
-    <details className="provider-settings" open={provider === "openai"}>
+    <details className="provider-settings">
       <summary>{label}</summary>
       <section aria-label={`${label} settings`}>
         {error && <p className="error" role="alert">{error}</p>}

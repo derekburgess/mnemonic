@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -n server,web -c magenta,cyan \"npm:dev:server\" \"npm:dev:web\"",
+    "dev": "concurrently --kill-others -n server,web -c magenta,cyan \"npm:dev:server\" \"npm:dev:web:ready\"",
     "dev:server": "tsx watch --include .env server/index.ts",
     "dev:web": "vite",
     "build": "tsc -b && vite build",
@@ -12,7 +12,8 @@
     "typecheck": "tsc -b --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
     "test:browser": "playwright test",
-    "test:docker": "MNEMONIC_TEST_DOCKER=1 node --import tsx --test tests/docker.integration.test.ts"
+    "test:docker": "MNEMONIC_TEST_DOCKER=1 node --import tsx --test tests/docker.integration.test.ts",
+    "dev:web:ready": "tsx scripts/dev-web.ts"
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.5-r.4",

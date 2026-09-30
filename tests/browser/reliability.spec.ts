@@ -561,6 +561,8 @@ test("provider settings expand independently and save to their own provider", as
   const panel = page.getByRole("complementary", { name: "Settings", exact: true });
   await expect(panel.getByRole("combobox")).toHaveCount(0);
   const openai = panel.getByRole("region", { name: "OpenAI settings", exact: true });
+  await expect(panel.locator(".provider-settings[open]")).toHaveCount(0);
+  await panel.locator("summary").filter({ hasText: /^OpenAI$/ }).click();
   await openai.getByLabel("API key", { exact: true }).fill("openai-draft");
   await panel.locator("summary").filter({ hasText: "OpenAI-compatible" }).click();
   await panel.locator("summary").filter({ hasText: "Hugging Face" }).click();

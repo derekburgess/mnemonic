@@ -13,8 +13,11 @@ cp .env.example .env      # add your OPENAI_API_KEY
 npm run dev
 ```
 
-`npm run dev` starts both halves together: the proxy on **:8787** and the UI on **:5173**. Open
-<http://localhost:5173>. Vite proxies `/api` to the server, so there is nothing else to configure.
+`npm run dev` starts the proxy on **:8787**, then starts the UI on **:5173** once the API
+is ready. During database recovery and container cleanup it prints one waiting message. If the
+API is still unavailable after three minutes, startup exits with an error pointing to the server
+logs. Open <http://localhost:5173>. Vite proxies `/api` to the server and honors the same `PORT`
+setting as the proxy. `npm run dev:web` remains available for starting Vite independently.
 
 The API key lives only in the local proxy under `server/` and is never bundled into the browser.
 Without one the UI still loads and the graph is fully editable; runs return a clear 401.
