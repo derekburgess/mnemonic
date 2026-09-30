@@ -1169,3 +1169,21 @@ body.resizing-col { cursor: col-resize; user-select: none; }
 .sandbox-recommendation pre, .sandbox-recommendation pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .sandbox-ai { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
 .sandbox-config-actions { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+
+.builtin-tool-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--tool); padding-left: 6px; }
+.tool-head > .skip { flex-shrink: 0; }
+
+.workspace-accept { width: 100%; justify-content: center; margin-bottom: 12px; }
+.workspace-change { border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
+.workspace-change-heading { display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
+.workspace-change-heading strong { flex: 1; min-width: 0; }
+.workspace-file-toggle { flex: 1; min-width: 0; padding: 0; border: none; background: none; text-align: left; overflow-wrap: anywhere; }
+.workspace-versions { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
+.workspace-preview { margin: 0; padding: 10px; background: var(--panel-2); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; user-select: text; }
+
+.sandbox-activity { font-size: 11px; color: var(--dim); }
+.sandbox-activity summary { cursor: pointer; }
+.sandbox-activity ol { list-style: none; padding: 0; max-height: 180px; overflow: auto; }
+.sandbox-activity li { display: flex; gap: 8px; margin: 5px 0; }
+.sandbox-activity time { flex: none; font-variant-numeric: tabular-nums; }
+.sandbox-activity li span { overflow-wrap: anywhere; min-width: 0; }

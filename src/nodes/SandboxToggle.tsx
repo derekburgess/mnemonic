@@ -6,11 +6,10 @@ import { fetchSandboxStatus, type SandboxStatus } from "../api";
  * Runs the step in an ephemeral container instead of in the proxy's own process.
  *
  * Whether that is possible is a fact about the proxy, not about any one step, so it is asked
- * once and shared by every node — otherwise a graph of twenty steps opens twenty requests to
- * say the same thing.
+ * with concurrent requests shared across nodes. Don't retain a failed startup check forever.
  */
 let asked: Promise<SandboxStatus> | null = null;
-const sandboxStatus = () => (asked ??= fetchSandboxStatus());
+const sandboxStatus = () => (asked ??= fetchSandboxStatus().finally(() => { asked = null; }));
 
 export function SandboxToggle({ onConfigure, on, onChange, required = false, useGpu = false, onGpuChange }: { onConfigure: () => void; useGpu?: boolean; onGpuChange: (v: boolean) => void; on: boolean; required?: boolean; onChange: (v: boolean) => void }) {
   const [status, setStatus] = useState<SandboxStatus | null>(null);
@@ -21,12 +20,12 @@ export function SandboxToggle({ onConfigure, on, onChange, required = false, use
     return () => {
       live = false;
     };
-  }, []);
+  }, [on]);
 
   const available = status?.available ?? false;
-  // A step already set to run contained keeps its switch usable even where this proxy cannot
-  // honour it: the setting travels with the graph, and hiding it would look like it was lost.
-  const locked = required || (!!status && !available && !on);
+  // This is the node's execution preference, not a reflection of Docker's current health.
+  // The server checks availability at run time and never falls back to host execution.
+  const locked = required;
 
   return (
     <div className="stack">

@@ -14,6 +14,7 @@ export type ExecutionProgress = {
 };
 type Phase = "waiting" | "preparing" | "working" | "stopping" | "cleanup";
 export type ExecutionState = {
+  history?: { message: string; at: number; kind: string }[];
   message: string;
   phase: Phase;
   round?: number;
@@ -58,6 +59,18 @@ function applyEvent(state: ExecutionState, entry: TraceEvent): ExecutionState {
     case "image.waiting": return set("Waiting for sandbox image");
     case "image.cached":
     case "image.build_ready": return set("Sandbox image ready");
+    case "workspace.copying": return set("Preparing workspace copies");
+    case "workspace.scanning": return set(`Reading workspace: ${detail.workspace ?? "workspace"}`);
+    case "workspace.copy_progress": return set(`Copying ${detail.workspace ?? "workspace"} · ${detail.copied ?? 0}/${detail.total ?? 0} files`);
+    case "workspace.copied": return set(`Workspace copies ready${typeof detail.skipped === "number" && detail.skipped > 0 ? ` · ${detail.skipped} excluded entries` : ""}`);
+    case "workspace.changes_scanning": return set("Checking workspace changes", "cleanup");
+    case "workspace.changes_saving": return set(`Saving ${detail.count ?? "proposed"} file changes for review`, "cleanup");
+    case "workspace.changes_saved": return set(detail.proposalId ? "Workspace changes saved for review" : "No workspace file changes", "cleanup");
+    case "workspace.cleanup_started": return set("Removing workspace copies", "cleanup");
+    case "workspace.cleanup_completed": return set("Workspace copies removed", "cleanup");
+    case "execution.completed": return set("Saving execution result", "cleanup");
+    case "result.saved": return set("Execution result saved", "cleanup");
+    case "container.cleanup_started": return set("Removing execution container", "cleanup");
     case "container.starting": return set("Starting execution container");
     case "runner.accepted":
     case "tools.preparing":
@@ -98,7 +111,18 @@ function applyEvent(state: ExecutionState, entry: TraceEvent): ExecutionState {
 export function applyExecutionProgress(states: ExecutionStates, progress: ExecutionProgress): ExecutionStates {
   const next = { ...states };
   for (const entry of [...progress.events].sort((a, b) => (a.order ?? a.at) - (b.order ?? b.at))) {
-    if (Object.hasOwn(next, entry.execId)) next[entry.execId] = applyEvent(next[entry.execId], entry);
+    if (Object.hasOwn(next, entry.execId)) {
+      const previous = next[entry.execId];
+      const updated = applyEvent(previous, entry);
+      if (updated.message !== previous.message) {
+        const history = [...(previous.history ?? [])];
+        // Keep one current counter per copy stage, rather than a row for every progress tick.
+        if (entry.kind === "workspace.copy_progress" && history.at(-1)?.kind === entry.kind) history.pop();
+        history.push({ message: updated.message, at: entry.at, kind: entry.kind });
+        updated.history = history.slice(-60);
+      }
+      next[entry.execId] = updated;
+    }
   }
   // Terminal rows are saved after cleanup. A completed model response alone is not completion.
   for (const step of progress.steps) {

@@ -29,6 +29,7 @@ export type InputData = {
   prompt: string;
   /** Capabilities this step may call. */
   tools?: ToolConfig[];
+  workspaceTools?: import("./toolSettings").WorkspaceToolSettings;
   /** How many times the model may come back asking for more tools before the run gives up. */
   maxRounds?: number;
   /** Budget for the whole step: every round plus the tools they call. Seconds. */
@@ -62,6 +63,7 @@ export type ToolConfig = {
   id: string;
   label: string;
   kind: ToolKind;
+  enabled?: boolean;
   /** web_search */
   contextSize?: "low" | "medium" | "high";
   allowedDomains?: string;
@@ -83,6 +85,7 @@ export type ToolCallRecord = { name: string; detail?: string; urls?: string[] };
 
 export type OutputData = {
   kind?: "thinking";
+  workspaceChanges?: string;
   execId?: string;
   runId?: string;
   /** Which input node produced this artifact. Outputs are immutable records of one run. */

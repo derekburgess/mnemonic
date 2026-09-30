@@ -70,6 +70,7 @@ export function ToolEditor({
             aria-label="Tool name"
           />
         </button>
+        <ToolEnabledToggle name={tool.label} enabled={tool.enabled !== false} onChange={(enabled) => onChange({ enabled })} />
         <DeleteButton onClick={onRemove} title="Remove tool" />
       </header>
 
@@ -236,4 +237,21 @@ export function ToolEditor({
       )}
     </div>
   );
+}
+
+export function ToolEnabledToggle({ name, enabled, onChange }: { name: string; enabled: boolean; onChange: (enabled: boolean) => void }) {
+  return <label className="skip sandbox nodrag">
+    <input type="checkbox" aria-label={`Enable ${name}`} checked={enabled} onChange={(e) => onChange(e.target.checked)} />
+    <span className="track" aria-hidden="true" />
+  </label>;
+}
+
+export const WORKSPACE_TOOLS = ["workspace_list", "workspace_read", "workspace_write"] as const;
+
+export function BuiltinTool({ name, enabled, onChange }: { name: string; enabled: boolean; onChange: (enabled: boolean) => void }) {
+  return <div className="tool"><header className="tool-head">
+    <span className="builtin-tool-name">{name}</span><span className="dim">Built-in</span>
+    <ToolEnabledToggle name={name} enabled={enabled} onChange={onChange} />
+    <DeleteButton disabled onClick={() => {}} title="Remove tool" />
+  </header></div>;
 }

@@ -1,3 +1,4 @@
+import { reviewWorkspaceChanges, acceptWorkspaceChanges, workspaceChangesSummary } from "./workspaceChanges.js";
 import { sandboxAdvice } from "./sandboxAdvice.js";
 import { event, sanitize, redactText, errorDetail, type EmitEvent } from "./events.js";
 import express from "express";
@@ -244,6 +245,7 @@ async function runContained(args: {
   budgetSec: number;
   rounds: unknown[];
   onTrace: (trace: ContainerTrace) => void;
+  onChanges: (id?: string) => void;
   onEvent: EmitEvent;
   signal: AbortSignal;
 }) {
@@ -254,7 +256,7 @@ async function runContained(args: {
   const job = args.job.provider === "huggingface" && args.job.baseUrl
     ? { ...args.job, baseUrl: sandboxModelUrl(args.job.baseUrl) }
     : args.job;
-  const { result, stderr } = await runInSandbox(job, args.mounts, {
+  const { result, stderr, workspaceChanges } = await runInSandbox(job, args.mounts, {
     sandboxConfig: args.sandboxConfig,
     timeoutSec: args.budgetSec,
     onTrace: args.onTrace,
@@ -262,6 +264,7 @@ async function runContained(args: {
     signal: args.signal,
   });
   args.rounds.push(...result.rounds);
+  args.onChanges(workspaceChanges);
 
   if (!result.ok) {
     if (stderr.trim()) console.error("[mnemonic] sandbox stderr:", stderr.trim().slice(-2000));
@@ -286,7 +289,7 @@ app.post("/api/executions/:runId/:execId/cancel", async (req, res) => {
 });
 
 app.post("/api/run", async (req, res) => {
-  const { model, effort, input, instructions, tools: toolSpecs, maxRounds, timeoutSec, files, links, workspaces, sandbox, sandboxConfig, useGpu, trace: suppliedTrace } =
+  const { model, effort, input, instructions, tools: toolSpecs, maxRounds, timeoutSec, files, links, workspaces, workspaceTools, sandbox, sandboxConfig, useGpu, trace: suppliedTrace } =
     req.body ?? {};
 
   if (typeof model !== "string" || typeof input !== "string" || !input.trim()) {
@@ -319,7 +322,7 @@ app.post("/api/run", async (req, res) => {
 
   // Named roots are only known once the paths are resolved, so the workspace preamble is
   // appended here rather than composed in the browser -- and the trace records what was sent.
-  const preamble = describeWorkspaces(visibleRoots);
+  const preamble = describeWorkspaces(visibleRoots, workspaceTools ?? {});
   const system = [typeof instructions === "string" ? instructions : "", preamble ?? ""]
     .filter((part) => part.trim())
     .join("\n\n");
@@ -336,11 +339,12 @@ app.post("/api/run", async (req, res) => {
   let eventCount = 0;
   const emit: EmitEvent = (entry) => {
     if (!trace?.runId) return;
-    if (++eventCount > 2000 && !/^(execution\.|result\.|container\.(exited|cleanup)|response\.|local\.(error|ready|unloading|unloaded|worker_exited))/.test(entry.kind)) return;
+    if (++eventCount > 2000 && !/^(execution\.|result\.|container\.(exited|cleanup)|workspace\.|response\.|local\.(error|ready|unloading|unloaded|worker_exited))/.test(entry.kind)) return;
     const safe = { ...entry, detail: sanitize(entry.detail, secrets) };
     writes = writes.then(() => recordEvent(trace.runId, execId, safe))
       .catch((err) => console.error("[mnemonic] trace event write failed:", (err as Error).message));
   };
+  let workspaceChanges: string | undefined;
   const save = async (status: "running" | "ok" | "error" | "cancelled", extra: Record<string, unknown>) => {
     if (!trace?.runId) return false;
     try {
@@ -363,14 +367,15 @@ app.post("/api/run", async (req, res) => {
         // synthetic entry instead of being invisible in the trace.
         tools: [
           ...(toolSpecs ?? []).slice(0, 100).map((x: unknown) => sanitize(x, secrets)),
-          ...(roots.length ? [{ kind: "workspace", roots }] : []),
+          ...(roots.length ? [{ kind: "workspace", roots, enabled: workspaceTools ?? {} }] : []),
           ...(contained
-            ? [{ kind: "sandbox", mounts: mounts.map((m) => `${m.host} -> ${m.container}`) }]
+            ? [{ kind: "sandbox", mounts: mounts.map((m) => `${m.host} (disposable copy) -> ${m.container}`) }]
             : []),
         ],
         rounds: rounds.slice(-100).map((x) => sanitize(x, secrets, 32_768)),
         container,
         params: {
+          workspaceChanges,
           sandboxConfig: sandboxConfig ?? null,
           maxRounds: typeof maxRounds === "number" ? maxRounds : null,
           timeoutSec: typeof timeoutSec === "number" ? timeoutSec : null,
@@ -469,19 +474,21 @@ app.post("/api/run", async (req, res) => {
             files: Array.isArray(files) ? files : undefined,
             links: cleanLinks,
             workspaces: visibleRoots,
+            workspaceTools: workspaceTools ?? {},
           },
           mounts,
           sandboxConfig,
           budgetSec,
           rounds,
           onTrace: (trace) => { container = trace; },
+          onChanges: (id) => { workspaceChanges = id; },
           onEvent: emit,
           signal: budget.signal,
         })
       : await (async () => {
           const client = executionClient({ apiKey, baseUrl }, budget, managedLocal);
           emit(event("proxy", "tools.preparing"));
-          const { tools, dispatch } = await budget.wait(buildTools((toolSpecs ?? []) as ToolSpec[], roots, emit, budget));
+          const { tools, dispatch } = await budget.wait(buildTools((toolSpecs ?? []) as ToolSpec[], roots, emit, budget, workspaceTools ?? {}));
           const run = provider !== "openai" ? runChat : runResponses;
           return budget.wait(run({
             signal: budget.signal,
@@ -546,6 +553,19 @@ app.post("/api/run", async (req, res) => {
     await budget.dispose();
     activeExecutions.delete(key);
   }
+});
+
+app.get("/api/workspace-changes/:id/summary", async (req, res) => {
+  try { res.json(await workspaceChangesSummary(req.params.id)); }
+  catch (err) { res.status((err as {status?: number}).status ?? 500).json({ error: (err as Error).message }); }
+});
+app.get("/api/workspace-changes/:id", async (req, res) => {
+  try { res.json(await reviewWorkspaceChanges(req.params.id)); }
+  catch (err) { res.status((err as {status?: number}).status ?? 500).json({ error: (err as Error).message }); }
+});
+app.post("/api/workspace-changes/:id/accept", async (req, res) => {
+  try { res.json(await acceptWorkspaceChanges(req.params.id, req.body?.files)); }
+  catch (err) { res.status((err as {status?: number}).status ?? 500).json({ error: (err as Error).message }); }
 });
 
 app.get("/api/graph", async (_req, res) => {

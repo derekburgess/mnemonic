@@ -1,3 +1,4 @@
+import { usePendingWorkspaceChanges } from "../workspaceChangeStatus";
 import { useState } from "react";
 import { Handle, Position, useStore, type NodeProps } from "@xyflow/react";
 import Markdown from "react-markdown";
@@ -16,8 +17,9 @@ const NAME_COLUMN = 150;
 const ROW_GAP = 6;
 
 export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
-  const { removeNode: onDelete, setSkipped, updateOutput } = useGraphActions();
+  const { openWorkspaceChanges, removeNode: onDelete, setSkipped, updateOutput } = useGraphActions();
   const skipped = !!data.skipped;
+  const pendingChanges = usePendingWorkspaceChanges(data.workspaceChanges);
 
   const { min, field } = useFieldWidth();
   const [callsOpen, setCallsOpen] = useState(false);
@@ -107,6 +109,8 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
         </button>
         <CopyButton text={data.text} title="Copy output" />
       </div>
+      {data.workspaceChanges && data.kind !== "thinking" && <button className="nodrag"
+        onClick={() => openWorkspaceChanges(data.workspaceChanges!)}>{pendingChanges === 0 ? "View changes" : `Review changes${pendingChanges === undefined ? "" : ` (${pendingChanges})`}`}</button>}
       {callRows.length > 0 && (
         <button className="calls-toggle nodrag" onClick={() => setCallsOpen((v) => !v)}>
           <span className={`caret${callsOpen ? " open" : ""}`}>›</span>

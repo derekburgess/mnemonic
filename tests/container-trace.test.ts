@@ -79,7 +79,7 @@ test("trace storage returns container diagnostics and accepts older traces", asy
     execId: "execution", runId: "run", kind: "step", seq: 0, nodeId: "step", label: "Step",
     requestedModel: "test", servedModel: "test", effort: "off", startedMs: 1, finishedMs: 2,
     status: "ok", error: null, systemPrompt: null, inputPrompt: "test", context: [], tools: [],
-    rounds: [], params: {}, files: [], links: [], toolCalls: [], outputText: "done", usage: null,
+    rounds: [], params: { workspaceChanges: "saved-proposal" }, files: [], links: [], toolCalls: [], outputText: "done", usage: null,
     container: logger.snapshot(),
   };
   try {
@@ -95,6 +95,7 @@ test("trace storage returns container diagnostics and accepts older traces", asy
     await recordStep(step);
     assert.deepEqual((await getRun("run"))[0].container, step.container);
     assert.equal((await getStepResult("run", "execution"))?.text, "done");
+    assert.equal((await getStepResult("run", "execution"))?.workspaceChanges, "saved-proposal");
     await recordEvent("run", "execution", event("browser", "graph.committed", { outputId: "artifact" }));
     assert.equal((await getRun("run"))[0].delivery, "added to graph");
     await recordStep({ ...step, execId: "old", container: undefined });

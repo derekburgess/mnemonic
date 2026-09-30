@@ -11,7 +11,7 @@ import { WorkspaceRow } from "./WorkspaceRow";
 import { CopyButton } from "./CopyButton";
 import { DeleteButton } from "./DeleteButton";
 import { SkipToggle } from "./SkipToggle";
-import { ToolEditor } from "./ToolEditor";
+import { ToolEditor, BuiltinTool, WORKSPACE_TOOLS } from "./ToolEditor";
 import { useGraphActions } from "./context";
 import { useFieldWidth } from "./useFieldWidth";
 
@@ -266,9 +266,6 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         </label>
       </div>
 
-      <SandboxToggle onConfigure={() => openSandboxConfig(id)} useGpu={!!data.useGpu} onGpuChange={(v) => onChange(id, { useGpu: v })} required={localModelsRequired} on={localModelsRequired || !!data.sandbox} onChange={(v) => onChange(id, { sandbox: v })} />
-      {(localModelsRequired || data.sandbox) && <SandboxRunStatus data={data} />}
-
       <div className="stack">
         <button
           className="file nodrag attach"
@@ -426,7 +423,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
 
       <div className="tools">
         <div className="tools-head">
-          <span>Tools ({tools.length})</span>
+          <span>Tools ({tools.length + (workspaces.some((w) => w.path.trim()) ? WORKSPACE_TOOLS.length : 0)})</span>
           <button
             className="nodrag add-tool"
             title="Add a tool"
@@ -447,6 +444,10 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
           </button>
         </div>
 
+        {workspaces.some((w) => w.path.trim()) && WORKSPACE_TOOLS.map((name) => (
+          <BuiltinTool key={name} name={name} enabled={data.workspaceTools?.[name] !== false}
+            onChange={(enabled) => onChange(id, (d) => ({ workspaceTools: { ...d.workspaceTools, [name]: enabled } }))} />
+        ))}
         {tools.map((tool) => (
           <ToolEditor
             key={tool.id}
@@ -456,6 +457,9 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
           />
         ))}
       </div>
+
+      <SandboxToggle onConfigure={() => openSandboxConfig(id)} useGpu={!!data.useGpu} onGpuChange={(v) => onChange(id, { useGpu: v })} required={localModelsRequired} on={localModelsRequired || !!data.sandbox} onChange={(v) => onChange(id, { sandbox: v })} />
+      {(localModelsRequired || data.sandbox) && <SandboxRunStatus data={data} />}
 
       {data.error && <p className="error nodrag">{data.error}</p>}
 

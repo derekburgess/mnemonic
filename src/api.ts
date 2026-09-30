@@ -21,6 +21,7 @@ export type RunResponse = {
   model: string;
   usage?: { input?: number; output?: number };
   toolCalls?: ToolCallRecord[];
+  workspaceChanges?: string;
 };
 
 export type McpTool = { name: string; description: string; inputSchema: Record<string, unknown> };
@@ -42,10 +43,11 @@ export async function fetchMcpTools(
 /** Flatten a step's tool into the shape the proxy expects. */
 export function toolSpec(d: ToolConfig): Record<string, unknown> {
   if (d.kind === "web_search") {
-    return { kind: "web_search", contextSize: d.contextSize, allowedDomains: d.allowedDomains };
+    return { enabled: d.enabled, kind: "web_search", contextSize: d.contextSize, allowedDomains: d.allowedDomains };
   }
   if (d.kind === "mcp") {
     return {
+      enabled: d.enabled,
       kind: "mcp",
       label: d.label || "mcp",
       serverUrl: d.serverUrl ?? "",
@@ -55,6 +57,7 @@ export function toolSpec(d: ToolConfig): Record<string, unknown> {
     };
   }
   return {
+    enabled: d.enabled,
     kind: "custom",
     fnName: d.fnName || "custom_tool",
     fnDescription: d.fnDescription,
@@ -225,7 +228,7 @@ export type TraceStep = {
   toolCalls: ToolCallRecord[] | null;
   outputText: string | null;
   usage: { input?: number; output?: number } | null;
-  params: { sandboxConfig?: string | null; maxRounds: number | null; timeoutSec: number | null; deliveryTimeoutSec?: number } | null;
+  params: { workspaceChanges?: string; sandboxConfig?: string | null; maxRounds: number | null; timeoutSec: number | null; deliveryTimeoutSec?: number } | null;
   files: { name: string; mime: string; bytes: number }[] | null;
   links: { url: string; kind: string; note?: string }[] | null;
 };
@@ -237,6 +240,7 @@ export type StepResult = {
   text: string;
   usage?: { input?: number; output?: number };
   toolCalls?: ToolCallRecord[];
+  workspaceChanges?: string;
 };
 
 /** One step execution's result, without the rounds — small enough to poll while waiting. */
@@ -282,6 +286,7 @@ export async function runStep(
     files?: { name: string; mime: string; dataUrl: string }[];
     links?: string[];
     workspaces?: string[];
+    workspaceTools?: import("./toolSettings").WorkspaceToolSettings;
     sandbox?: boolean;
     sandboxConfig?: string;
     useGpu?: boolean;
@@ -352,7 +357,7 @@ export async function waitForExecution(trace: {runId: string; execId: string}, o
     }
     if (result?.status === "ok") {
       reportTraceEvent(trace, "delivery.received", { elapsedMs: Date.now() - started, polls: attempt });
-      return { text: result.text, model: result.model, usage: result.usage ?? undefined, toolCalls: result.toolCalls ?? undefined };
+      return { workspaceChanges: result.workspaceChanges, text: result.text, model: result.model, usage: result.usage ?? undefined, toolCalls: result.toolCalls ?? undefined };
     }
     await pause(1000, options.signal);
   }

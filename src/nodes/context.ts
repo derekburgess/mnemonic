@@ -2,6 +2,7 @@ import { createContext, useContext } from "react";
 import type { InputData, OutputData } from "../types";
 
 export type GraphActions = {
+  openWorkspaceChanges: (id: string) => void;
   openSandboxConfig: (id: string) => void;
   providerModels: Partial<Record<import("../api").Provider, string[]>>;
   providerSettings: import("../api").PlatformSettings | null;

@@ -62,3 +62,28 @@ test("timing uses the actual run budget rather than subsequent node edits", () =
   assert.equal(statusDuration(900000), "15m");
   assert.equal(statusDuration(-1000), "0s");
 });
+
+
+test("workspace stages remain in activity even when a poll includes completion", () => {
+  const events = [
+    entry("workspace.scanning", { workspace: "project" }, "a", 1),
+    entry("workspace.copy_progress", { workspace: "project", copied: 1, total: 2 }, "a", 2),
+    entry("workspace.copy_progress", { workspace: "project", copied: 2, total: 2 }, "a", 3),
+    entry("workspace.copied", { count: 1 }, "a", 4),
+    entry("workspace.changes_scanning", {}, "a", 5),
+    entry("workspace.changes_saved", { proposalId: "saved" }, "a", 6),
+    entry("workspace.cleanup_started", {}, "a", 7),
+    entry("workspace.cleanup_completed", {}, "a", 8),
+  ];
+  const states = applyExecutionProgress(initialExecutionStates(execution), batch(events,
+    [{ execId: "a", status: "ok", error: null, finishedMs: 9000 }]));
+  assert.equal(summarizeExecution(states).message, "Completed");
+  const messages = states.a.history!.map((item) => item.message);
+  assert.ok(messages.includes("Copying project · 2/2 files"));
+  assert.ok(!messages.includes("Copying project · 1/2 files"));
+  assert.ok(messages.includes("Workspace changes saved for review"));
+  assert.ok(messages.includes("Removing workspace copies"));
+  assert.equal(messages.at(-1), "Workspace copies removed");
+  const unchanged = applyExecutionProgress(initialExecutionStates(execution), batch([entry("workspace.changes_saved", { proposalId: null })]));
+  assert.equal(unchanged.a.message, "No workspace file changes");
+});

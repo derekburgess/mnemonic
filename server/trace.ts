@@ -193,7 +193,7 @@ export async function listRuns(limit = 100) {
 export async function getStepResult(runId: string, execId: string) {
   const conn = await db();
   const reader = await conn.runAndReadAll(
-    `SELECT status, error, served_model, requested_model, output_text, usage_json, tool_calls_json
+    `SELECT status, error, served_model, requested_model, output_text, usage_json, tool_calls_json, params_json
        FROM step_runs WHERE run_id = $1 AND exec_id = $2`,
     [runId, execId],
   );
@@ -206,6 +206,7 @@ export async function getStepResult(runId: string, execId: string) {
     text: (row.output_text as string | null) ?? "",
     usage: parse(row.usage_json),
     toolCalls: parse(row.tool_calls_json),
+    workspaceChanges: (parse(row.params_json) as { workspaceChanges?: string } | null)?.workspaceChanges,
   };
 }
 

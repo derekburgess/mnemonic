@@ -1,3 +1,4 @@
+import { WorkspaceChangesPanel } from "./WorkspaceChangesPanel";
 import { SandboxConfigPanel } from "./SandboxConfigPanel";
 import { GraphSync, type SaveState } from "./graphSync";
 import { rememberExecutions, pendingExecutions, forgetExecutions, cancelPending } from "./pendingExecutions";
@@ -169,10 +170,12 @@ function Canvas() {
   const pendingAtMount = useRef(pendingExecutions());
   const [notice, setNotice] = useState<string | null>(null);
   // One side panel at a time; the canvas keeps the rest of the width.
-  const [panel, setPanel] = useState<"trace" | "settings" | "sandbox" | null>(null);
+  const [panel, setPanel] = useState<"trace" | "settings" | "sandbox" | "changes" | null>(null);
   const { screenToFlowPosition } = useReactFlow();
   const wrapper = useRef<HTMLDivElement>(null);
 
+  const [changesId, setChangesId] = useState<string | null>(null);
+  const openWorkspaceChanges = useCallback((id: string) => { setChangesId(id); setPanel("changes"); }, []);
   const [sandboxNodeId, setSandboxNodeId] = useState<string | null>(null);
   const openSandboxConfig = useCallback((id: string) => { setSandboxNodeId(id); setPanel("sandbox"); }, []);
   const sandboxNode = nodes.find((node) => node.id === sandboxNodeId && isInput(node)) as InputNode | undefined;
@@ -309,6 +312,7 @@ function Canvas() {
               timeoutSec: producer.data.timeoutSec,
               files: producer.data.files?.map(({ name, mime, dataUrl }) => ({ name, mime, dataUrl })),
               links: producer.data.links?.map((l) => l.url).filter((url) => url.trim()),
+              workspaceTools: producer.data.workspaceTools,
               workspaces: producer.data.workspaces?.map((w) => w.path).filter((p) => p.trim()),
               sandbox: (producer.data.provider === "huggingface" && providerSettings?.providers?.find((p) => p.provider === "huggingface")?.runLocally) || producer.data.sandbox,
               sandboxConfig: producer.data.sandboxConfig,
@@ -355,6 +359,7 @@ function Canvas() {
               text: result.text,
               usage: result.usage,
               toolCalls: result.toolCalls,
+              workspaceChanges: result.workspaceChanges,
             })),
           );
           committedIds = committed.outputIds;
@@ -394,7 +399,7 @@ function Canvas() {
     if (!producer) throw new Error("The source step is no longer on this graph.");
     const committed = commitRun(live.current.nodes, live.current.edges, producer, [{ execId: step.execId, runId: step.runId,
       model: step.servedModel ?? step.requestedModel, effort: step.effort as InputData["effort"], text: step.outputText ?? "",
-      usage: step.usage ?? undefined, toolCalls: step.toolCalls ?? undefined }], { append: true });
+      workspaceChanges: step.params?.workspaceChanges, usage: step.usage ?? undefined, toolCalls: step.toolCalls ?? undefined }], { append: true });
     publish({ nodes: committed.nodes, edges: committed.edges });
     localStorage.setItem(STORAGE_KEY, JSON.stringify(live.current));
     forgetExecutions([step.execId]);
@@ -641,8 +646,8 @@ function Canvas() {
   );
 
   const actions = useMemo(
-    () => ({ openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, runOne, removeNode, setSkipped }),
-    [openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, runOne, removeNode, setSkipped],
+    () => ({ openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, runOne, removeNode, setSkipped }),
+    [openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, runOne, removeNode, setSkipped],
   );
 
   return (
@@ -751,6 +756,7 @@ function Canvas() {
           </div>
 
           {panel === "trace" && <TracePanel onClose={() => setPanel(null)} onRecover={addSavedOutput} outputExecIds={nodes.filter(isOutput).map((n) => n.data.execId).filter((id): id is string => !!id)} />}
+          {panel === "changes" && changesId && <WorkspaceChangesPanel key={changesId} id={changesId} onClose={() => setPanel(null)} />}
           {panel === "sandbox" && sandboxNode && <SandboxConfigPanel key={sandboxNode.id} node={sandboxNode} onClose={() => setPanel(null)} />}
           {panel === "settings" && <SettingsPanel onClose={() => setPanel(null)} onSaved={() => { void fetchSettings().then(refreshProviders); }} />}
         </div>

@@ -252,6 +252,7 @@ test("node provider selection filters models, persists, and routes execution", a
 });
 
 test("sandbox status uses trace events, matches the toggle, and preserves completion across reload", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1600, height: 1800 });
   const state = await setup(page);
   const events: any[] = [];
   let polls = 0;
@@ -277,17 +278,23 @@ test("sandbox status uses trace events, matches the toggle, and preserves comple
     };
     return { toggle: shell(toggle), block: shell(block), cursor: getComputedStyle(block).cursor,
       afterToggle: !!(toggle.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING),
-      beforeWorkspace: !!(block.compareDocumentPosition(element.querySelector("button.attach")!) & Node.DOCUMENT_POSITION_FOLLOWING) };
+      afterTools: !!(element.querySelector(".tools")!.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING) };
   });
   expect(styles.block).toEqual(styles.toggle);
   expect(styles.cursor).toBe("default");
-  expect(styles.afterToggle && styles.beforeWorkspace).toBe(true);
+  expect(styles.afterToggle && styles.afterTools).toBe(true);
   await node.getByRole("button", { name: "Run step" }).click();
   await expect.poll(() => state.executions.length).toBe(1);
   const emit = (kind: string, detail = {}) => events.push({ kind, detail, id: String(events.length),
     order: events.length + 1, at: Date.now(), execId: state.executions[0].trace.execId, source: "proxy" });
   emit("image.build_started");
   await expect(status).toHaveText("Building sandbox image");
+  emit("workspace.scanning", { workspace: "project" });
+  emit("workspace.copy_progress", { workspace: "project", copied: 3, total: 10 });
+  await expect(status).toHaveText("Copying project · 3/10 files");
+  emit("workspace.copy_progress", { workspace: "project", copied: 10, total: 10 });
+  emit("workspace.copied", { count: 1, skipped: 2 });
+  await expect(status).toHaveText("Workspace copies ready · 2 excluded entries");
   emit("execution.budget", { timeoutSec: 900, deadlineMs: Date.now() + 650000 });
   emit("model.started", { round: 2 });
   emit("delivery.poll");
@@ -304,6 +311,15 @@ test("sandbox status uses trace events, matches the toggle, and preserves comple
   await expect(status).toHaveText("Running tool: read_file");
   emit("runner.completed");
   await expect(status).toHaveText("Cleaning up containers");
+  emit("workspace.changes_scanning");
+  emit("workspace.changes_saving", { count: 1 });
+  emit("workspace.changes_saved", { proposalId: "proposal" });
+  emit("workspace.cleanup_started");
+  emit("workspace.cleanup_completed");
+  await expect(status).toHaveText("Workspace copies removed");
+  await node.locator(".sandbox-activity summary").click();
+  await expect(node.getByText("Workspace changes saved for review", { exact: true })).toBeVisible();
+  await expect(node.getByText("Copying project · 10/10 files", { exact: true })).toBeAttached();
   state.complete = true;
   finishedMs = Date.now();
   await expect(status).toHaveText("Completed");
@@ -425,4 +441,106 @@ test("all side panels resize and retain their individual widths", async ({ page 
   await page.reload();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page.getByRole("complementary", { name: "Settings", exact: true })).toHaveCSS("width", "510px");
+});
+
+test("per-node tool switches persist and are sent with runs", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 2400 });
+  const state = await setup(page);
+  const graph = seed() as any;
+  graph.nodes[0].data.workspaces = [{ id: "ws", path: "/tmp/project" }];
+  graph.nodes[0].data.tools = [{ id: "custom", label: "Example", kind: "custom", fnName: "example", fnCode: "return 1" }];
+  state.graph = graph;
+  await page.evaluate((g) => {
+    localStorage.setItem("mnemonic.graph.v1", JSON.stringify(g));
+    localStorage.setItem("mnemonic.graph.sync.v1", JSON.stringify({ revision: 1, dirty: false }));
+  }, graph);
+  await page.reload();
+  await expect(page.getByLabel("Enable workspace_write", { exact: true })).toBeChecked();
+  await expect(page.locator(".tool").filter({ hasText: "workspace_write" }).getByRole("button", { name: "Remove tool" })).toBeDisabled();
+  await page.getByLabel("Enable workspace_write", { exact: true }).locator("..").click();
+  await page.getByLabel("Enable Example", { exact: true }).locator("..").click();
+  await expect.poll(() => state.graph.nodes[0].data.workspaceTools?.workspace_write).toBe(false);
+  await expect.poll(() => state.graph.nodes[0].data.tools[0].enabled).toBe(false);
+  await page.reload();
+  await expect(page.getByLabel("Enable workspace_write", { exact: true })).not.toBeChecked();
+  await expect(page.getByLabel("Enable Example", { exact: true })).not.toBeChecked();
+  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  await expect.poll(() => state.executions.length).toBe(1);
+  expect(state.executions[0].workspaceTools.workspace_write).toBe(false);
+  expect(state.executions[0].tools[0].enabled).toBe(false);
+});
+
+test("sandbox changes track partial acceptance and completion across refresh", async ({ page }) => {
+  const state = await setup(page);
+  state.complete = true;
+  const proposal = { id: "saved-proposal", changes: ["first.txt", "second.txt"].map((path, index) => ({
+    id: String(index), workspace: "project", path, kind: "modified", accepted: false,
+    before: { text: "original content", bytes: 16, binary: false, truncated: false },
+    after: { text: "proposed content", bytes: 16, binary: false, truncated: false } })) };
+  let accepts = 0;
+  await page.route("**/api/executions/**", (route) => route.fulfill({ json: { status: "ok", model: "test", text: "Proposed edits", workspaceChanges: proposal.id } }));
+  await page.route("**/api/workspace-changes/**", (route) => {
+    if (route.request().url().endsWith("/summary")) return route.fulfill({ json: { id: proposal.id, pending: proposal.changes.filter((c) => !c.accepted).length } });
+    if (route.request().method() === "POST") {
+      accepts++;
+      const selected = route.request().postDataJSON().files;
+      proposal.changes.forEach((change) => { if (selected.includes(change.id)) change.accepted = true; });
+    }
+    return route.fulfill({ json: proposal });
+  });
+  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Review changes (2)", exact: true })).toBeVisible();
+  await expect(page.locator(".save-status")).toHaveText("Saved");
+  await page.reload();
+  await page.getByRole("button", { name: "Review changes (2)", exact: true }).click();
+  const panel = page.getByRole("complementary", { name: "Workspace changes" });
+  await expect(page.getByRole("separator", { name: "Resize workspace changes panel" })).toBeVisible();
+  await panel.getByRole("button", { name: "project/first.txt", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "project/first.txt", exact: true })).toHaveAttribute("aria-expanded", "true");
+  await expect(panel.getByRole("checkbox").first()).toBeChecked();
+  await expect(panel.getByText("original content", { exact: true }).first()).toBeVisible();
+  expect(accepts).toBe(0);
+  await panel.getByRole("checkbox").nth(1).uncheck();
+  await panel.getByRole("button", { name: "Accept (1)", exact: true }).click();
+  await expect(panel.getByRole("checkbox")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Review changes (1)", exact: true })).toBeVisible();
+  await panel.getByRole("checkbox").check();
+  await panel.getByRole("button", { name: "Accept (1)", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "All changes accepted.", exact: true })).toBeDisabled();
+  await expect(panel.getByRole("checkbox")).toHaveCount(0);
+  await expect(page.locator(".react-flow__node-artifact").getByRole("button", { name: "All changes accepted.", exact: true })).toBeVisible();
+  expect(accepts).toBe(2);
+  expect(state.executions).toHaveLength(1);
+  await page.reload();
+  await page.locator(".react-flow__node-artifact").getByRole("button", { name: "All changes accepted.", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "All changes accepted.", exact: true })).toBeDisabled();
+  await expect(panel.getByRole("checkbox")).toHaveCount(0);
+});
+
+test("external provider sandbox remains selectable after a failed availability check", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1800 });
+  const state = await setup(page);
+  let available = false;
+  let checks = 0;
+  await page.route("**/api/sandbox", (route) => {
+    checks++;
+    return route.fulfill({ json: { available, reason: available ? undefined : "Docker is starting." } });
+  });
+  await page.reload();
+  await expect.poll(() => checks).toBeGreaterThan(0);
+  const toggle = page.getByRole("checkbox", { name: "Run in a sandbox", exact: true });
+  await expect(toggle).toBeEnabled();
+  await page.locator(".sandbox-control").filter({ hasText: "Run in a sandbox" }).click();
+  await expect(toggle).toBeChecked();
+  await expect(page.getByText("Docker is starting.", { exact: true })).toBeVisible();
+  await expect.poll(() => state.graph.nodes[0].data.sandbox).toBe(true);
+  const before = checks;
+  available = true;
+  await toggle.press("Space");
+  await toggle.press("Space");
+  await expect.poll(() => checks).toBeGreaterThan(before);
+  await expect(page.getByText("Docker is starting.", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  await expect.poll(() => state.executions.length).toBe(1);
+  expect(state.executions[0].sandbox).toBe(true);
 });

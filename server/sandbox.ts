@@ -1,3 +1,4 @@
+import { prepareWorkspaceCopies, cleanupWorkspaceRuns } from "./workspaceChanges.js";
 import { runtimeSandboxConfig, resourceArgs } from "../src/sandboxConfig.js";
 import { event, type EmitEvent, type TraceEvent } from "./events.js";
 import { execFile, spawn } from "node:child_process";
@@ -169,7 +170,7 @@ export async function sandboxStatus(signal?: AbortSignal): Promise<SandboxStatus
 /* Running a step                                                              */
 /* -------------------------------------------------------------------------- */
 
-export type SandboxRun = { result: JobResult; stderr: string };
+export type SandboxRun = { result: JobResult; stderr: string; workspaceChanges?: string };
 
 /** Marks every container we start, so orphans can be found later without guessing at names. */
 const LABEL = "mnemonic.sandbox=step";
@@ -203,8 +204,8 @@ export async function sweepOrphans(): Promise<number> {
       timeout: 15_000,
     });
     const ids = stdout.trim().split("\n").filter(Boolean);
-    if (!ids.length) return 0;
-    await run("docker", ["rm", "--force", "--volumes", ...ids], { timeout: 60_000 });
+    if (ids.length) await run("docker", ["rm", "--force", "--volumes", ...ids], { timeout: 60_000 });
+    await cleanupWorkspaceRuns();
     return ids.length;
   } catch {
     return 0; // no docker, or nothing to do
@@ -239,6 +240,8 @@ export async function runInSandbox(
 ): Promise<SandboxRun> {
   const log = containerLogger([job.apiKey, ...(job.tools ?? []).flatMap((t) => t.kind === "mcp" && t.authorization ? [t.authorization, t.authorization.replace(/^Bearer\s+/i, "")] : [])], opts.onEvent);
   let containerName: string | undefined;
+  let copies: Awaited<ReturnType<typeof prepareWorkspaceCopies>> | undefined;
+  let completed: SandboxRun | undefined;
   try {
     opts.signal?.throwIfAborted();
     const config = runtimeSandboxConfig(opts.sandboxConfig).sandbox;
@@ -262,6 +265,11 @@ export async function runInSandbox(
     containerName = name;
     log.trace.name = name;
 
+    if (mounts.length) {
+      opts.onEvent?.(event("proxy", "workspace.copying", { count: mounts.length }));
+      copies = await prepareWorkspaceCopies(mounts, opts.signal, opts.onEvent);
+      opts.onEvent?.(event("proxy", "workspace.copied", { count: mounts.length, skipped: copies.skipped, excluded: ".git, app data, links and special files" }));
+    }
     const args = [
       "run",
       "--interactive",
@@ -273,14 +281,14 @@ export async function runInSandbox(
       `--network=${config.network}`,
       // host-gateway makes host model/MCP services reachable when networking is enabled.
       "--add-host=host.docker.internal:host-gateway",
-      ...mounts.flatMap((m) => ["-v", `${m.host}:${m.container}${opts.readOnly || config.workspaceReadOnly ? ":ro" : ""}`]),
+      ...(copies?.mounts ?? []).flatMap((m) => ["-v", `${m.host}:${m.container}${opts.readOnly || config.workspaceReadOnly ? ":ro" : ""}`]),
       tag,
     ];
 
     live.add(name);
     log.event("Starting container");
     opts.onEvent?.(event("proxy", "container.starting", { name, image: tag, limits }));
-    return await new Promise<SandboxRun>((resolve, reject) => {
+    completed = await new Promise<SandboxRun>((resolve, reject) => {
       const child = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
 
       let stdout = "";
@@ -388,6 +396,7 @@ export async function runInSandbox(
 
       child.stdin.end(JSON.stringify(job));
     });
+    return completed;
   } catch (err) {
     const e = err as Error & { stderr?: string };
     if (e.stderr) log.stderr(e.stderr);
@@ -408,10 +417,19 @@ export async function runInSandbox(
       } catch {
         opts.onEvent?.(event("proxy", "container.inspect_unavailable", { termination: log.trace.termination }));
       }
+      opts.onEvent?.(event("proxy", "container.cleanup_started"));
       const removed = await destroy(containerName);
       opts.onEvent?.(event("proxy", "container.cleanup", { removed, forced: log.trace.termination?.includes("forced") ?? false }));
       log.event("Container cleanup attempted");
     }
-    opts.onTrace?.(log.snapshot());
+    try {
+      if (completed?.result.ok && copies) {
+        completed.workspaceChanges = await copies.capture();
+        opts.onEvent?.(event("proxy", "workspace.changes_saved", { proposalId: completed.workspaceChanges ?? null }));
+      }
+    } finally {
+      await copies?.cleanup();
+      opts.onTrace?.(log.snapshot());
+    }
   }
 }

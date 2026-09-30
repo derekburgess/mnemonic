@@ -61,8 +61,17 @@ function LiveStatus({ data, execution }: { data: InputData; execution: NodeExecu
   }, [summary.active]);
 
   const elapsed = statusDuration((summary.finishedMs ?? now) - summary.startedMs);
-  return <StatusLine message={unavailable ? `Status unavailable — reconnecting (last: ${summary.message})` : summary.message}
-    timing={`${elapsed} / ${statusDuration(summary.timeoutSec * 1000)}`} outcome={summary.outcome} />;
+  const activity = Object.entries(states).flatMap(([id, state]) => (state.history ?? []).map((item) => ({ ...item, id })))
+    .sort((a, b) => a.at - b.at).slice(-100);
+  return <><StatusLine message={unavailable ? `Status unavailable — reconnecting (last: ${summary.message})` : summary.message}
+    timing={`${elapsed} / ${statusDuration(summary.timeoutSec * 1000)}`} outcome={summary.outcome} />
+    {!!activity.length && <details className="sandbox-activity nodrag nowheel"><summary>Activity</summary>
+      <ol>{activity.map((item, index) => <li key={`${item.id}-${index}`}>
+        <time>{new Date(item.at).toLocaleTimeString()}</time>
+        <span>{Object.keys(states).length > 1 ? `Output ${Object.keys(states).indexOf(item.id) + 1}: ` : ""}{item.message}</span>
+      </li>)}</ol>
+    </details>}
+  </>;
 }
 
 function StatusLine({ message, timing, outcome }: { message: string; timing?: string; outcome?: string }) {

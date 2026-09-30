@@ -5,6 +5,7 @@ import { once } from "node:events";
 import { mkdtemp, chmod, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { reviewWorkspaceChanges, acceptWorkspaceChanges } from "../server/workspaceChanges.ts";
 import { runInSandbox, sandboxStatus } from "../server/sandbox.ts";
 import { withLocalModel, localCompletion } from "../server/localModels.ts";
 import { sandboxModelUrl } from "../server/settings.ts";
@@ -40,6 +41,12 @@ test("real Docker: model networking, mounted workspace, logs, exit inspection an
     timeoutSec: 30, onTrace: (trace) => { diagnostics = trace; },
   });
   assert.equal(result.result.ok, true);
+  await assert.rejects(readFile(path.join(workspace, "output.txt")), { code: "ENOENT" });
+  assert.ok(result.workspaceChanges);
+  t.after(() => rm(path.resolve("data/workspace-changes", `${result.workspaceChanges}.json`), { force: true }));
+  const proposal = await reviewWorkspaceChanges(result.workspaceChanges);
+  assert.equal(proposal.changes[0].after?.text, "written in container");
+  await acceptWorkspaceChanges(result.workspaceChanges, proposal.changes.map((c) => c.id));
   assert.equal(await readFile(path.join(workspace, "output.txt"), "utf8"), "written in container");
   assert.match(diagnostics!.stderr, /tool diagnostic/);
   assert.equal(diagnostics!.oomKilled, false);
@@ -48,7 +55,7 @@ test("real Docker: model networking, mounted workspace, logs, exit inspection an
   await assert.rejects(runInSandbox(job, [], { timeoutSec: 30, signal: controller.signal,
     onEvent: (entry) => { if (entry.kind === "model.started") controller.abort(); },
     onTrace: (trace) => { diagnostics = trace; },
-  }), /cancelled/);
+  }), /cancelled|aborted/i);
   assert.match(diagnostics!.termination ?? "", /cancelled/);
 });
 

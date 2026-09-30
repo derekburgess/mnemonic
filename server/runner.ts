@@ -39,6 +39,7 @@ export type Job = {
   links?: string[];
   /** Already rewritten to the paths they are mounted at in here. */
   workspaces?: string[];
+  workspaceTools?: import("../src/toolSettings.js").WorkspaceToolSettings;
 };
 
 /** Rounds travel back with the result so the trace outside is as complete as an uncontained run. */
@@ -69,7 +70,7 @@ const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1", "0.0.0.0", "::"]);
 function hostPortsUsedBy(tools: ToolSpec[]): number[] {
   const ports = new Set<number>();
   for (const tool of tools) {
-    if (tool.kind !== "mcp" || !tool.serverUrl) continue;
+    if (tool.enabled === false || tool.kind !== "mcp" || !tool.serverUrl) continue;
     try {
       const url = new URL(tool.serverUrl);
       const hostname = url.hostname.replace(/^\[|\]$/g, "");
@@ -138,7 +139,7 @@ async function main() {
     stopForwarding = await budget.wait(forwardHostPorts(hostPortsUsedBy(job.tools ?? [])));
     const client = executionClient(job, budget, job.managedLocal);
 
-    const { tools, dispatch } = await budget.wait(buildTools(job.tools ?? [], job.workspaces ?? [], (e) => emit({ ...e, source: "container" }), budget));
+    const { tools, dispatch } = await budget.wait(buildTools(job.tools ?? [], job.workspaces ?? [], (e) => emit({ ...e, source: "container" }), budget, job.workspaceTools ?? {}));
     console.info(`[sandbox] Tools ready (${tools.length}); starting model run`);
     const run = job.provider !== "openai" ? runChat : runResponses;
 

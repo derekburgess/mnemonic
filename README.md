@@ -127,8 +127,8 @@ really a folder on this machine, hollow when it is not.
 
 #### Running the proxy on another machine
 
-`workspace_read` and `workspace_write` execute **in the proxy**, so a workspace is a folder on the
-*proxy's* filesystem. When the proxy is on the machine you are sitting at - the normal case - that
+`workspace_read` and `workspace_write` use folders on the **proxy machine**. Unsandboxed runs
+access those folders directly; sandboxed runs access disposable copies. When the proxy is on the machine you are sitting at - the normal case - that
 is also your desktop, and the chooser opens where you can see it.
 
 If it is not, the chooser is the wrong tool:
@@ -151,8 +151,8 @@ folder picked on your laptop usually will not be found on a remote dev box, and 
 Typing the path is the reliable route there, and completion queries the proxy, so it is completing
 against the right machine.
 
-A step with at least one workspace is offered three tools, derived rather than configured, so they
-never appear under Tools:
+A step with at least one workspace shows three built-in entries under Tools. Each can be
+disabled for that node; built-ins cannot be deleted:
 
 | Tool | Does |
 | --- | --- |
@@ -171,7 +171,8 @@ containment is checked twice: once on the path as written, and again on the near
 ancestor resolved through its symlinks - the second is the one that catches a link inside the
 workspace pointing at `/etc`. Reads stop at 256 KB and refuse anything that looks binary.
 
-> Within a root, `workspace_write` overwrites without asking. And `/api/fs/pick` puts a window on
+> Without a sandbox, `workspace_write` overwrites within a root without asking. Sandboxed writes
+> modify a copy and require explicit acceptance to reach the original. And `/api/fs/pick` puts a window on
 > your desktop on request, on the same open local port as the rest of the proxy - only one at a
 > time, and it times out after five minutes. Same posture as the custom tools below: a local tool
 > for your own machine, not something to expose.
@@ -206,7 +207,7 @@ are migrated on load: each tool is adopted by the steps it was wired to, and its
 | Web search | OpenAI, server-side | Context size, plus optional allowed-domain filter |
 | MCP | This proxy | Streamable-HTTP or SSE servers, localhost included |
 | Custom | This proxy, in `node:vm` | Your own JS, with `args` in scope |
-| Workspace | This proxy | Derived from the step's workspaces, not added here |
+| Workspace | This proxy | Built-in entries with per-node enable switches |
 
 With **Run in container** on, everything in that table except web search runs inside the container
 instead of in the proxy.
@@ -274,9 +275,25 @@ absent from `docker inspect` and from `/proc/self/environ` inside the container.
 the runner's memory, so this is isolation from *the host*, not a promise that a determined tool
 can never reach it.
 
-**Workspaces become mounts.** Each is bind-mounted at `/workspaces/<name>`, under the same name the
-tools use uncontained, so a prompt reads identically either way and the host's directory shape stays
-out of it. The path jail stops being a `realpath` check and becomes the mount boundary.
+**Workspaces are copied for each sandbox run** under `data/workspace-runs`. Only the disposable copies are mounted at
+`/workspaces/<name>`; original folders are never mounted. The sandbox's `workspaceReadOnly`
+configuration applies to the copies. Leave it false to let enabled tools propose writes.
+
+After a successful run, changed file contents are saved in `data/workspace-changes` before the
+copies are cleaned up. The output's **Review changes** button opens a resizable panel showing
+original and proposed contents. Select files and click **Accept** to apply them to the original
+workspace. Nothing runs automatically after acceptance. Local edits, missing workspaces, and
+unsafe paths block acceptance; already accepted files are not reapplied. If an I/O failure occurs
+partway through, completed files remain marked Accepted so you can inspect partial progress.
+Proposals survive closing the panel, refreshing the browser, and restarting the app. Disposable
+copies left by a crash are removed at startup after orphaned sandbox containers are removed.
+
+Copying excludes `.git`, the app's own data directory, symlinks, and special files; omissions are
+recorded in the trace. Each workspace is limited to 20,000 entries, 256 MiB total, and 16 MiB per
+file. Runs exceeding those limits fail with an explanation. Proposals capture regular-file
+additions, content edits, and deletions, including binary files. Empty directories and permission-only
+changes are not proposed. Text previews are capped at 200,000 characters; acceptance uses the
+complete saved bytes. Failed or cancelled runs discard their disposable copies.
 
 **Network stays on**, because a step that cannot reach the model is not a step. So a contained tool
 still has egress.

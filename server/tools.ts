@@ -1,3 +1,4 @@
+import type { WorkspaceToolSettings } from "../src/toolSettings.js";
 import { event, errorDetail, type EmitEvent } from "./events.js";
 import vm from "node:vm";
 import type { ExecutionBudget } from "./execution.js";
@@ -7,7 +8,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { buildWorkspaceTools } from "./workspace.js";
 
 /** A tool node as the browser describes it. */
-export type ToolSpec =
+export type ToolSpec = { enabled?: boolean } & (
   | { kind: "web_search"; contextSize?: "low" | "medium" | "high"; allowedDomains?: string }
   | {
       kind: "mcp";
@@ -24,7 +25,7 @@ export type ToolSpec =
       fnParameters?: string;
       fnCode?: string;
       timeoutSec?: number;
-    };
+    });
 
 /** Fallbacks for calls outside node execution (for example the settings tool browser). */
 export const DEFAULT_CODE_TIMEOUT_SEC = 5;
@@ -166,11 +167,15 @@ export async function buildTools(
   workspaces: string[] = [],
   emit?: EmitEvent,
   budget?: ExecutionBudget,
+  workspaceTools: WorkspaceToolSettings = {},
 ): Promise<{ tools: unknown[]; dispatch: Dispatch }> {
   const tools: unknown[] = [];
   const handlers = new Map<string, (args: unknown, context?: CallContext) => Promise<string>>();
 
   for (const [name, tool] of Object.entries(buildWorkspaceTools(workspaces))) {
+    const enabled = workspaceTools[name as keyof WorkspaceToolSettings] !== false;
+    emit?.(event("proxy", "tool.configured", { kind: "workspace", name, enabled }));
+    if (!enabled) continue;
     tools.push(tool.definition);
     handlers.set(name, async (args) =>
       JSON.stringify(await tool.run((args ?? {}) as Record<string, unknown>)),
@@ -178,6 +183,7 @@ export async function buildTools(
   }
 
   for (const spec of specs) {
+    if (spec.enabled === false) continue;
     emit?.(event("proxy", "tool.configured", { kind: spec.kind, name: spec.kind === "custom" ? spec.fnName : spec.kind === "mcp" ? spec.label : "web_search", timeoutSec: spec.kind === "web_search" ? null : spec.timeoutSec ?? (budget ? "node deadline" : spec.kind === "mcp" ? DEFAULT_MCP_TIMEOUT_SEC : DEFAULT_CODE_TIMEOUT_SEC), automaticToolRetries: 0 }));
     if (spec.kind === "web_search") {
       const domains = (spec.allowedDomains ?? "")

@@ -1,3 +1,4 @@
+import type { WorkspaceToolSettings } from "../src/toolSettings.js";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -622,13 +623,15 @@ export function buildWorkspaceTools(dirs: string[]): Record<string, WorkspaceToo
   };
 }
 
-/** A line for the system prompt, so the model knows the folders are there before it is asked. */
-export function describeWorkspaces(dirs: string[]): string | undefined {
+/** A line for the system prompt, describing only enabled workspace tools. */
+export function describeWorkspaces(dirs: string[], settings: WorkspaceToolSettings = {}): string | undefined {
   const roots = workspaceNames(dirs);
-  if (!roots.length) return undefined;
+  const names = ["workspace_list", "workspace_read", "workspace_write"] as const;
+  const enabled = names.filter((name) => settings[name] !== false);
+  if (!roots.length || !enabled.length) return undefined;
   return (
     `You have ${roots.length === 1 ? "a workspace" : "workspaces"} on this machine, reachable ` +
-    `with workspace_list, workspace_read and workspace_write. Paths are rooted at the ` +
+    `with ${enabled.join(", ")}. Paths are rooted at the ` +
     `workspace name:\n` +
     roots.map((r) => `- ${r.name} — ${r.dir}`).join("\n")
   );
