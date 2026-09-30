@@ -39,6 +39,7 @@ export async function localCompletion(token: string, body: { model?: string }): 
 export async function withLocalModel<T>(options: {
   mode?: "download";
   useGpu?: boolean;
+  sandboxConfig?: string;
   model: string; nodeId?: string; token?: string; signal: AbortSignal; emit: EmitEvent;
   /** Explicit test transport; production always uses Docker. */
   testWorker?: { command: string; script: string };
@@ -61,7 +62,7 @@ export async function withLocalModel<T>(options: {
     mkdirSync(path.resolve("data/models"), { recursive: true });
     const transport = options.testWorker
       ? { command: options.testWorker.command, args: ["-u", options.testWorker.script], cache: path.resolve("data/models") }
-      : await prepareModelContainer(options.signal, options.emit, (phase) => update({ phase }), options.mode === "download", options.useGpu);
+      : await prepareModelContainer(options.signal, options.emit, (phase) => update({ phase }), options.mode === "download", options.useGpu, options.sandboxConfig);
     if ("name" in transport) containerName = transport.name;
     child = spawn(transport.command, transport.args, { stdio: ["pipe", "pipe", "pipe"] });
     const worker = child;

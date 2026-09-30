@@ -14,6 +14,9 @@ export type InputData = {
   instructions?: string;
   /** Run this step inside an ephemeral container instead of in the proxy's own process. */
   sandbox?: boolean;
+  /** Saved JSON used only on the next explicit run. */
+  sandboxConfig?: string;
+  sandboxPanel?: { draft?: string; provider?: import("./api").Provider; model?: string; instructions?: string; recommendation?: string; error?: string };
   useGpu?: boolean;
   /** Folders on this machine the step lends the model, reachable with the workspace tools. */
   workspaces?: Workspace[];

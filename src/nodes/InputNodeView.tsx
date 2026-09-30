@@ -25,7 +25,7 @@ const DEFAULT_TIMEOUT_SEC = 300;
 const asDuration = (sec: number) => (sec < 60 ? `${sec}s` : `${sec / 60}m`);
 
 export function InputNodeView({ id, data }: NodeProps<InputNode>) {
-  const { providerModels, providerSettings, defaultProvider, currentId, updateInput: onChange, runOne: onRun, removeNode: onDelete, setSkipped } =
+  const { openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput: onChange, runOne: onRun, removeNode: onDelete, setSkipped } =
     useGraphActions();
   const provider = data.provider ?? defaultProvider;
   const models = providerModels[provider] ?? [];
@@ -266,7 +266,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         </label>
       </div>
 
-      <SandboxToggle useGpu={!!data.useGpu} onGpuChange={(v) => onChange(id, { useGpu: v })} required={localModelsRequired} on={localModelsRequired || !!data.sandbox} onChange={(v) => onChange(id, { sandbox: v })} />
+      <SandboxToggle onConfigure={() => openSandboxConfig(id)} useGpu={!!data.useGpu} onGpuChange={(v) => onChange(id, { useGpu: v })} required={localModelsRequired} on={localModelsRequired || !!data.sandbox} onChange={(v) => onChange(id, { sandbox: v })} />
       {(localModelsRequired || data.sandbox) && <SandboxRunStatus data={data} />}
 
       <div className="stack">

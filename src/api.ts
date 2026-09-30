@@ -225,7 +225,7 @@ export type TraceStep = {
   toolCalls: ToolCallRecord[] | null;
   outputText: string | null;
   usage: { input?: number; output?: number } | null;
-  params: { maxRounds: number | null; timeoutSec: number | null; deliveryTimeoutSec?: number } | null;
+  params: { sandboxConfig?: string | null; maxRounds: number | null; timeoutSec: number | null; deliveryTimeoutSec?: number } | null;
   files: { name: string; mime: string; bytes: number }[] | null;
   links: { url: string; kind: string; note?: string }[] | null;
 };
@@ -283,6 +283,7 @@ export async function runStep(
     links?: string[];
     workspaces?: string[];
     sandbox?: boolean;
+    sandboxConfig?: string;
     useGpu?: boolean;
     trace?: TraceMeta;
   },

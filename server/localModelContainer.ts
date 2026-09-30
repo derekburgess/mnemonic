@@ -1,3 +1,4 @@
+import { runtimeSandboxConfig, resourceArgs } from "../src/sandboxConfig.js";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash, randomUUID } from "node:crypto";
@@ -36,7 +37,8 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
   });
 }
 
-export async function prepareModelContainer(signal: AbortSignal, emit: EmitEvent, phase: (name: string) => void, downloading = false, useGpu = false) {
+export async function prepareModelContainer(signal: AbortSignal, emit: EmitEvent, phase: (name: string) => void, downloading = false, useGpu = false, sandboxConfig?: string) {
+  const config = runtimeSandboxConfig(downloading ? undefined : sandboxConfig).localModel;
   await docker(["info", "--format", "{{json .Runtimes}}"], signal)
     .catch(() => { throw new Error("Local models require a running Docker daemon. Start Docker and retry."); });
   signal.throwIfAborted();
@@ -72,7 +74,7 @@ export async function prepareModelContainer(signal: AbortSignal, emit: EmitEvent
   live.add(name);
   try {
     await docker(["create", "--interactive", "--init", "--name", name, "--label", label,
-      "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=256", "--read-only", "--tmpfs", "/tmp:rw,nosuid,size=256m",
+      "--cap-drop=ALL", "--security-opt=no-new-privileges", ...resourceArgs(config), "--read-only", "--tmpfs", "/tmp:rw,nosuid,size=256m",
       "--user", `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
       "--mount", `type=bind,source=${cache},target=/models${downloading ? "" : ",readonly"}`,
       ...(downloading ? [] : ["--network=none"]), ...(gpu ? ["--gpus", "all"] : []), image], signal);

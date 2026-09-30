@@ -1,3 +1,4 @@
+import { sandboxAdvice } from "./sandboxAdvice.js";
 import { event, sanitize, redactText, errorDetail, type EmitEvent } from "./events.js";
 import express from "express";
 import { listLibrary, startDownload, cancelDownload, deleteDownload, modelDownloaded } from "./modelLibrary.js";
@@ -161,6 +162,24 @@ app.post("/api/mcp/tools", async (req, res) => {
   }
 });
 
+app.post("/api/sandbox/recommend", async (req, res) => {
+  const { provider, model, configuration, instructions } = req.body ?? {};
+  if (!PROVIDERS.includes(provider) || typeof model !== "string" || !model.trim() ||
+      typeof configuration !== "string" || typeof instructions !== "string" || !instructions.trim()) {
+    return res.status(400).json({ error: "Choose a provider and model, and enter instructions." });
+  }
+  const controller = new AbortController();
+  res.on("close", () => { if (!res.writableEnded) controller.abort(); });
+  try {
+    const address = server.address();
+    const text = await sandboxAdvice({ provider, model, configuration, instructions }, controller.signal,
+      typeof address === "object" && address ? address.port : PORT);
+    res.json({ text });
+  } catch (err) {
+    if (!res.destroyed) res.status(400).json({ error: redactText((err as Error).message, PROVIDERS.map((id) => resolveCredentials(id).apiKey)) });
+  }
+});
+
 /** Whether a step could be contained here, so the toggle can disable itself with a reason. */
 app.get("/api/sandbox", async (_req, res) => {
   res.json({ ...await sandboxStatus(), gpuSupported: process.platform !== "darwin" });
@@ -220,6 +239,7 @@ app.get("/api/fs/check", async (req, res) => {
  */
 async function runContained(args: {
   job: Job;
+  sandboxConfig?: string;
   mounts: Mount[];
   budgetSec: number;
   rounds: unknown[];
@@ -235,6 +255,7 @@ async function runContained(args: {
     ? { ...args.job, baseUrl: sandboxModelUrl(args.job.baseUrl) }
     : args.job;
   const { result, stderr } = await runInSandbox(job, args.mounts, {
+    sandboxConfig: args.sandboxConfig,
     timeoutSec: args.budgetSec,
     onTrace: args.onTrace,
     onEvent: args.onEvent,
@@ -265,7 +286,7 @@ app.post("/api/executions/:runId/:execId/cancel", async (req, res) => {
 });
 
 app.post("/api/run", async (req, res) => {
-  const { model, effort, input, instructions, tools: toolSpecs, maxRounds, timeoutSec, files, links, workspaces, sandbox, useGpu, trace: suppliedTrace } =
+  const { model, effort, input, instructions, tools: toolSpecs, maxRounds, timeoutSec, files, links, workspaces, sandbox, sandboxConfig, useGpu, trace: suppliedTrace } =
     req.body ?? {};
 
   if (typeof model !== "string" || typeof input !== "string" || !input.trim()) {
@@ -274,6 +295,7 @@ app.post("/api/run", async (req, res) => {
 
   if (timeoutSec !== undefined && (typeof timeoutSec !== "number" || !Number.isFinite(timeoutSec) || timeoutSec <= 0 || timeoutSec * 1000 > 2_147_483_647)) return res.status(400).json({ error: "timeoutSec must be a positive finite duration" });
 
+  if (sandboxConfig !== undefined && typeof sandboxConfig !== "string") return res.status(400).json({ error: "sandboxConfig must be JSON text" });
   if (useGpu !== undefined && typeof useGpu !== "boolean") return res.status(400).json({ error: "useGpu must be a boolean" });
 
   const trace = { ...suppliedTrace, runId: suppliedTrace?.runId ?? crypto.randomUUID(), execId: suppliedTrace?.execId ?? crypto.randomUUID() };
@@ -349,6 +371,7 @@ app.post("/api/run", async (req, res) => {
         rounds: rounds.slice(-100).map((x) => sanitize(x, secrets, 32_768)),
         container,
         params: {
+          sandboxConfig: sandboxConfig ?? null,
           maxRounds: typeof maxRounds === "number" ? maxRounds : null,
           timeoutSec: typeof timeoutSec === "number" ? timeoutSec : null,
           deliveryTimeoutSec: typeof timeoutSec === "number" && timeoutSec > 0 ? timeoutSec + (contained ? 720 : 60) : 300 + (contained ? 720 : 60),
@@ -448,6 +471,7 @@ app.post("/api/run", async (req, res) => {
             workspaces: visibleRoots,
           },
           mounts,
+          sandboxConfig,
           budgetSec,
           rounds,
           onTrace: (trace) => { container = trace; },
@@ -479,7 +503,7 @@ app.post("/api/run", async (req, res) => {
     const address = server.address();
     const result = managedLocal
       ? await withLocalModel({ model, nodeId: trace.nodeId, token: credentials.source === "none" ? undefined : credentials.apiKey,
-          signal: localSignal, useGpu: useGpu === true, emit }, execute,
+          signal: localSignal, useGpu: useGpu === true, sandboxConfig, emit }, execute,
           typeof address === "object" && address ? address.port : PORT)
       : await execute(credentials);
 

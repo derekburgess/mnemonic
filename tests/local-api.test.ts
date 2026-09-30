@@ -19,7 +19,7 @@ import json, sys, subprocess, os
 if sys.argv[1] == 'run':
     job = json.load(sys.stdin)
     job['baseUrl'] = job['baseUrl'].replace('host.docker.internal', '127.0.0.1')
-    with open('docker-runs', 'a') as log: log.write('run\\n')
+    with open('docker-runs', 'a') as log: log.write(json.dumps(sys.argv[1:]) + '\\n')
     result = subprocess.run(${JSON.stringify([process.execPath, "--import", path.join(root, "node_modules/tsx/dist/loader.mjs"), path.join(root, "server/runner.ts")])}, input=json.dumps(job).encode())
     sys.exit(result.returncode)
 elif sys.argv[1] == 'start':
@@ -51,7 +51,7 @@ elif sys.argv[1] == 'version':
       if (library.models.some((m: any) => m.model === model && m.status === "Downloaded")) break;
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    assert.equal((await post("/api/run", { provider: "huggingface", model, sandbox: false, input: "Hello", effort: "off", timeoutSec: 5,
+    assert.equal((await post("/api/run", { provider: "huggingface", model, sandbox: false, sandboxConfig: JSON.stringify({ sandbox: { memory: "3g", cpus: 1 } }), input: "Hello", effort: "off", timeoutSec: 5,
       trace: { runId: "local", execId: model, nodeId: "step" } })).status, 202);
     let result;
     for (let i = 0; i < 150; i++) {
@@ -67,4 +67,25 @@ elif sys.argv[1] == 'version':
   const { steps } = await (await fetch(`${base}/api/trace/runs/local`)).json();
   for (const step of steps) assert.ok(step.events.some((e: { kind: string }) => e.kind === "local.unloaded"));
   assert.equal((await (await fetch(`${base}/api/local-model/status`)).json()).activity, null);
+  const launches = (await readFile(path.join(dir, "docker-runs"), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+  assert.ok(launches.every((args: string[]) => args.includes("--memory=3g") && args.includes("--cpus=1")));
+  const advice = await post("/api/sandbox/recommend", { provider: "huggingface", model: "test", configuration: "{}", instructions: "Review these limits" });
+  assert.equal(advice.status, 200);
+  assert.equal((await advice.json()).text, "local worker output");
+  assert.equal((await (await fetch(`${base}/api/local-model/status`)).json()).activity, null);
+  assert.equal((await (await fetch(`${base}/api/trace/runs/local`)).json()).steps.length, steps.length);
+  const missingKey = await post("/api/sandbox/recommend", { provider: "openai", model: "chat-latest", configuration: "{}", instructions: "Review" });
+  assert.equal(missingKey.status, 400);
+  assert.match((await missingKey.json()).error, /API key/);
+  assert.equal((await post("/api/run", { provider: "huggingface", model: "test", sandboxConfig: '{"privileged":true}',
+    input: "Hello", timeoutSec: 5, trace: { runId: "invalid-config", execId: "invalid", nodeId: "step" } })).status, 202);
+  let failed;
+  for (let i = 0; i < 150; i++) {
+    failed = await (await fetch(`${base}/api/executions/invalid-config/invalid`)).json();
+    if (failed.status !== "pending") break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(failed.status, "error");
+  assert.match(failed.error, /Unsupported sandbox configuration field/);
+
 });

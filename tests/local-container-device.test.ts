@@ -26,7 +26,7 @@ if sys.argv[1] == 'info':
     }
     process.env.MNEMONIC_MODEL_DEVICE = "cuda";
     for (const useGpu of [undefined, false, true]) {
-      const transport = await prepareModelContainer(new AbortController().signal, () => {}, () => {}, false, useGpu);
+      const transport = await prepareModelContainer(new AbortController().signal, () => {}, () => {}, false, useGpu, JSON.stringify({ localModel: { memory: "8g", cpus: 4 } }));
       await removeModelContainer(transport.name);
     }
     const calls: string[][] = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
@@ -40,6 +40,13 @@ if sys.argv[1] == 'info':
     assert.equal(new Set(creates.slice(0, 3).map((args) => args.at(-1))).size, 1, "all downloads use the same CPU image");
     assert.ok(!creates[3].includes("--gpus"), "inference defaults to CPU despite detected NVIDIA runtime");
     assert.ok(!creates[4].includes("--gpus"), "GPU off overrides legacy CUDA environment setting");
+    for (const args of creates.slice(3)) {
+      assert.ok(args.includes("--memory=8g"));
+      assert.ok(args.includes("--cpus=4"));
+      assert.ok(args.includes("--network=none"));
+      assert.ok(args.includes("--read-only"));
+      assert.ok(args.includes("--cap-drop=ALL"));
+    }
     assert.ok(creates[5].includes("--gpus"), "GPU on requests Docker GPU access");
     assert.notEqual(creates[5].at(-1), creates[0].at(-1), "GPU inference uses the CUDA image");
   } finally {

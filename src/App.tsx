@@ -1,3 +1,4 @@
+import { SandboxConfigPanel } from "./SandboxConfigPanel";
 import { GraphSync, type SaveState } from "./graphSync";
 import { rememberExecutions, pendingExecutions, forgetExecutions, cancelPending } from "./pendingExecutions";
 import { reportTraceEvent } from "./traceEvents";
@@ -168,9 +169,13 @@ function Canvas() {
   const pendingAtMount = useRef(pendingExecutions());
   const [notice, setNotice] = useState<string | null>(null);
   // One side panel at a time; the canvas keeps the rest of the width.
-  const [panel, setPanel] = useState<"trace" | "settings" | null>(null);
+  const [panel, setPanel] = useState<"trace" | "settings" | "sandbox" | null>(null);
   const { screenToFlowPosition } = useReactFlow();
   const wrapper = useRef<HTMLDivElement>(null);
+
+  const [sandboxNodeId, setSandboxNodeId] = useState<string | null>(null);
+  const openSandboxConfig = useCallback((id: string) => { setSandboxNodeId(id); setPanel("sandbox"); }, []);
+  const sandboxNode = nodes.find((node) => node.id === sandboxNodeId && isInput(node)) as InputNode | undefined;
 
   // The run loop awaits between steps, so it threads a working snapshot through by hand
   // rather than reading React state that has not committed yet.
@@ -306,6 +311,7 @@ function Canvas() {
               links: producer.data.links?.map((l) => l.url).filter((url) => url.trim()),
               workspaces: producer.data.workspaces?.map((w) => w.path).filter((p) => p.trim()),
               sandbox: (producer.data.provider === "huggingface" && providerSettings?.providers?.find((p) => p.provider === "huggingface")?.runLocally) || producer.data.sandbox,
+              sandboxConfig: producer.data.sandboxConfig,
               useGpu: producer.data.provider === "huggingface" && !!producer.data.useGpu,
               ...(execution
                 ? {
@@ -635,8 +641,8 @@ function Canvas() {
   );
 
   const actions = useMemo(
-    () => ({ providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, runOne, removeNode, setSkipped }),
-    [providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, runOne, removeNode, setSkipped],
+    () => ({ openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, runOne, removeNode, setSkipped }),
+    [openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, runOne, removeNode, setSkipped],
   );
 
   return (
@@ -745,6 +751,7 @@ function Canvas() {
           </div>
 
           {panel === "trace" && <TracePanel onClose={() => setPanel(null)} onRecover={addSavedOutput} outputExecIds={nodes.filter(isOutput).map((n) => n.data.execId).filter((id): id is string => !!id)} />}
+          {panel === "sandbox" && sandboxNode && <SandboxConfigPanel key={sandboxNode.id} node={sandboxNode} onClose={() => setPanel(null)} />}
           {panel === "settings" && <SettingsPanel onClose={() => setPanel(null)} onSaved={() => { void fetchSettings().then(refreshProviders); }} />}
         </div>
       </div>

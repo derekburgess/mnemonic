@@ -542,3 +542,25 @@ not restricted to a curated list. Generation is currently capped at 1,024 new to
 
 Optional real-model smoke test (downloads a small public model):
 `MNEMONIC_TEST_TRANSFORMERS=1 node --import tsx --test tests/local-model-real.test.ts`.
+
+### Per-node sandbox configuration
+
+Open the gear button in a node's sandbox controls to edit its JSON configuration.
+**Save** applies it to future explicit runs; saving and **Reset to defaults** never run a node.
+Reset replaces only the draft until saved. Drafts, assistant selections, instructions, and the
+last recommendation are retained per node with the graph, including when the panel is closed.
+The editor checks JSON syntax. Unsupported options and Docker resource errors surface when
+running the node and are recorded in its trace, alongside the saved configuration.
+
+The `sandbox` section controls the node/tool container (`memory`, `cpus`, `pidsLimit`,
+`network` as `bridge` or `none`, and `workspaceReadOnly`). The `localModel` section controls
+inference-container resource limits (`memory`, `cpus`, `pidsLimit`). Omitted fields keep their
+defaults; `null` removes a resource limit. Model downloads retain their own defaults.
+GPU selection remains a node toggle. Credentials, image selection, mounts, capabilities,
+and local inference's read-only root/cache and network isolation cannot be overridden here.
+
+Optional AI assistance uses the selected provider's saved credentials, independently of the
+node's model. It defaults to OpenAI `chat-latest`; Hugging Face local mode uses a downloaded
+model and unloads it after generation. Generation sends the editor text and instructions to
+the chosen provider and returns selectable recommendation text. It does not modify the
+editor, save configuration, execute tools, or run the node. Manually copy any desired parts.

@@ -863,12 +863,12 @@ textarea.text { font-family: inherit; resize: both; }
 
 /* ---------- trace ---------- */
 
-/* A panel with no width of its own, for anything that does not need to be dragged wider. */
+/* Shared panel chrome; ResizablePanel supplies the persisted width. */
 .side-panel {
+  position: relative;
   flex: none;
   display: flex;
   flex-direction: column;
-  width: 360px;
   min-height: 0;
   background: var(--panel);
   border-left: 1px solid var(--line);
@@ -924,7 +924,7 @@ textarea.text { font-family: inherit; resize: both; }
   background: transparent;
   transition: background 0.12s ease;
 }
-.trace-grip:hover::after { background: var(--accent); }
+.trace-grip:hover::after, .trace-grip:focus-visible::after { background: var(--accent); }
 
 /* Keeps the cursor consistent and stops text selecting while dragging. */
 body.resizing-col { cursor: col-resize; user-select: none; }
@@ -1158,3 +1158,14 @@ body.resizing-col { cursor: col-resize; user-select: none; }
 .sandbox-status.completed .sandbox-status-message { color: var(--ok); }
 .sandbox-status.failed .sandbox-status-message { color: var(--err); }
 .sandbox-status.cancelled .sandbox-status-message { color: var(--warn); }
+
+.sandbox-controls { position: relative; }
+.sandbox-controls .sandbox-control { padding-right: 26px; }
+.sandbox-config-open { position: absolute; right: 5px; top: 3px; width: 22px; height: 22px; padding: 0; }
+.sandbox-config-panel .trace-list { display: flex; flex-direction: column; gap: 12px; }
+.sandbox-config-panel textarea { width: 100%; resize: vertical; min-height: 80px; }
+.sandbox-config-panel .sandbox-config-text { min-height: 260px; font-family: ui-monospace, monospace; font-size: 12px; white-space: pre; overflow: auto; }
+.sandbox-recommendation { min-height: 260px; max-height: 520px; overflow: auto; resize: vertical; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 12px; user-select: text; overflow-wrap: anywhere; }
+.sandbox-recommendation pre, .sandbox-recommendation pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.sandbox-ai { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
+.sandbox-config-actions { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }

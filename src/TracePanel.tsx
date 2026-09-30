@@ -1,3 +1,4 @@
+import { ResizablePanel } from "./ResizablePanel";
 import { deliveryState } from "../server/events";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -111,6 +112,8 @@ function StepDetail({ step, onRecover, outputExecIds }: { step: TraceStep; onRec
       </Section>
 
       {step.error && <Pre value={step.error} tone="error" />}
+
+      {step.params?.sandboxConfig && <Section title="Sandbox configuration"><Pre value={step.params.sandboxConfig} /></Section>}
 
       {step.container && (
         <Section title="Container diagnostics" open={step.status === "error"}>
@@ -289,50 +292,9 @@ function RunRow({ run, onDelete, onRecover, outputExecIds }: { run: TraceRun; on
   );
 }
 
-const WIDTH_KEY = "mnemonic.trace.width";
-const MIN_WIDTH = 320;
-/** Leave at least this much canvas visible however far the panel is dragged. */
-const MIN_CANVAS = 280;
-
 export function TracePanel({ onClose, onRecover, outputExecIds }: { onClose: () => void; onRecover: (step: TraceStep) => Promise<void>; outputExecIds: string[] }) {
   const [runs, setRuns] = useState<TraceRun[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const [width, setWidth] = useState(() => {
-    const saved = Number(localStorage.getItem(WIDTH_KEY));
-    return saved >= MIN_WIDTH ? saved : 460;
-  });
-
-  /**
-   * Dragged from the panel's left edge. A native `resize` grip would sit in the bottom-right
-   * corner and grow the wrong way for a right-docked panel, so the edge is its own handle.
-   */
-  const startResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const move = (e: PointerEvent) => {
-      const next = Math.min(
-        Math.max(window.innerWidth - e.clientX, MIN_WIDTH),
-        Math.max(window.innerWidth - MIN_CANVAS, MIN_WIDTH),
-      );
-      setWidth(next);
-    };
-    const stop = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
-      document.body.classList.remove("resizing-col");
-      setWidth((w) => {
-        try {
-          localStorage.setItem(WIDTH_KEY, String(w));
-        } catch {
-          // Storage can be unavailable; the width just will not persist.
-        }
-        return w;
-      });
-    };
-    document.body.classList.add("resizing-col");
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop);
-  }, []);
 
   const load = useCallback(() => {
     fetchTraceRuns()
@@ -354,15 +316,8 @@ export function TracePanel({ onClose, onRecover, outputExecIds }: { onClose: () 
   );
 
   return (
-    <aside className="trace-panel" style={{ width }}>
-      <div
-        className="trace-grip"
-        onPointerDown={startResize}
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize trace panel"
-      />
-
+    <ResizablePanel className="trace-panel" storageKey="mnemonic.trace.width" defaultWidth={460}
+      label="Trace Logs" resizeLabel="Resize trace panel">
       <header className="trace-head">
         <strong>Trace Logs</strong>
         <div className="spacer" />
@@ -387,6 +342,6 @@ export function TracePanel({ onClose, onRecover, outputExecIds }: { onClose: () 
           <RunRow key={run.runId} run={run} onDelete={remove} onRecover={onRecover} outputExecIds={outputExecIds} />
         ))}
       </div>
-    </aside>
+    </ResizablePanel>
   );
 }

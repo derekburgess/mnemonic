@@ -323,3 +323,106 @@ test("sandbox status uses trace events, matches the toggle, and preserves comple
   // The new execution's identity resets the line, even when old trace events are replayed.
   await expect(status).toHaveText("Starting execution");
 });
+
+test("sandbox editor preserves drafts and recommendations without running or applying them", async ({ page }) => {
+  const state = await setup(page);
+  const recommendation = 'Consider more memory.\n```json\n{"sandbox":{"memory":"4g"}}\n```';
+  let adviceRequests = 0;
+  await page.route("**/api/sandbox/recommend", async (route) => {
+    adviceRequests++;
+    expect(route.request().postDataJSON().model).toBe("chat-latest");
+    await route.fulfill({ json: { text: recommendation } });
+  });
+  const open = page.getByRole("button", { name: "Sandbox configuration", exact: true });
+  await open.click();
+  const panel = page.getByRole("complementary", { name: "Sandbox Configuration" });
+  const editor = panel.getByRole("textbox", { name: "Configuration", exact: true });
+  const defaults = await editor.inputValue();
+  await editor.fill('{"sandbox":');
+  await expect(panel.getByRole("alert")).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
+  await open.click();
+  await expect(editor).toHaveValue('{"sandbox":');
+  const saved = '{"sandbox":{"memory":"4g"}}';
+  await editor.fill(saved);
+  await panel.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => state.graph.nodes[0].data.sandboxConfig).toBe(saved);
+  expect(state.executions).toHaveLength(0);
+  await panel.getByRole("textbox", { name: "Instructions" }).fill("Review the memory limit");
+  await panel.getByRole("button", { name: "Generate", exact: true }).click();
+  await expect(panel.getByRole("region", { name: "Recommendation" })).toContainText('Consider more memory.');
+  await expect(panel.getByRole("region", { name: "Recommendation" }).locator("pre code")).toHaveText('{"sandbox":{"memory":"4g"}}\n');
+  await expect(editor).toHaveValue(saved);
+  expect(adviceRequests).toBe(1);
+  expect(state.executions).toHaveLength(0);
+  await panel.getByRole("button", { name: "Reset to defaults" }).click();
+  await expect(editor).toHaveValue(defaults);
+  await expect.poll(() => state.graph.nodes[0].data.sandboxPanel.draft).toBe(defaults);
+  expect(state.graph.nodes[0].data.sandboxConfig).toBe(saved);
+  await page.reload();
+  await open.click();
+  await expect(editor).toHaveValue(defaults);
+  await expect(panel.getByRole("region", { name: "Recommendation" })).toContainText('Consider more memory.');
+  await expect(panel.getByRole("textbox", { name: "Instructions" })).toHaveValue("Review the memory limit");
+  expect(state.executions).toHaveLength(0);
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
+  state.complete = true;
+  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  await expect.poll(() => state.executions.length).toBe(1);
+  expect(state.executions[0].sandboxConfig).toBe(saved);
+});
+
+test("sandbox recommendations finish into their original node after switching panels", async ({ page }) => {
+  const state = await setup(page);
+  let finish: (() => void) | undefined;
+  await page.route("**/api/sandbox/recommend", async (route) => {
+    await new Promise<void>((resolve) => { finish = resolve; });
+    await route.fulfill({ json: { text: "First node recommendation" } });
+  });
+  await page.getByRole("button", { name: "Sandbox configuration", exact: true }).click();
+  const panel = page.getByRole("complementary", { name: "Sandbox Configuration" });
+  await panel.getByRole("textbox", { name: "Configuration", exact: true }).fill('{"sandbox":{"cpus":3}}');
+  await panel.getByRole("textbox", { name: "Instructions" }).fill("Review this");
+  await panel.getByRole("button", { name: "Generate", exact: true }).click();
+  await expect.poll(() => !!finish).toBe(true);
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: "Add Step", exact: true }).click();
+  await page.getByRole("button", { name: "Sandbox configuration", exact: true }).nth(1).click();
+  finish!();
+  await expect.poll(() => state.graph.nodes[0].data.sandboxPanel?.recommendation).toBe("First node recommendation");
+  await expect(panel.getByRole("region", { name: "Recommendation" })).toHaveCount(0);
+  await expect(panel.getByRole("textbox", { name: "Instructions" })).toHaveValue("");
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: "Sandbox configuration", exact: true }).first().click();
+  await expect(panel.getByRole("region", { name: "Recommendation" })).toHaveText("First node recommendation");
+  await expect(panel.getByRole("textbox", { name: "Configuration", exact: true })).toHaveValue('{"sandbox":{"cpus":3}}');
+  expect(state.graph.nodes[0].data.sandboxConfig).toBeUndefined();
+  expect(state.executions).toHaveLength(0);
+});
+
+test("all side panels resize and retain their individual widths", async ({ page }) => {
+  await setup(page);
+  for (const [button, label, resizeLabel, width] of [
+    ["Settings", "Settings", "Resize settings panel", 510],
+    ["Sandbox configuration", "Sandbox Configuration", "Resize sandbox configuration panel", 610],
+    ["Trace Logs", "Trace Logs", "Resize trace panel", 560],
+  ] as const) {
+    await page.getByRole("button", { name: button, exact: true }).click();
+    const panel = page.getByRole("complementary", { name: label, exact: true });
+    const grip = panel.getByRole("separator", { name: resizeLabel });
+    const box = (await grip.boundingBox())!;
+    await page.mouse.move(box.x + box.width - 1, box.y + 30);
+    await page.mouse.down();
+    await page.mouse.move(page.viewportSize()!.width - width, box.y + 30, { steps: 5 });
+    await page.mouse.up();
+    await expect(panel).toHaveCSS("width", `${width}px`);
+    await panel.getByRole("button", { name: "Close", exact: true }).click();
+    await page.getByRole("button", { name: button, exact: true }).click();
+    await expect(panel).toHaveCSS("width", `${width}px`);
+    await panel.getByRole("button", { name: "Close", exact: true }).click();
+  }
+  await page.reload();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("complementary", { name: "Settings", exact: true })).toHaveCSS("width", "510px");
+});

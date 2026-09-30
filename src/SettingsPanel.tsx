@@ -1,3 +1,4 @@
+import { ResizablePanel } from "./ResizablePanel";
 import { ModelLibrary } from "./ModelLibrary";
 import { useCallback, useEffect, useState } from "react";
 import { fetchSettings, saveSettings, type PlatformSettings, type Provider } from "./api";
@@ -43,7 +44,8 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
   );
 
   return (
-    <aside className="side-panel">
+    <ResizablePanel className="side-panel" storageKey="mnemonic.settings.width" defaultWidth={360}
+      label="Settings" resizeLabel="Resize settings panel">
       <header className="trace-head">
         <strong>Settings</strong>
         <div className="spacer" />
@@ -132,6 +134,6 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
         </> : null}
 
       </div>
-    </aside>
+    </ResizablePanel>
   );
 }

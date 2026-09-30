@@ -1,3 +1,4 @@
+import { runtimeSandboxConfig, resourceArgs } from "../src/sandboxConfig.js";
 import { event, type EmitEvent, type TraceEvent } from "./events.js";
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -33,11 +34,8 @@ const ROOT = path.resolve(process.cwd());
 /** Where a workspace is mounted inside the container. */
 const MOUNT_BASE = "/workspaces";
 
-/** Bounds a runaway step. The step's own timeout still applies inside. */
+/** Fixed isolation controls remain in force regardless of editable resource limits. */
 const LIMITS = [
-  "--memory=2g",
-  "--pids-limit=512",
-  "--cpus=2",
   // Nothing in here needs to gain privileges, and dropping capabilities costs the runner nothing.
   "--security-opt=no-new-privileges",
   "--cap-drop=ALL",
@@ -237,12 +235,14 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 export async function runInSandbox(
   job: Job,
   mounts: Mount[],
-  opts: { timeoutSec: number; readOnly?: boolean; onTrace?: (trace: ContainerTrace) => void; onEvent?: EmitEvent; signal?: AbortSignal } = { timeoutSec: 300 },
+  opts: { sandboxConfig?: string; timeoutSec: number; readOnly?: boolean; onTrace?: (trace: ContainerTrace) => void; onEvent?: EmitEvent; signal?: AbortSignal } = { timeoutSec: 300 },
 ): Promise<SandboxRun> {
   const log = containerLogger([job.apiKey, ...(job.tools ?? []).flatMap((t) => t.kind === "mcp" && t.authorization ? [t.authorization, t.authorization.replace(/^Bearer\s+/i, "")] : [])], opts.onEvent);
   let containerName: string | undefined;
   try {
     opts.signal?.throwIfAborted();
+    const config = runtimeSandboxConfig(opts.sandboxConfig).sandbox;
+    const limits = [...resourceArgs(config), ...LIMITS];
     log.event("Checking Docker availability");
     const status = await sandboxStatus(opts.signal);
     if (!status.available) {
@@ -269,17 +269,17 @@ export async function runInSandbox(
       name,
       "--label",
       LABEL,
-      ...LIMITS,
-      // The step talks to the model over the network, so egress stays on. host-gateway is what
-      // makes an MCP server on the host's localhost reachable from in here.
+      ...limits,
+      `--network=${config.network}`,
+      // host-gateway makes host model/MCP services reachable when networking is enabled.
       "--add-host=host.docker.internal:host-gateway",
-      ...mounts.flatMap((m) => ["-v", `${m.host}:${m.container}${opts.readOnly ? ":ro" : ""}`]),
+      ...mounts.flatMap((m) => ["-v", `${m.host}:${m.container}${opts.readOnly || config.workspaceReadOnly ? ":ro" : ""}`]),
       tag,
     ];
 
     live.add(name);
     log.event("Starting container");
-    opts.onEvent?.(event("proxy", "container.starting", { name, image: tag, limits: LIMITS }));
+    opts.onEvent?.(event("proxy", "container.starting", { name, image: tag, limits }));
     return await new Promise<SandboxRun>((resolve, reject) => {
       const child = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
 

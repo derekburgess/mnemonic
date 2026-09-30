@@ -1,3 +1,4 @@
+import { Icon } from "../icons";
 import { useEffect, useState } from "react";
 import { fetchSandboxStatus, type SandboxStatus } from "../api";
 
@@ -11,7 +12,7 @@ import { fetchSandboxStatus, type SandboxStatus } from "../api";
 let asked: Promise<SandboxStatus> | null = null;
 const sandboxStatus = () => (asked ??= fetchSandboxStatus());
 
-export function SandboxToggle({ on, onChange, required = false, useGpu = false, onGpuChange }: { useGpu?: boolean; onGpuChange: (v: boolean) => void; on: boolean; required?: boolean; onChange: (v: boolean) => void }) {
+export function SandboxToggle({ onConfigure, on, onChange, required = false, useGpu = false, onGpuChange }: { onConfigure: () => void; useGpu?: boolean; onGpuChange: (v: boolean) => void; on: boolean; required?: boolean; onChange: (v: boolean) => void }) {
   const [status, setStatus] = useState<SandboxStatus | null>(null);
 
   useEffect(() => {
@@ -30,6 +31,7 @@ export function SandboxToggle({ on, onChange, required = false, useGpu = false, 
   return (
     <div className="stack">
       <div className="sandbox-row sandbox-controls nodrag">
+      <button className="icon sandbox-config-open" aria-label="Sandbox configuration" onClick={onConfigure}><Icon name="gear" size={13} /></button>
       <label
         className={`sandbox-control${on ? " on" : ""}${locked ? " locked" : ""}`}
         title="Required for running local models."
