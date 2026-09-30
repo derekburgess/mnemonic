@@ -1187,3 +1187,8 @@ body.resizing-col { cursor: col-resize; user-select: none; }
 .sandbox-activity li { display: flex; gap: 8px; margin: 5px 0; }
 .sandbox-activity time { flex: none; font-variant-numeric: tabular-nums; }
 .sandbox-activity li span { overflow-wrap: anywhere; min-width: 0; }
+
+.provider-settings { border: 1px solid var(--line); border-radius: 6px; }
+.provider-settings > summary { cursor: pointer; padding: 10px; font-weight: 600; }
+.provider-settings > section { padding: 0 10px 10px; }
+.provider-settings-fields { display: flex; flex-direction: column; gap: 10px; min-width: 0; border: 0; padding: 0; margin: 0; }

@@ -323,28 +323,6 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         ))}
       </div>
 
-      <label className="stack">
-        Role
-        <input
-          className="line nodrag"
-          value={data.role ?? ""}
-          onChange={(e) => onChange(id, { role: e.target.value })}
-        />
-      </label>
-
-      <label className="stack">
-        Instructions (System Prompt + Role)
-        <div className="field">
-          <textarea
-            {...field()}
-            className="instructions nodrag nowheel"
-            value={data.instructions ?? ""}
-            onChange={(e) => onChange(id, { instructions: e.target.value })}
-          />
-          <CopyButton text={data.instructions ?? ""} title="Copy instructions" />
-        </div>
-      </label>
-
       <div className="stack">
         <label className="file nodrag attach">
           <Icon name="upload" /> Attach files (.pdf, .txt, .png, .jpg)
@@ -407,6 +385,28 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
           </div>
         ))}
       </div>
+
+      <label className="stack">
+        Role
+        <input
+          className="line nodrag"
+          value={data.role ?? ""}
+          onChange={(e) => onChange(id, { role: e.target.value })}
+        />
+      </label>
+
+      <label className="stack">
+        Instructions (System Prompt + Role)
+        <div className="field">
+          <textarea
+            {...field()}
+            className="instructions nodrag nowheel"
+            value={data.instructions ?? ""}
+            onChange={(e) => onChange(id, { instructions: e.target.value })}
+          />
+          <CopyButton text={data.instructions ?? ""} title="Copy instructions" />
+        </div>
+      </label>
 
       <label className="stack">
         Input

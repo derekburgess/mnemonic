@@ -4,7 +4,29 @@ import { useCallback, useEffect, useState } from "react";
 import { fetchSettings, saveSettings, type PlatformSettings, type Provider } from "./api";
 import { Icon } from "./icons";
 
-export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (settings: PlatformSettings) => void }) {
+type SettingsPanelProps = { onClose: () => void; onSaved: (settings: PlatformSettings) => void };
+const PROVIDERS: { provider: Provider; label: string }[] = [
+  { provider: "openai", label: "OpenAI" },
+  { provider: "compatible", label: "OpenAI-compatible" },
+  { provider: "huggingface", label: "Hugging Face" },
+];
+
+export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
+  return <ResizablePanel className="side-panel" storageKey="mnemonic.settings.width" defaultWidth={360}
+    label="Settings" resizeLabel="Resize settings panel">
+    <header className="trace-head">
+      <strong>Settings</strong><div className="spacer" />
+      <button className="tinted tint-err" onClick={onClose} title="Close" aria-label="Close"><Icon name="close" /></button>
+    </header>
+    <div className="trace-list">
+      {PROVIDERS.map(({ provider, label }) => <ProviderSettingsSection key={provider} provider={provider} label={label} onSaved={onSaved} />)}
+    </div>
+  </ResizablePanel>;
+}
+
+function ProviderSettingsSection({ provider, label, onSaved }: {
+  provider: Provider; label: string; onSaved: SettingsPanelProps["onSaved"];
+}) {
   const [settings, setSettings] = useState<PlatformSettings | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
@@ -13,13 +35,13 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    fetchSettings()
+    fetchSettings(provider)
       .then((s) => {
         setSettings(s);
         setBaseUrl(s.baseUrl || (s.provider === "openai" ? "https://api.openai.com/v1" : ""));
       })
       .catch((err) => setError((err as Error).message));
-  }, []);
+  }, [provider]);
 
   const save = useCallback(
     async (patch: { runLocally?: boolean; apiKey?: string; baseUrl?: string; provider?: Provider }) => {
@@ -27,10 +49,10 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
       setError(null);
       setStatus(null);
       try {
-        const next = await saveSettings({ ...patch, provider: settings?.provider });
+        const next = await saveSettings({ ...patch, provider });
         setSettings(next);
-        setBaseUrl(next.baseUrl || (next.provider === "openai" ? "https://api.openai.com/v1" : ""));
-        setApiKey("");
+        if (patch.baseUrl !== undefined) setBaseUrl(next.baseUrl || (provider === "openai" ? "https://api.openai.com/v1" : ""));
+        if (patch.apiKey !== undefined) setApiKey("");
         setStatus(patch.apiKey ? "key" : patch.baseUrl !== undefined ? "baseUrl" : null);
         onSaved(next);
         setTimeout(() => setStatus(null), 1600);
@@ -40,45 +62,15 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
         setBusy(false);
       }
     },
-    [onSaved, settings?.provider],
+    [onSaved, provider],
   );
 
   return (
-    <ResizablePanel className="side-panel" storageKey="mnemonic.settings.width" defaultWidth={360}
-      label="Settings" resizeLabel="Resize settings panel">
-      <header className="trace-head">
-        <strong>Settings</strong>
-        <div className="spacer" />
-        <button className="tinted tint-err" onClick={onClose} title="Close" aria-label="Close">
-          <Icon name="close" />
-        </button>
-      </header>
-
-      <div className="trace-list">
-        {error && <p className="error">{error}</p>}
-
-        <label className="stack">
-          Configure provider
-          <select
-            value={settings?.provider ?? "openai"}
-            onChange={(e) => {
-              setBusy(true);
-              setApiKey("");
-              setStatus(null);
-              setError(null);
-              void fetchSettings(e.target.value as Provider)
-                .then((next) => { setSettings(next); setBaseUrl(next.baseUrl); })
-                .catch((err) => setError(err.message))
-                .finally(() => setBusy(false));
-            }}
-            disabled={busy || !settings}
-          >
-            <option value="openai">OpenAI — Responses API</option>
-            <option value="compatible">OpenAI-compatible — Chat Completions</option>
-            <option value="huggingface">Hugging Face</option>
-          </select>
-        </label>
-
+    <details className="provider-settings" open={provider === "openai"}>
+      <summary>{label}</summary>
+      <section aria-label={`${label} settings`}>
+        {error && <p className="error" role="alert">{error}</p>}
+        <fieldset className="provider-settings-fields" disabled={busy || !settings}>
         <label className="stack">
           API key
           <input
@@ -104,23 +96,23 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
           </button>
         </div>
 
-        {settings?.provider === "huggingface" && (
+        {provider === "huggingface" && (
           <label className="sandbox-row">
-            <span className="skip sandbox"><input type="checkbox" checked={!!settings.runLocally}
+            <span className="skip sandbox"><input type="checkbox" checked={!!settings?.runLocally}
               disabled={busy} onChange={(e) => save({ runLocally: e.target.checked })} />
               <span className="track" aria-hidden="true" /></span>
             <span>Download and run models locally</span>
           </label>
         )}
 
-        {settings?.provider === "huggingface" && settings.runLocally && <ModelLibrary onChange={() => onSaved(settings)} />}
+        {provider === "huggingface" && settings?.runLocally && <ModelLibrary onChange={() => onSaved(settings)} />}
 
-        {!settings?.runLocally || settings.provider !== "huggingface" ? <>
+        {!settings?.runLocally || provider !== "huggingface" ? <>
         <label className="stack">
           Base URL
           <input
             className="line"
-            placeholder={settings?.provider === "huggingface" ? "http://localhost:8000/v1" : "https://api.openai.com/v1"}
+            placeholder={provider === "huggingface" ? "http://localhost:8000/v1" : "https://api.openai.com/v1"}
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
           />
@@ -133,7 +125,8 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
         </div>
         </> : null}
 
-      </div>
-    </ResizablePanel>
+        </fieldset>
+      </section>
+    </details>
   );
 }
