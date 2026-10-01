@@ -32,6 +32,8 @@ export type InputData = {
   workspaceTools?: import("./toolSettings").WorkspaceToolSettings;
   /** How many times the model may come back asking for more tools before the run gives up. */
   maxRounds?: number;
+  /** Repeat explicit node runs until stopped; each iteration preserves its outputs. */
+  loop?: boolean;
   /** Budget for the whole step: every round plus the tools they call. Seconds. */
   timeoutSec?: number;
   /** How many artifacts one run of this step generates. */

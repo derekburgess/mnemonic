@@ -91,3 +91,18 @@ test("thinking chains preserve recovery, fan-out and downstream connections on r
   assert.ok(!second.edges.some((e) => e.source === first.outputIds[0] && e.target === "next"));
   assert.deepEqual(resolveContext("next", second.nodes, second.edges).map((c) => c.text), ["Answer", "Plain"]);
 });
+
+test("loop iterations append outputs without moving or inheriting manually selected routes", () => {
+  const producer = { id: "step", type: "step", position: { x: 0, y: 0 }, data: { label: "Loop", loop: true } } as InputNode;
+  const consumer = { ...producer, id: "transform", data: { ...producer.data, label: "Transform", loop: false }, position: { x: 1200, y: 0 } };
+  const result = { text: "first", model: "test", effort: "off" as const, execId: "first" };
+  const options = { append: true, preserveRoutes: true };
+  const first = commitRun([producer, consumer], [], producer, [result], options);
+  const linked = [...first.edges, { id: "selected", source: first.outputIds[0], target: consumer.id },
+    { id: "feedback", source: first.outputIds[0], target: producer.id }];
+  const second = commitRun(first.nodes, linked, producer, [{ ...result, text: "second", execId: "second" }], options);
+  assert.ok(linked.every((edge) => second.edges.some((e) => e.id === edge.id && e.source === edge.source && e.target === edge.target)));
+  assert.deepEqual(resolveContext(consumer.id, second.nodes, second.edges).map((c) => c.text), ["first"]);
+  assert.deepEqual(resolveContext(producer.id, second.nodes, second.edges).map((c) => c.text), ["first"]);
+  assert.equal(second.nodes.length, 4);
+});

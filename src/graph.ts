@@ -182,7 +182,7 @@ export function commitRun(
   edges: GraphEdge[],
   producer: InputNode,
   results: RunResult[],
-  options: { append?: boolean } = {},
+  options: { append?: boolean; preserveRoutes?: boolean } = {},
 ): { nodes: GraphNode[]; edges: GraphEdge[]; outputIds: string[] } {
   const existing = new Map(nodes.filter(isOutput).filter((n) => n.data.execId && n.data.kind !== "thinking").map((n) => [n.data.execId, n.id]));
   const unique = results.filter((result, i) => !result.execId || (!existing.has(result.execId) && results.findIndex((r) => r.execId === result.execId) === i));
@@ -257,7 +257,7 @@ export function commitRun(
       },
     };
   });
-  const stale = new Set([...(options.append ? [] : inherited), ...prewired].map((e) => e.id));
+  const stale = new Set((options.preserveRoutes ? [] : [...(options.append ? [] : inherited), ...prewired]).map((e) => e.id));
   const kept = edges.filter(
     (e) => !stale.has(e.id) && !(!options.append && e.source === producer.id && activeRootIds.has(e.target)),
   );
@@ -265,7 +265,7 @@ export function commitRun(
   // Every sibling of a fan-out feeds the same consumers, so a downstream step sees all N
   // candidates rather than only the first. Targets are collapsed to a set first, or re-running
   // an N-way fan-out would multiply the edges each time.
-  const consumers = [...new Set([...inherited, ...prewired].map((e) => e.target))];
+  const consumers = options.preserveRoutes ? [] : [...new Set([...inherited, ...prewired].map((e) => e.target))];
   const migrated: GraphEdge[] = outputs.flatMap((o) =>
     consumers.map((target) => ({ id: uid(), source: o.id, target })),
   );

@@ -1193,3 +1193,5 @@ body.resizing-col { cursor: col-resize; user-select: none; }
 .provider-settings > summary { cursor: pointer; padding: 10px; font-weight: 600; }
 .provider-settings > section { padding: 0 10px 10px; }
 .provider-settings-fields { display: flex; flex-direction: column; gap: 10px; min-width: 0; border: 0; padding: 0; margin: 0; }
+
+.loop-controls { padding-top: 6px; padding-bottom: 6px; }

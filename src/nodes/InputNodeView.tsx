@@ -25,14 +25,14 @@ const DEFAULT_TIMEOUT_SEC = 300;
 const asDuration = (sec: number) => (sec < 60 ? `${sec}s` : `${sec / 60}m`);
 
 export function InputNodeView({ id, data }: NodeProps<InputNode>) {
-  const { openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput: onChange, runOne: onRun, removeNode: onDelete, setSkipped } =
+  const { activeNodeIds, stopNode, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput: onChange, runOne: onRun, removeNode: onDelete, setSkipped } =
     useGraphActions();
   const provider = data.provider ?? defaultProvider;
   const models = providerModels[provider] ?? [];
   const localModelsRequired = provider === "huggingface" && !!providerSettings?.providers?.find((p) => p.provider === provider)?.runLocally;
   const providers = providerSettings?.providers?.filter((p) => p.configured) ?? [];
   const providerNames = { openai: "OpenAI", compatible: "OpenAI-compatible", huggingface: "Hugging Face" };
-  const busy = data.status === "running";
+  const busy = activeNodeIds.includes(id) || data.status === "running";
   const skipped = !!data.skipped;
   const current = currentId === id;
   const { field } = useFieldWidth();
@@ -267,6 +267,14 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         </label>
       </div>
 
+      <div className="sandbox-row loop-controls nodrag">
+        <label className="sandbox-control">
+          <span className="skip sandbox"><input type="checkbox" checked={!!data.loop}
+            onChange={(e) => onChange(id, { loop: e.target.checked })} /><span className="track" aria-hidden="true" /></span>
+          <span>Loop node</span>
+        </label>
+      </div>
+
       <div className="stack">
         <button
           className="file nodrag attach"
@@ -464,12 +472,12 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
 
       {data.error && <p className="error nodrag">{data.error}</p>}
 
-      <button className="run tinted tint-ok nodrag" onClick={() => onRun(id)} disabled={busy || skipped}>
+      <button className={`run tinted ${busy ? "tint-err" : "tint-ok"} nodrag`} onClick={() => busy ? stopNode(id) : onRun(id)} disabled={!busy && skipped}>
         {busy ? (
-          <span className="spinner" role="status" aria-label="Running" />
+          <><Icon name="stop" /> {data.loop ? "Stop loop" : "Stop step"}</>
         ) : (
           <>
-            <Icon name="play" /> Run step
+            <Icon name="play" /> {data.loop ? "Start loop" : "Run step"}
           </>
         )}
       </button>

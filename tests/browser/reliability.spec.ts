@@ -73,7 +73,7 @@ test("cancellation stops the server execution and creates no output", async ({ p
   const state = await setup(page);
   await page.getByRole("button", { name: "Run all", exact: true }).click();
   await expect.poll(() => state.executions.length).toBe(1);
-  await page.getByRole("button", { name: /Stop/ }).click();
+  await page.getByRole("button", { name: "Stop all", exact: true }).click();
   await expect.poll(() => state.cancelled.size).toBe(1);
   state.complete = true;
   await expect(page.getByRole("button", { name: "Run all", exact: true })).toBeVisible();
@@ -583,4 +583,72 @@ test("provider settings expand independently and save to their own provider", as
   await huggingface.getByRole("button", { name: "Set Base URL", exact: true }).click();
   await expect.poll(() => saved.length).toBe(2);
   expect(saved[1]).toEqual({ provider: "huggingface", baseUrl: "http://localhost:8000/v1" });
+});
+
+test("looping nodes preserve outputs and routes while another node transforms feedback", async ({ page }) => {
+  await page.setViewportSize({ width: 2000, height: 1600 });
+  const state = await setup(page);
+  const graph = seed() as any;
+  graph.nodes[0].data.loop = true;
+  state.graph = graph;
+  await page.evaluate((g) => {
+    localStorage.setItem("mnemonic.graph.v1", JSON.stringify(g));
+    localStorage.setItem("mnemonic.graph.sync.v1", JSON.stringify({ revision: 1, dirty: false }));
+  }, graph);
+  const completed = new Map<string, string>();
+  await page.route("**/api/executions/**", (route) => {
+    const parts = new URL(route.request().url()).pathname.split("/");
+    if (parts.at(-1) === "cancel") {
+      state.cancelled.add(parts.at(-2)!);
+      return route.fulfill({ json: { cancelling: true } });
+    }
+    const id = parts.at(-1)!;
+    return route.fulfill({ json: state.cancelled.has(id) ? { status: "error", error: "cancelled" }
+      : completed.has(id) ? { status: "ok", text: completed.get(id), model: "test" } : { status: "pending" } });
+  });
+  await page.reload();
+  const loop = page.locator('.react-flow__node-step[data-id="step"]');
+  await loop.getByRole("button", { name: "Start loop", exact: true }).click();
+  await expect.poll(() => state.executions.length).toBe(1);
+  await expect(page.getByRole("button", { name: "Run all", exact: true })).toHaveCount(0);
+  completed.set(state.executions[0].trace.execId, "first loop output");
+  await expect(page.locator(".react-flow__node-artifact")).toHaveCount(1);
+  await expect.poll(() => state.executions.length).toBe(2);
+  await page.getByRole("button", { name: "Add Step", exact: true }).click();
+  const transform = page.locator(".react-flow__node-step").last();
+  await transform.getByRole("textbox", { name: "Step name", exact: true }).fill("Transform");
+  await transform.locator("textarea.prompt").fill("transform this");
+  const transformId = (await transform.getAttribute("data-id"))!;
+
+  async function connect(sourceId: string, targetId: string) {
+    await page.getByRole("button", { name: "fit view", exact: true }).click();
+    const source = page.locator(`.react-flow__node[data-id="${sourceId}"] .react-flow__handle.source`);
+    const target = page.locator(`.react-flow__node[data-id="${targetId}"] .react-flow__handle.target`);
+    await source.dragTo(target);
+    await expect.poll(() => state.graph.edges.some((e: any) => e.source === sourceId && e.target === targetId)).toBe(true);
+  }
+  const firstId = (await page.locator(".react-flow__node-artifact").first().getAttribute("data-id"))!;
+  await connect(firstId, transformId);
+  await transform.getByRole("button", { name: "Run step", exact: true }).click();
+  await expect.poll(() => state.executions.length).toBe(3);
+  expect(state.executions[2].input).toContain("first loop output");
+  completed.set(state.executions[2].trace.execId, "transformed feedback");
+  await expect(page.locator(".react-flow__node-artifact")).toHaveCount(2);
+  const feedback = page.locator(".react-flow__node-artifact").filter({ hasText: "transformed feedback" });
+  const feedbackId = (await feedback.getAttribute("data-id"))!;
+  await connect(feedbackId, "step");
+  completed.set(state.executions[1].trace.execId, "second loop output");
+  await expect.poll(() => state.executions.length).toBe(4);
+  expect(state.executions[3].input).toContain("transformed feedback");
+  await expect(page.locator(".react-flow__node-artifact")).toHaveCount(3);
+  await expect.poll(() => state.graph.edges.filter((e: any) => e.target === transformId).map((e: any) => e.source)).toEqual([firstId]);
+  await loop.getByRole("button", { name: "Stop loop", exact: true }).click();
+  await expect(loop.getByRole("button", { name: "Start loop", exact: true })).toBeVisible();
+  expect(state.cancelled.has(state.executions[3].trace.execId)).toBe(true);
+  expect(state.executions.filter((e) => e.trace.nodeId === "step").map((e) => e.trace.seq)).toEqual([0, 1, 2]);
+  await expect(page.locator(".save-status")).toHaveText("Saved");
+  await page.reload();
+  await expect(page.locator(".react-flow__node-artifact")).toHaveCount(3);
+  await expect(loop.getByRole("button", { name: "Start loop", exact: true })).toBeVisible();
+  expect(state.executions).toHaveLength(4);
 });

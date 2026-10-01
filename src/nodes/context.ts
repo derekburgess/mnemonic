@@ -18,6 +18,8 @@ export type GraphActions = {
   updateOutput: (id: string, patch: Partial<OutputData>) => void;
   setSkipped: (id: string, value: boolean) => void;
   runOne: (id: string) => void;
+  stopNode: (id: string) => void;
+  activeNodeIds: string[];
   removeNode: (id: string) => void;
 };
 

@@ -584,3 +584,21 @@ node's model. It defaults to OpenAI `chat-latest`; Hugging Face local mode uses 
 model and unloads it after generation. Generation sends the editor text and instructions to
 the chosen provider and returns selectable recommendation text. It does not modify the
 editor, save configuration, execute tools, or run the node. Manually copy any desired parts.
+
+
+### Looping a node
+
+Enable **Loop node** below Max Tool Turns and Timeout, then click **Start loop**. Each iteration
+uses the node's current configuration and connected outputs, and appends new output nodes without
+moving or inheriting connections from earlier outputs. Timeout and Max Tool Turns apply separately
+to each iteration. Errors stop the loop; turning off Loop node lets the current iteration finish.
+
+While a loop runs, you can add steps, edit connections, and run other nodes independently. For
+example, connect one loop output to a transformation step, run that step, and connect its output
+back to the loop. The next iteration picks up that feedback; an already-running request keeps its
+original inputs. Connected steps do not run automatically.
+
+**Stop loop** cancels only that node. The header's **Stop all** cancels every active run. Completed
+outputs remain on the graph. Skipping or deleting a running node stops it. Refreshing recovers
+in-flight outputs but does not restart continuous looping. **Run all** remains a single pass;
+continuous execution is started explicitly with the node's **Start loop** button.

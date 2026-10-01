@@ -12,6 +12,10 @@ import {
   ReactFlowProvider,
   MarkerType,
   addEdge,
+  applyNodeChanges,
+  applyEdgeChanges,
+  type NodeChange,
+  type EdgeChange,
   reconnectEdge,
   useEdgesState,
   useNodesState,
@@ -146,8 +150,23 @@ const seed = loadSnapshot() ?? {
 };
 
 function Canvas() {
-  const [nodes, setNodes, onNodesChange] = useNodesState<GraphNode>(seed.nodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<GraphEdge>(seed.edges);
+  const [nodes, setReactNodes] = useNodesState<GraphNode>(seed.nodes);
+  const [edges, setReactEdges] = useEdgesState<GraphEdge>(seed.edges);
+  // Every graph edit updates the live snapshot synchronously so concurrent completions cannot
+  // overwrite edits queued for a later React render.
+  const live = useRef<Snapshot>({ nodes, edges });
+  const setNodes = useCallback((value: GraphNode[] | ((nodes: GraphNode[]) => GraphNode[])) => {
+    const next = typeof value === "function" ? value(live.current.nodes) : value;
+    live.current = { ...live.current, nodes: next };
+    setReactNodes(next);
+  }, [setReactNodes]);
+  const setEdges = useCallback((value: GraphEdge[] | ((edges: GraphEdge[]) => GraphEdge[])) => {
+    const next = typeof value === "function" ? value(live.current.edges) : value;
+    live.current = { ...live.current, edges: next };
+    setReactEdges(next);
+  }, [setReactEdges]);
+  const onNodesChange = useCallback((changes: NodeChange<GraphNode>[]) => setNodes((current) => applyNodeChanges(changes, current)), [setNodes]);
+  const onEdgesChange = useCallback((changes: EdgeChange<GraphEdge>[]) => setEdges((current) => applyEdgeChanges(changes, current)), [setEdges]);
   const [providerSettings, setProviderSettings] = useState<PlatformSettings | null>(null);
   const [providerModels, setProviderModels] = useState<Partial<Record<Provider, string[]>>>({});
   const defaultProvider = providerSettings?.provider ?? "openai";
@@ -167,6 +186,9 @@ function Canvas() {
   const steppedRef = useRef<string[]>([]);
   const abort = useRef<AbortController | null>(null);
   const [running, setRunning] = useState(false);
+  const nodeRuns = useRef(new Map<string, AbortController>());
+  const [activeNodeIds, setActiveNodeIds] = useState<string[]>([]);
+  const runningAny = running || activeNodeIds.length > 0;
   const pendingAtMount = useRef(pendingExecutions());
   const [notice, setNotice] = useState<string | null>(null);
   // One side panel at a time; the canvas keeps the rest of the width.
@@ -180,12 +202,6 @@ function Canvas() {
   const openSandboxConfig = useCallback((id: string) => { setSandboxNodeId(id); setPanel("sandbox"); }, []);
   const sandboxNode = nodes.find((node) => node.id === sandboxNodeId && isInput(node)) as InputNode | undefined;
 
-  // The run loop awaits between steps, so it threads a working snapshot through by hand
-  // rather than reading React state that has not committed yet.
-  const live = useRef<Snapshot>({ nodes, edges });
-  useEffect(() => {
-    live.current = { nodes, edges };
-  }, [nodes, edges]);
 
   useEffect(() => {
     steppedRef.current = stepped;
@@ -258,6 +274,18 @@ function Canvas() {
     [setNodes],
   );
 
+  const stopNode = useCallback((id: string) => {
+    nodeRuns.current.get(id)?.abort();
+    cancelPending(id).forEach((entry) => void cancelExecution(entry));
+  }, []);
+
+  useEffect(() => {
+    for (const id of nodeRuns.current.keys()) {
+      const node = nodes.find((node) => node.id === id);
+      if (!node || (isInput(node) && node.data.skipped)) stopNode(id);
+    }
+  }, [nodes, stopNode]);
+
   const removeNode = useCallback(
     (id: string) => {
       setNodes((current) => current.filter((n) => n.id !== id));
@@ -268,7 +296,7 @@ function Canvas() {
 
   /** Execute a single input node against a working snapshot and return the snapshot it produced. */
   const executeNode = useCallback(
-    async (snap: Snapshot, id: string, trace?: { runId: string; kind: "run" | "next" | "step"; seq: number }): Promise<Snapshot> => {
+    async (snap: Snapshot, id: string, trace?: { runId: string; kind: "run" | "next" | "step"; seq: number }, options: { signal?: AbortSignal; preserveRoutes?: boolean } = {}): Promise<Snapshot> => {
       const producer = snap.nodes.find((n) => n.id === id);
       if (!producer || !isInput(producer) || producer.data.skipped) return snap;
 
@@ -297,6 +325,7 @@ function Canvas() {
 
       const group = uid();
       rememberExecutions(executions.map((execution) => ({ ...execution, nodeId: id, label: producer.data.label, effort: producer.data.effort, group,
+        preserveRoutes: options.preserveRoutes,
         deadline: Date.now() + ((producer.data.timeoutSec || 300) + (producer.data.sandbox ? 720 : 60)) * 1000 })));
       const settled = await Promise.allSettled(
         executions.map((execution) =>
@@ -328,7 +357,7 @@ function Canvas() {
                   }
                 : {}),
             },
-            abort.current?.signal,
+            options.signal,
           ),
         ),
       );
@@ -339,8 +368,13 @@ function Canvas() {
       const done = settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
       const failed = settled.flatMap((r) => (r.status === "rejected" ? [r.reason as Error] : []));
 
+      // Deleting a running producer must not resurrect it or attach orphaned outputs.
+      if (!working.nodes.some((node) => node.id === id)) {
+        forgetExecutions(executions.map((e) => e.execId));
+        return working;
+      }
       const cancelled = failed.some((f) => f.message === "cancelled");
-      if (cancelled) {
+      if (cancelled && !(options.preserveRoutes && done.length)) {
         successfulExecutions.forEach((execution) => reportTraceEvent(execution, "delivery.cancelled", { reason: "fan-out cancelled before graph commit" }));
         working = patchStatus(working, id, { status: "idle", error: undefined });
       } else if (!done.length) {
@@ -361,12 +395,13 @@ function Canvas() {
               toolCalls: result.toolCalls,
               workspaceChanges: result.workspaceChanges,
             })),
+            options.preserveRoutes ? { append: true, preserveRoutes: true } : {},
           );
           committedIds = committed.outputIds;
           working = patchStatus({ nodes: committed.nodes, edges: committed.edges }, id, {
             status: "done",
             // A partial fan-out still commits what succeeded, but says what did not.
-            error: failed.length
+            error: !cancelled && failed.length
               ? `${failed.length} of ${count} generations failed: ${failed[0].message}`
               : undefined,
           });
@@ -430,7 +465,7 @@ function Canvas() {
         forgetExecutions(entries.filter((_, i) => settled[i].status === "rejected" && (settled[i] as PromiseRejectedResult).reason?.terminal).map((e) => e.execId));
         const producer = live.current.nodes.find((n) => n.id === entries[0].nodeId && isInput(n)) as InputNode | undefined;
         if (producer && results.length && !controller.signal.aborted) {
-          const committed = commitRun(live.current.nodes, live.current.edges, producer, results, { append: true });
+          const committed = commitRun(live.current.nodes, live.current.edges, producer, results, { append: true, preserveRoutes: entries.some((entry) => entry.preserveRoutes) });
           publish(patchStatus({ nodes: committed.nodes, edges: committed.edges }, producer.id, { status: "done",
             error: failures.length ? `${failures.length} executions failed; inspect Trace Logs.` : undefined }));
           localStorage.setItem(STORAGE_KEY, JSON.stringify(live.current));
@@ -451,21 +486,44 @@ function Canvas() {
 
 
   const runOne = useCallback(
-    async (id: string) => {
-      if (running) return;
-      abort.current = new AbortController();
-      setRunning(true);
+    async (id: string, trace?: { runId: string; kind: "run" | "next" | "step"; seq: number }) => {
+      if (nodeRuns.current.has(id) || pendingAtMount.current.some((entry) => entry.nodeId === id && !entry.cancelled)) return;
+      const initial = live.current.nodes.find((node) => node.id === id);
+      if (!initial || !isInput(initial) || initial.data.skipped) return;
+      const looping = !!initial.data.loop && trace?.kind !== "run";
+      const controller = new AbortController();
+      nodeRuns.current.set(id, controller);
+      setActiveNodeIds([...nodeRuns.current.keys()]);
       setNotice(null);
+      const runId = trace?.runId ?? uid();
+      let seq = trace?.seq ?? 0;
       try {
-        await executeNode(live.current, id, { runId: uid(), kind: "step", seq: 0 });
-        setStepped((s) => (s.includes(id) ? s : [...s, id]));
+        do {
+          const current = live.current.nodes.find((node) => node.id === id);
+          if (controller.signal.aborted || !current || !isInput(current) || current.data.skipped) break;
+          await executeNode(live.current, id, { runId, kind: trace?.kind ?? "step", seq: seq++ },
+            { signal: controller.signal, preserveRoutes: looping });
+          setStepped((s) => s.includes(id) ? s : [...s, id]);
+          const next = live.current.nodes.find((node) => node.id === id);
+          if (!looping || controller.signal.aborted || !next || !isInput(next) || !next.data.loop || next.data.skipped || next.data.error) break;
+          // Yield between iterations so graph edits, Stop, and other nodes remain responsive.
+          await new Promise<void>((resolve) => {
+            const done = () => { clearTimeout(timer); controller.signal.removeEventListener("abort", done); resolve(); };
+            const timer = setTimeout(done, 250);
+            controller.signal.addEventListener("abort", done, { once: true });
+          });
+        } while (!controller.signal.aborted && (live.current.nodes.find((node) => node.id === id)?.data as InputData | undefined)?.loop);
       } catch (err) {
-        setNotice(`Run failed: ${(err as Error).message}`);
+        const message = (err as Error).message;
+        publish(patchStatus(live.current, id, { status: controller.signal.aborted ? "idle" : "error",
+          error: controller.signal.aborted ? undefined : message }));
+        if (!controller.signal.aborted) setNotice(`Run failed: ${message}`);
       } finally {
-        setRunning(false);
+        nodeRuns.current.delete(id);
+        setActiveNodeIds([...nodeRuns.current.keys()]);
       }
     },
-    [executeNode, running],
+    [executeNode, publish],
   );
 
   /**
@@ -476,11 +534,12 @@ function Canvas() {
   const stopRun = useCallback(() => {
     cancelPending().forEach((entry) => void cancelExecution(entry));
     abort.current?.abort();
+    nodeRuns.current.forEach((controller) => controller.abort());
     setNotice(null);
   }, []);
 
   const runAll = useCallback(async () => {
-    if (running) return;
+    if (running || nodeRuns.current.size) return;
     const { order, cycle } = topoOrder(live.current.nodes, live.current.edges);
     if (cycle.length) {
       setNotice(`Cycle detected — ${cycle.length} step(s) can never become ready. Break the loop and retry.`);
@@ -500,10 +559,9 @@ function Canvas() {
 
     try {
       const runId = uid();
-      let snap = live.current;
       for (const [seq, id] of order.entries()) {
         if (controller.signal.aborted) break;
-        snap = await executeNode(snap, id, { runId, kind: "run", seq });
+        await runOne(id, { runId, kind: "run", seq });
         setStepped((s) => [...s, id]);
       }
     } catch (err) {
@@ -511,7 +569,7 @@ function Canvas() {
     } finally {
       setRunning(false);
     }
-  }, [executeNode, running]);
+  }, [runOne, running]);
 
   /** Centre of what the user is currently looking at, in canvas coordinates. */
   const viewportSpot = useCallback(() => {
@@ -646,8 +704,8 @@ function Canvas() {
   );
 
   const actions = useMemo(
-    () => ({ openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, runOne, removeNode, setSkipped }),
-    [openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, runOne, removeNode, setSkipped],
+    () => ({ activeNodeIds, stopNode, openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, runOne, removeNode, setSkipped }),
+    [activeNodeIds, stopNode, openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, runOne, removeNode, setSkipped],
   );
 
   return (
@@ -668,16 +726,16 @@ function Canvas() {
                 {saveState.label}
               </span>
             </div>
-            {running ? (
+            {runningAny ? (
               <button className="tinted tint-err" onClick={stopRun}>
-                <Icon name="stop" /> Stop
+                <Icon name="stop" /> Stop all
               </button>
             ) : (
               <button className="primary" onClick={runAll}>
                 <Icon name="play" /> Run all
               </button>
             )}
-            <button onClick={addStep} disabled={running}>
+            <button onClick={addStep}>
               <Icon name="page" /> Add Step
             </button>
             <button onClick={() => setPanel((p) => (p === "trace" ? null : "trace"))}>
@@ -691,6 +749,7 @@ function Canvas() {
               <input
                 type="file"
                 accept="application/json"
+                disabled={runningAny}
                 onChange={(e) => {
                   const f = e.target.files?.[0];
                   if (f) importGraph(f);
@@ -714,7 +773,7 @@ function Canvas() {
             <span className="save-status-detail">{saveState.error}</span>
             <div className="save-status-actions">
               <button onClick={() => void sync.current?.resolve("local")}>Keep local edits</button>
-              <button onClick={() => void sync.current?.resolve("remote")}>Load saved graph</button>
+              <button disabled={runningAny} onClick={() => void sync.current?.resolve("remote")}>Load saved graph</button>
             </div>
           </div>
         )}
