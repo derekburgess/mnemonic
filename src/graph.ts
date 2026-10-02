@@ -2,6 +2,7 @@ import type {
   Attachment,
   GraphEdge,
   GraphNode,
+  InputFile,
   InputNode,
   OutputData,
   OutputNode,
@@ -71,20 +72,33 @@ export function inputDependencies(nodes: GraphNode[], edges: GraphEdge[]): Map<s
   for (const e of edges) incoming.set(e.target, [...(incoming.get(e.target) ?? []), e.source]);
 
   const deps = new Map<string, Set<string>>();
-  for (const n of nodes) if (isInput(n) && !n.data.skipped) deps.set(n.id, new Set());
+  for (const n of nodes) {
+    if (isInput(n) && n.data.performInference !== false && !n.data.skipped) deps.set(n.id, new Set());
+  }
 
   for (const [id, set] of deps) {
-    for (const sourceId of incoming.get(id) ?? []) {
+    const visited = new Set<string>();
+    const visit = (sourceId: string) => {
+      if (visited.has(sourceId)) return;
+      visited.add(sourceId);
       const source = map.get(sourceId);
-      if (!source) continue;
+      if (!source) return;
 
       if (isInput(source)) {
-        if (!source.data.skipped) set.add(source.id);
+        if (source.data.skipped) return;
+        if (source.data.performInference === false) {
+          for (const upstreamId of incoming.get(source.id) ?? []) visit(upstreamId);
+        } else {
+          set.add(source.id);
+        }
       } else if (isOutput(source)) {
         const producer = map.get(source.data.sourceId);
-        if (producer && isInput(producer) && !producer.data.skipped) set.add(producer.id);
+        if (producer && isInput(producer) && producer.data.performInference !== false && !producer.data.skipped) {
+          set.add(producer.id);
+        }
       }
-    }
+    };
+    for (const sourceId of incoming.get(id) ?? []) visit(sourceId);
   }
   return deps;
 }
@@ -116,15 +130,58 @@ export function topoOrder(nodes: GraphNode[], edges: GraphEdge[]): { order: stri
 
 export type ContextBlock = { label: string; text: string };
 
+export type InheritedInput = {
+  context: ContextBlock[];
+  attachments: Attachment[];
+  files: InputFile[];
+  links: { id: string; url: string }[];
+  workspaces: { id: string; path: string }[];
+};
+
+/** Context-only input nodes flow through their own input and resources without being executed. */
+export function resolveInheritedInput(inputId: string, nodes: GraphNode[], edges: GraphEdge[]): InheritedInput {
+  const map = byId(nodes);
+  const incoming = new Map<string, string[]>();
+  for (const edge of edges) incoming.set(edge.target, [...(incoming.get(edge.target) ?? []), edge.source]);
+  const result: InheritedInput = { context: [], attachments: [], files: [], links: [], workspaces: [] };
+  const visited = new Set<string>();
+
+  const visit = (sourceId: string) => {
+    if (visited.has(sourceId)) return;
+    visited.add(sourceId);
+    const source = map.get(sourceId);
+    if (!source || source.data.skipped) return;
+
+    if (isOutput(source)) {
+      result.context.push({ label: source.data.sourceLabel, text: source.data.text });
+      return;
+    }
+    if (source.data.performInference !== false) return;
+
+    for (const upstreamId of incoming.get(source.id) ?? []) visit(upstreamId);
+    if (source.data.prompt.trim()) result.context.push({ label: source.data.label, text: source.data.prompt });
+    result.attachments.push(...(source.data.attachments ?? []));
+    result.files.push(...(source.data.files ?? []));
+    result.links.push(...(source.data.links ?? []));
+    result.workspaces.push(...(source.data.workspaces ?? []));
+  };
+
+  const direct = incoming.get(inputId) ?? [];
+  const outputIds = direct.filter((id) => {
+    const node = map.get(id);
+    return node && isOutput(node);
+  }).sort((a, b) => {
+    const left = map.get(a);
+    const right = map.get(b);
+    return left && right && isOutput(left) && isOutput(right) ? left.data.createdAt - right.data.createdAt : 0;
+  });
+  for (const sourceId of [...outputIds, ...direct.filter((id) => !outputIds.includes(id))]) visit(sourceId);
+  return result;
+}
+
 /** Everything flowing into an input node along its incoming edges, in stable visual order. */
 export function resolveContext(inputId: string, nodes: GraphNode[], edges: GraphEdge[]): ContextBlock[] {
-  const map = byId(nodes);
-  return edges
-    .filter((e) => e.target === inputId)
-    .map((e) => map.get(e.source))
-    .filter((n): n is OutputNode => !!n && isOutput(n) && !n.data.skipped)
-    .sort((a, b) => a.data.createdAt - b.data.createdAt)
-    .map((n) => ({ label: n.data.sourceLabel, text: n.data.text }));
+  return resolveInheritedInput(inputId, nodes, edges).context;
 }
 
 /** The exact string sent to the model: upstream context first, then this step's own prompt. */

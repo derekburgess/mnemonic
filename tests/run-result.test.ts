@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runStep } from "../src/api.ts";
-import { commitRun, splitThinking, resolveContext, topoOrder } from "../src/graph.ts";
+import { commitRun, splitThinking, resolveContext, resolveInheritedInput, topoOrder } from "../src/graph.ts";
 import type { InputNode } from "../src/types.ts";
 
 const args = { model: "test", effort: "off" as const, input: "test", timeoutSec: 1,
@@ -105,4 +105,43 @@ test("loop iterations append outputs without moving or inheriting manually selec
   assert.deepEqual(resolveContext(consumer.id, second.nodes, second.edges).map((c) => c.text), ["first"]);
   assert.deepEqual(resolveContext(producer.id, second.nodes, second.edges).map((c) => c.text), ["first"]);
   assert.equal(second.nodes.length, 4);
+});
+
+
+test("context-only inputs pass their prompt and resources through without being scheduled", () => {
+  const upstream = { id: "upstream", type: "step", position: { x: 0, y: 0 }, data: {
+    label: "Upstream", model: "test", effort: "off", prompt: "Run first", outputs: 1, status: "idle",
+  } } as InputNode;
+  const context = { id: "context", type: "step", position: { x: 400, y: 0 }, data: {
+    label: "Research", performInference: false, model: "unused", effort: "off", prompt: "Use these details",
+    outputs: 1, status: "idle",
+    attachments: [{ id: "skill", name: "guide.md", text: "Standing guidance" }],
+    files: [{ id: "file", name: "source.txt", mime: "text/plain", dataUrl: "data:text/plain;base64,U291cmNl" }],
+    links: [{ id: "link", url: "https://example.com" }],
+    workspaces: [{ id: "workspace", path: "/tmp/project" }],
+  } } as InputNode;
+  const consumer = { id: "consumer", type: "step", position: { x: 800, y: 0 }, data: {
+    label: "Consumer", model: "test", effort: "off", prompt: "Answer", outputs: 1, status: "idle",
+  } } as InputNode;
+  const output = { id: "output", type: "artifact", position: { x: 200, y: 0 }, data: {
+    sourceId: upstream.id, sourceLabel: upstream.data.label, model: "test", effort: "off",
+    text: "Upstream answer", createdAt: 1,
+  } } as const;
+  const nodes = [upstream, output, context, consumer];
+  const edges = [
+    { id: "one", source: output.id, target: context.id },
+    { id: "two", source: context.id, target: consumer.id },
+  ];
+
+  assert.deepEqual(topoOrder(nodes, edges).order, ["upstream", "consumer"]);
+  assert.deepEqual(resolveInheritedInput(consumer.id, nodes, edges), {
+    context: [
+      { label: "Upstream", text: "Upstream answer" },
+      { label: "Research", text: "Use these details" },
+    ],
+    attachments: context.data.attachments,
+    files: context.data.files,
+    links: context.data.links,
+    workspaces: context.data.workspaces,
+  });
 });

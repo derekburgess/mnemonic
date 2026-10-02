@@ -34,7 +34,7 @@ import {
   composePrompt,
   composeSystem,
   freeSpot,
-  resolveContext,
+  resolveInheritedInput,
   resolveTools,
   topoOrder,
   uid,
@@ -73,6 +73,7 @@ function newInput(model: string, position: { x: number; y: number }): InputNode 
     position,
     data: {
       label: "Name this step",
+      performInference: true,
       model,
       effort: "off",
       role: "",
@@ -282,7 +283,7 @@ function Canvas() {
   useEffect(() => {
     for (const id of nodeRuns.current.keys()) {
       const node = nodes.find((node) => node.id === id);
-      if (!node || (isInput(node) && node.data.skipped)) stopNode(id);
+      if (!node || (isInput(node) && (node.data.skipped || node.data.performInference === false))) stopNode(id);
     }
   }, [nodes, stopNode]);
 
@@ -298,7 +299,7 @@ function Canvas() {
   const executeNode = useCallback(
     async (snap: Snapshot, id: string, trace?: { runId: string; kind: "run" | "next" | "step"; seq: number }, options: { signal?: AbortSignal; preserveRoutes?: boolean } = {}): Promise<Snapshot> => {
       const producer = snap.nodes.find((n) => n.id === id);
-      if (!producer || !isInput(producer) || producer.data.skipped) return snap;
+      if (!producer || !isInput(producer) || producer.data.performInference === false || producer.data.skipped) return snap;
 
       if (!producer.data.prompt.trim()) {
         const next = patchStatus(snap, id, { status: "error", error: "This step has no input text.", lastExecution: undefined });
@@ -314,12 +315,13 @@ function Canvas() {
       let working = patchStatus(snap, id, { status: "running", error: undefined, lastExecution });
       publish(working);
 
-      const context = resolveContext(id, working.nodes, working.edges);
+      const inherited = resolveInheritedInput(id, working.nodes, working.edges);
+      const context = inherited.context;
       const input = composePrompt(context, producer.data.prompt);
       const instructions = composeSystem(
         producer.data.role,
         producer.data.instructions,
-        producer.data.attachments,
+        [...inherited.attachments, ...(producer.data.attachments ?? [])],
       );
       const tools = resolveTools(producer).map(toolSpec);
 
@@ -339,10 +341,10 @@ function Canvas() {
               tools,
               maxRounds: producer.data.maxRounds,
               timeoutSec: producer.data.timeoutSec,
-              files: producer.data.files?.map(({ name, mime, dataUrl }) => ({ name, mime, dataUrl })),
-              links: producer.data.links?.map((l) => l.url).filter((url) => url.trim()),
+              files: [...inherited.files, ...(producer.data.files ?? [])].map(({ name, mime, dataUrl }) => ({ name, mime, dataUrl })),
+              links: [...inherited.links, ...(producer.data.links ?? [])].map((l) => l.url).filter((url) => url.trim()),
               workspaceTools: producer.data.workspaceTools,
-              workspaces: producer.data.workspaces?.map((w) => w.path).filter((p) => p.trim()),
+              workspaces: [...inherited.workspaces, ...(producer.data.workspaces ?? [])].map((w) => w.path).filter((p) => p.trim()),
               sandbox: (producer.data.provider === "huggingface" && providerSettings?.providers?.find((p) => p.provider === "huggingface")?.runLocally) || producer.data.sandbox,
               sandboxConfig: producer.data.sandboxConfig,
               useGpu: producer.data.provider === "huggingface" && !!producer.data.useGpu,
@@ -489,7 +491,7 @@ function Canvas() {
     async (id: string, trace?: { runId: string; kind: "run" | "next" | "step"; seq: number }) => {
       if (nodeRuns.current.has(id) || pendingAtMount.current.some((entry) => entry.nodeId === id && !entry.cancelled)) return;
       const initial = live.current.nodes.find((node) => node.id === id);
-      if (!initial || !isInput(initial) || initial.data.skipped) return;
+      if (!initial || !isInput(initial) || initial.data.performInference === false || initial.data.skipped) return;
       const looping = !!initial.data.loop && trace?.kind !== "run";
       const controller = new AbortController();
       nodeRuns.current.set(id, controller);

@@ -652,3 +652,50 @@ test("looping nodes preserve outputs and routes while another node transforms fe
   await expect(loop.getByRole("button", { name: "Start loop", exact: true })).toBeVisible();
   expect(state.executions).toHaveLength(4);
 });
+
+
+test("context-only nodes hide inference controls and feed downstream runs", async ({ page }) => {
+  const state = await setup(page);
+  const graph = seed() as any;
+  graph.nodes[0].id = "inference";
+  graph.nodes[0].position = { x: 600, y: 0 };
+  graph.nodes.unshift({
+    id: "sources", type: "step", position: { x: 0, y: 0 }, data: {
+      label: "Sources", performInference: false, model: "unused", effort: "high",
+      role: "hidden role", instructions: "hidden instructions", prompt: "Research brief",
+      outputs: 3, maxRounds: 20, timeoutSec: 900, loop: true, sandbox: true,
+      tools: [{ id: "hidden-tool", label: "Hidden", kind: "web_search" }],
+      attachments: [{ id: "guide", name: "guide.md", text: "Standing guidance" }],
+      files: [{ id: "file", name: "source.txt", mime: "text/plain", dataUrl: "data:text/plain;base64,U291cmNl" }],
+      links: [{ id: "link", url: "https://example.com/source" }],
+      workspaces: [{ id: "workspace", path: "/tmp/project" }],
+      status: "idle",
+    },
+  });
+  graph.edges = [{ id: "context-edge", source: "sources", target: "inference" }];
+  state.graph = graph;
+  await page.evaluate((saved) => {
+    localStorage.setItem("mnemonic.graph.v1", JSON.stringify(saved));
+    localStorage.setItem("mnemonic.graph.sync.v1", JSON.stringify({ revision: 1, dirty: false }));
+  }, graph);
+  await page.reload();
+
+  const source = page.locator('.react-flow__node-step:has(input[aria-label="Step name"][value="Sources"])');
+  await expect(source.getByRole("checkbox", { name: "Perform inference" })).not.toBeChecked();
+  await expect(source.getByRole("combobox", { name: "Provider", exact: true })).toHaveCount(0);
+  await expect(source.getByText("Role", { exact: true })).toHaveCount(0);
+  await expect(source.getByText(/Tools \(/)).toHaveCount(0);
+  await expect(source.getByRole("button", { name: "Run step", exact: true })).toHaveCount(0);
+  await expect(source.locator("textarea.prompt")).toHaveValue("Research brief");
+  await expect(source.getByRole("button", { name: "Add workspace", exact: true })).toBeVisible();
+  await expect(source.getByRole("button", { name: "Add links", exact: true })).toBeVisible();
+
+  state.complete = true;
+  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  await expect.poll(() => state.executions.length).toBe(1);
+  expect(state.executions[0].input).toBe('<context from="Sources">\nResearch brief\n</context>\n\nMake an output');
+  expect(state.executions[0].instructions).toContain('<document name="guide.md">\nStanding guidance\n</document>');
+  expect(state.executions[0].files).toEqual([{ name: "source.txt", mime: "text/plain", dataUrl: "data:text/plain;base64,U291cmNl" }]);
+  expect(state.executions[0].links).toEqual(["https://example.com/source"]);
+  expect(state.executions[0].workspaces).toEqual(["/tmp/project"]);
+});

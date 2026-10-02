@@ -34,6 +34,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
   const providerNames = { openai: "OpenAI", compatible: "OpenAI-compatible", huggingface: "Hugging Face" };
   const busy = activeNodeIds.includes(id) || data.status === "running";
   const skipped = !!data.skipped;
+  const performInference = data.performInference !== false;
   const current = currentId === id;
   const { field } = useFieldWidth();
   /** Rows waiting on the proxy to locate the folder the dialog just returned. */
@@ -166,6 +167,15 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         <DeleteButton onClick={() => onDelete(id)} title="Delete step" />
       </header>
 
+      <div className="sandbox-row loop-controls nodrag">
+        <label className="sandbox-control">
+          <span className="skip sandbox"><input type="checkbox" checked={performInference}
+            onChange={(e) => onChange(id, { performInference: e.target.checked })} /><span className="track" aria-hidden="true" /></span>
+          <span>Perform inference</span>
+        </label>
+      </div>
+
+      {performInference && <>
       <div className="row">
         <label>
           Provider
@@ -274,6 +284,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
           <span>Loop node</span>
         </label>
       </div>
+      </>}
 
       <div className="stack">
         <button
@@ -395,16 +406,16 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         ))}
       </div>
 
-      <label className="stack">
+      {performInference && <label className="stack">
         Role
         <input
           className="line nodrag"
           value={data.role ?? ""}
           onChange={(e) => onChange(id, { role: e.target.value })}
         />
-      </label>
+      </label>}
 
-      <label className="stack">
+      {performInference && <label className="stack">
         Instructions (System Prompt + Role)
         <div className="field">
           <textarea
@@ -415,7 +426,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
           />
           <CopyButton text={data.instructions ?? ""} title="Copy instructions" />
         </div>
-      </label>
+      </label>}
 
       <label className="stack">
         Input
@@ -430,6 +441,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         </div>
       </label>
 
+      {performInference && <>
       <div className="tools">
         <div className="tools-head">
           <span>Tools ({tools.length + (workspaces.some((w) => w.path.trim()) ? WORKSPACE_TOOLS.length : 0)})</span>
@@ -481,6 +493,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
           </>
         )}
       </button>
+      </>}
 
       <Handle type="source" position={Position.Right} />
     </div>
