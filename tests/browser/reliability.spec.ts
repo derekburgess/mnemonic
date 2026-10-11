@@ -87,6 +87,39 @@ test("input nodes collapse to their name and primary actions and persist", async
   await expect(node.getByText("Perform inference", { exact: true })).toBeVisible();
 });
 
+test("edges use orthogonal routes and backward edges clear node bodies", async ({ page }) => {
+  const state = await setup(page);
+  const graph = seed() as any;
+  graph.nodes[0].id = "left";
+  graph.nodes[0].position = { x: 0, y: 300 };
+  graph.nodes.push({ ...structuredClone(graph.nodes[0]), id: "right", position: { x: 700, y: 300 } });
+  graph.edges = [
+    { id: "forward", source: "left", target: "right" },
+    { id: "backward", source: "right", target: "left" },
+  ];
+  state.graph = graph;
+  await page.evaluate((saved) => {
+    localStorage.setItem("mnemonic.graph.v1", JSON.stringify(saved));
+    localStorage.setItem("mnemonic.graph.sync.v1", JSON.stringify({ revision: 1, dirty: false }));
+  }, graph);
+  await page.reload();
+
+  const forward = page.getByTestId("rf__edge-forward").locator(".react-flow__edge-path");
+  const backward = page.getByTestId("rf__edge-backward").locator(".react-flow__edge-path");
+  await expect(forward).toHaveCount(1);
+  await expect(backward).toHaveCount(1);
+  await expect.poll(async () => (await forward.getAttribute("d"))?.includes("L")).toBe(true);
+  expect(await forward.getAttribute("d")).not.toContain("C");
+  await expect.poll(async () => (await backward.getAttribute("d"))?.includes("Q")).toBe(true);
+
+  const nodeHeight = await page.locator('.react-flow__node-step[data-id="right"]').evaluate((node) => (node as HTMLElement).offsetHeight);
+  const bounds = await backward.evaluate((path) => {
+    const box = (path as SVGGraphicsElement).getBBox();
+    return { y: box.y, height: box.height };
+  });
+  expect(bounds.y + bounds.height).toBeGreaterThan(300 + nodeHeight + 40);
+});
+
 test("refresh recovers pending output exactly once", async ({ page }) => {
   const state = await setup(page);
   await runStep(page);

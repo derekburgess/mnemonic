@@ -1,4 +1,5 @@
 import { WorkspaceChangesPanel } from "./WorkspaceChangesPanel";
+import { AdaptiveEdge } from "./AdaptiveEdge";
 import { SandboxConfigPanel } from "./SandboxConfigPanel";
 import { GraphSync, type SaveState } from "./graphSync";
 import { rememberExecutions, pendingExecutions, forgetExecutions, cancelPending } from "./pendingExecutions";
@@ -54,6 +55,7 @@ import {
 } from "./types";
 
 const nodeTypes = { step: InputNodeView, artifact: OutputNodeView };
+const edgeTypes = { adaptive: AdaptiveEdge };
 
 /** Edges are directed and that direction decides run order, so every edge shows an arrowhead. */
 const MARKER = { type: MarkerType.ArrowClosed, width: 18, height: 18, color: "#8b93a3" };
@@ -661,7 +663,7 @@ function Canvas() {
 
   // Applied at render rather than on creation, so edges made anywhere - by hand, by a run, or
   // loaded from an older graph - all show direction, and the marker stays out of exported JSON.
-  const shownEdges = useMemo(() => edges.map((e) => ({ ...e, markerEnd: MARKER })), [edges]);
+  const shownEdges = useMemo(() => edges.map((e) => ({ ...e, type: "adaptive", markerEnd: MARKER })), [edges]);
 
   /** The schedule: edges decide it, position only breaks ties between independent steps. */
   const runOrder = useMemo(() => topoOrder(nodes, edges).order, [nodes, edges]);
@@ -763,6 +765,7 @@ function Canvas() {
               onReconnectEnd={onReconnectEnd}
               isValidConnection={isValidConnection}
               nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
               fitView
               proOptions={{ hideAttribution: false }}
             >
