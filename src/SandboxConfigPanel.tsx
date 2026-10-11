@@ -1,10 +1,10 @@
 import { ResizablePanel } from "./ResizablePanel";
-import { useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Markdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type { InputNode } from "./types";
-import type { Provider } from "./api";
+import { fetchSandboxStatus, type Provider, type SandboxStatus } from "./api";
 import { defaultSandboxText } from "./sandboxConfig";
 import { useGraphActions } from "./nodes/context";
 import { Icon } from "./icons";
@@ -15,13 +15,22 @@ const subscribe = (listener: () => void) => { listeners.add(listener); return ()
 const changed = () => listeners.forEach((listener) => listener());
 
 export function SandboxConfigPanel({ node, onClose }: { node: InputNode; onClose: () => void }) {
-  const { updateInput, providerModels } = useGraphActions();
+  const { updateInput, providerModels, providerSettings, defaultProvider } = useGraphActions();
   const state = node.data.sandboxPanel ?? {};
   const draft = state.draft ?? node.data.sandboxConfig ?? defaultSandboxText;
   const provider = state.provider ?? "openai";
   const model = state.model ?? "chat-latest";
   const models = [...new Set([model, ...(providerModels[provider] ?? [])])].filter(Boolean);
   const busy = useSyncExternalStore(subscribe, () => pending.has(node.id));
+  const [sandboxStatus, setSandboxStatus] = useState<SandboxStatus | null>(null);
+  const nodeProvider = node.data.provider ?? defaultProvider;
+  const localModelsRequired = nodeProvider === "huggingface" && !!providerSettings?.providers?.find((entry) => entry.provider === nodeProvider)?.runLocally;
+  const sandboxEnabled = localModelsRequired || !!node.data.sandbox;
+  useEffect(() => {
+    let live = true;
+    void fetchSandboxStatus().then((status) => { if (live) setSandboxStatus(status); });
+    return () => { live = false; };
+  }, []);
   const patch = (values: Partial<NonNullable<typeof node.data.sandboxPanel>>) => updateInput(node.id,
     (data) => ({ sandboxPanel: { ...data.sandboxPanel, ...values } }));
   let parseError = "";
@@ -51,6 +60,15 @@ export function SandboxConfigPanel({ node, onClose }: { node: InputNode; onClose
       <button className="tinted tint-err" onClick={onClose} aria-label="Close"><Icon name="close" /></button>
     </header>
     <div className="trace-list">
+      <label className="sandbox-control sandbox-panel-toggle">
+        <span>Use GPU</span>
+        <span className="skip sandbox">
+          <input type="checkbox" checked={!!node.data.useGpu}
+            disabled={!sandboxEnabled || sandboxStatus?.gpuSupported === false}
+            onChange={(e) => updateInput(node.id, { useGpu: e.target.checked })} />
+          <span className="track" aria-hidden="true" />
+        </span>
+      </label>
       <label className="stack">Configuration
         <textarea className="sandbox-config-text" spellCheck={false} value={draft}
           onChange={(e) => patch({ draft: e.target.value })} />

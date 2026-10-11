@@ -1155,6 +1155,7 @@ body.resizing-col { cursor: col-resize; user-select: none; }
 .sandbox-main-row { display: flex; align-items: center; gap: 4px; width: 100%; }
 .sandbox-main-control { flex: 1; justify-content: space-between; min-width: 0; }
 .sandbox-config-open { width: 24px; height: 24px; padding: 0; }
+.sandbox-panel-toggle { justify-content: space-between; width: 100%; }
 .sandbox-config-panel .trace-list { display: flex; flex-direction: column; gap: 12px; }
 .sandbox-config-panel textarea { width: 100%; resize: vertical; min-height: 80px; }
 .sandbox-config-panel .sandbox-config-text { min-height: 260px; font-family: ui-monospace, monospace; font-size: 12px; white-space: pre; overflow: auto; }

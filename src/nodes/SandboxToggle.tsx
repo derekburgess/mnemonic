@@ -11,7 +11,7 @@ import { fetchSandboxStatus, type SandboxStatus } from "../api";
 let asked: Promise<SandboxStatus> | null = null;
 const sandboxStatus = () => (asked ??= fetchSandboxStatus().finally(() => { asked = null; }));
 
-export function SandboxToggle({ onConfigure, on, onChange, required = false, useGpu = false, onGpuChange }: { onConfigure: () => void; useGpu?: boolean; onGpuChange: (v: boolean) => void; on: boolean; required?: boolean; onChange: (v: boolean) => void }) {
+export function SandboxToggle({ onConfigure, on, onChange, required = false }: { onConfigure: () => void; on: boolean; required?: boolean; onChange: (v: boolean) => void }) {
   const [status, setStatus] = useState<SandboxStatus | null>(null);
 
   useEffect(() => {
@@ -49,14 +49,6 @@ export function SandboxToggle({ onConfigure, on, onChange, required = false, use
           <button className="icon sandbox-config-open" aria-label="Sandbox configuration" onClick={onConfigure}><Icon name="gear" size={13} /></button>
         </div>
 
-        {required && <label className="sandbox-control">
-          <span className="skip sandbox">
-            <input type="checkbox" checked={useGpu} disabled={!on || status?.gpuSupported === false}
-              onChange={(e) => onGpuChange(e.target.checked)} />
-            <span className="track" aria-hidden="true" />
-          </span>
-          <span>Use GPU</span>
-        </label>}
       </div>
 
       {/* A step that asked to be contained and cannot be will fail rather than quietly run on

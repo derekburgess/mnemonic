@@ -163,7 +163,7 @@ test("a newer remote revision cannot overwrite local edits silently", async ({ p
 });
 
 test("local models force container switches on and unlock them when disabled", async ({ page }) => {
-  await setup(page);
+  const state = await setup(page);
   let settings = { provider: "huggingface", runLocally: true, keySource: "none", baseUrl: "", hasPanelKey: false };
   await page.route("**/api/settings*", async (route) => {
     if (route.request().method() === "POST") settings = { ...settings, ...route.request().postDataJSON() };
@@ -178,13 +178,18 @@ test("local models force container switches on and unlock them when disabled", a
   await expect(switches).toHaveCount(2);
   await expect(switches.nth(1)).toBeChecked();
   await expect(switches.nth(1)).toBeDisabled();
-  const gpu = page.getByRole("checkbox", { name: "Use GPU", exact: true });
-  await expect(gpu).toHaveCount(2);
-  await expect(gpu.first()).not.toBeChecked();
-  await gpu.first().press("Space");
-  await expect(gpu.first()).toBeChecked();
-  await expect(gpu.nth(1)).not.toBeChecked();
-  await expect(page.locator(".sandbox-controls").first().getByRole("checkbox")).toHaveCount(2);
+  await expect(page.getByRole("checkbox", { name: "Use GPU", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Sandbox configuration", exact: true }).first().click();
+  const panel = page.getByRole("complementary", { name: "Sandbox Configuration" });
+  const gpu = panel.getByRole("checkbox", { name: "Use GPU", exact: true });
+  await expect(gpu).not.toBeChecked();
+  await gpu.press("Space");
+  await expect(gpu).toBeChecked();
+  await expect.poll(() => state.graph.nodes[0].data.useGpu).toBe(true);
+  await expect(panel.locator(".trace-list > label").first()).toContainText("Use GPU");
+  await expect(panel.locator(".trace-list > label").nth(1)).toContainText("Configuration");
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.locator(".sandbox-controls").first().getByRole("checkbox")).toHaveCount(1);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.locator(".provider-settings > summary").filter({ hasText: "Hugging Face" }).click();
   await page.getByRole("checkbox", { name: "Download and run models locally" }).press("Space");

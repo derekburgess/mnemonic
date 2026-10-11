@@ -490,7 +490,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         ))}
       </div>
 
-      <SandboxToggle onConfigure={() => openSandboxConfig(id)} useGpu={!!data.useGpu} onGpuChange={(v) => onChange(id, { useGpu: v })} required={localModelsRequired} on={localModelsRequired || !!data.sandbox} onChange={(v) => onChange(id, { sandbox: v })} />
+      <SandboxToggle onConfigure={() => openSandboxConfig(id)} required={localModelsRequired} on={localModelsRequired || !!data.sandbox} onChange={(v) => onChange(id, { sandbox: v })} />
       {(localModelsRequired || data.sandbox) && <SandboxRunStatus data={data} />}
 
       {data.error && <p className="error nodrag">{data.error}</p>}
