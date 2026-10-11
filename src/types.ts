@@ -5,6 +5,8 @@ export type Effort = "off" | "minimal" | "low" | "medium" | "high";
 export type NodeStatus = "idle" | "running" | "done" | "error";
 
 export type InputData = {
+  /** Whether the node is shown as only its title and primary actions. */
+  collapsed?: boolean;
   /** When false, this node contributes context and resources downstream without invoking a model. */
   performInference?: boolean;
   provider?: import("./api").Provider;

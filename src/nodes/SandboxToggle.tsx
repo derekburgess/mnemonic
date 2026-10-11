@@ -30,31 +30,33 @@ export function SandboxToggle({ onConfigure, on, onChange, required = false, use
   return (
     <div className="stack">
       <div className="sandbox-row sandbox-controls nodrag">
-      <button className="icon sandbox-config-open" aria-label="Sandbox configuration" onClick={onConfigure}><Icon name="gear" size={13} /></button>
-      <label
-        className={`sandbox-control${on ? " on" : ""}${locked ? " locked" : ""}`}
-        title="Required for running local models."
-      >
-        <span className="skip sandbox">
-          <input
-            type="checkbox"
-            checked={on}
-            disabled={locked}
-            onChange={(e) => onChange(e.target.checked)}
-          />
-          <span className="track" aria-hidden="true" />
-        </span>
-        <span>Run in a sandbox</span>
-      </label>
+        <div className="sandbox-main-row">
+          <label
+            className={`sandbox-control sandbox-main-control${on ? " on" : ""}${locked ? " locked" : ""}`}
+            title="Required for running local models."
+          >
+            <span>Run in a sandbox</span>
+            <span className="skip sandbox">
+              <input
+                type="checkbox"
+                checked={on}
+                disabled={locked}
+                onChange={(e) => onChange(e.target.checked)}
+              />
+              <span className="track" aria-hidden="true" />
+            </span>
+          </label>
+          <button className="icon sandbox-config-open" aria-label="Sandbox configuration" onClick={onConfigure}><Icon name="gear" size={13} /></button>
+        </div>
 
-      {required && <label className="sandbox-control">
-        <span className="skip sandbox">
-          <input type="checkbox" checked={useGpu} disabled={!on || status?.gpuSupported === false}
-            onChange={(e) => onGpuChange(e.target.checked)} />
-          <span className="track" aria-hidden="true" />
-        </span>
-        <span>Use GPU</span>
-      </label>}
+        {required && <label className="sandbox-control">
+          <span className="skip sandbox">
+            <input type="checkbox" checked={useGpu} disabled={!on || status?.gpuSupported === false}
+              onChange={(e) => onGpuChange(e.target.checked)} />
+            <span className="track" aria-hidden="true" />
+          </span>
+          <span>Use GPU</span>
+        </label>}
       </div>
 
       {/* A step that asked to be contained and cannot be will fail rather than quietly run on

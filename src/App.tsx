@@ -540,39 +540,6 @@ function Canvas() {
     setNotice(null);
   }, []);
 
-  const runAll = useCallback(async () => {
-    if (running || nodeRuns.current.size) return;
-    const { order, cycle } = topoOrder(live.current.nodes, live.current.edges);
-    if (cycle.length) {
-      setNotice(`Cycle detected — ${cycle.length} step(s) can never become ready. Break the loop and retry.`);
-      return;
-    }
-    if (!order.length) {
-      setNotice("Nothing to run — add a step first.");
-      return;
-    }
-
-    // Held locally so a later run replacing abort.current cannot make this loop miss its stop.
-    const controller = new AbortController();
-    abort.current = controller;
-    setRunning(true);
-    setNotice(null);
-    setStepped([]);
-
-    try {
-      const runId = uid();
-      for (const [seq, id] of order.entries()) {
-        if (controller.signal.aborted) break;
-        await runOne(id, { runId, kind: "run", seq });
-        setStepped((s) => [...s, id]);
-      }
-    } catch (err) {
-      setNotice(`Run failed: ${(err as Error).message}`);
-    } finally {
-      setRunning(false);
-    }
-  }, [runOne, running]);
-
   /** Centre of what the user is currently looking at, in canvas coordinates. */
   const viewportSpot = useCallback(() => {
     const rect = wrapper.current?.getBoundingClientRect();
@@ -728,13 +695,9 @@ function Canvas() {
                 {saveState.label}
               </span>
             </div>
-            {runningAny ? (
+            {runningAny && (
               <button className="tinted tint-err" onClick={stopRun}>
                 <Icon name="stop" /> Stop all
-              </button>
-            ) : (
-              <button className="primary" onClick={runAll}>
-                <Icon name="play" /> Run all
               </button>
             )}
             <button onClick={addStep}>

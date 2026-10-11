@@ -60,16 +60,21 @@ export function ToolEditor({
   return (
     <div className="tool">
       <header className="tool-head">
-        <button className="tool-toggle nodrag" onClick={() => setOpen((v) => !v)}>
-          <span className={`caret${open ? " open" : ""}`}>›</span>
-          <input
-            className="label nodrag"
-            value={tool.label}
-            onClick={(e) => e.stopPropagation()}
-            onChange={(e) => onChange({ label: e.target.value })}
-            aria-label="Tool name"
-          />
+        <button
+          className={`icon collapse-toggle tool-collapse-toggle nodrag${open ? " open" : ""}`}
+          onClick={() => setOpen((v) => !v)}
+          title={open ? "Collapse tool" : "Expand tool"}
+          aria-label={open ? "Collapse tool" : "Expand tool"}
+          aria-expanded={open}
+        >
+          <Icon name="chevron" size={13} />
         </button>
+        <input
+          className="label nodrag"
+          value={tool.label}
+          onChange={(e) => onChange({ label: e.target.value })}
+          aria-label="Tool name"
+        />
         <ToolEnabledToggle name={tool.label} enabled={tool.enabled !== false} onChange={(enabled) => onChange({ enabled })} />
         <DeleteButton onClick={onRemove} title="Remove tool" />
       </header>

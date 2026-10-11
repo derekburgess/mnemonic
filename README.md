@@ -600,5 +600,5 @@ original inputs. Connected steps do not run automatically.
 
 **Stop loop** cancels only that node. The header's **Stop all** cancels every active run. Completed
 outputs remain on the graph. Skipping or deleting a running node stops it. Refreshing recovers
-in-flight outputs but does not restart continuous looping. **Run all** remains a single pass;
-continuous execution is started explicitly with the node's **Start loop** button.
+in-flight outputs but does not restart continuous looping. Continuous execution is started
+explicitly with the node's **Start loop** button.

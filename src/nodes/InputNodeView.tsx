@@ -34,6 +34,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
   const providerNames = { openai: "OpenAI", compatible: "OpenAI-compatible", huggingface: "Hugging Face" };
   const busy = activeNodeIds.includes(id) || data.status === "running";
   const skipped = !!data.skipped;
+  const collapsed = !!data.collapsed;
   const performInference = data.performInference !== false;
   const current = currentId === id;
   const { field } = useFieldWidth();
@@ -152,10 +153,19 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
     setTools(tools.map((t) => (t.id === toolId ? { ...t, ...patch } : t)));
 
   return (
-    <div className={`node input${current ? " current" : ""} status-${data.status}${skipped ? " skipped" : ""}`}>
+    <div className={`node input${current ? " current" : ""} status-${data.status}${skipped ? " skipped" : ""}${collapsed ? " collapsed" : ""}`}>
       <Handle type="target" position={Position.Left} />
 
       <header className="node-head">
+        <button
+          className="icon collapse-toggle nodrag"
+          onClick={() => onChange(id, { collapsed: !collapsed })}
+          title={collapsed ? "Expand step" : "Collapse step"}
+          aria-label={collapsed ? "Expand step" : "Collapse step"}
+          aria-expanded={!collapsed}
+        >
+          <Icon name="chevron" size={13} />
+        </button>
         <input
           className={`label nodrag${data.label === "Name this step" ? " unnamed" : ""}`}
           placeholder="Name this step"
@@ -163,10 +173,11 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
           onChange={(e) => onChange(id, { label: e.target.value })}
           aria-label="Step name"
         />
-        <SkipToggle on={skipped} onChange={(v) => setSkipped(id, v)} title="Skip this node" />
+        <SkipToggle accent on={!skipped} onChange={(active) => setSkipped(id, !active)} title="Node active — turn off to skip" />
         <DeleteButton onClick={() => onDelete(id)} title="Delete step" />
       </header>
 
+      {!collapsed && <>
       <div className="sandbox-row loop-controls nodrag">
         <label className="sandbox-control">
           <span className="skip sandbox"><input type="checkbox" checked={performInference}
@@ -484,7 +495,10 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
 
       {data.error && <p className="error nodrag">{data.error}</p>}
 
-      <button className={`run tinted ${busy ? "tint-err" : "tint-ok"} nodrag`} onClick={() => busy ? stopNode(id) : onRun(id)} disabled={!busy && skipped}>
+      </>}
+      </>}
+
+      {performInference && <button className={`run tinted ${busy ? "tint-err" : "tint-ok"} nodrag`} onClick={() => busy ? stopNode(id) : onRun(id)} disabled={!busy && skipped}>
         {busy ? (
           <><Icon name="stop" /> {data.loop ? "Stop loop" : "Stop step"}</>
         ) : (
@@ -492,8 +506,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
             <Icon name="play" /> {data.loop ? "Start loop" : "Run step"}
           </>
         )}
-      </button>
-      </>}
+      </button>}
 
       <Handle type="source" position={Position.Right} />
     </div>

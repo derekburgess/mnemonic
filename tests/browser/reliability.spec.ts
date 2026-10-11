@@ -56,9 +56,40 @@ async function setup(page: Page, outputs = 1) {
   return state;
 }
 
+async function runStep(page: Page) {
+  await page.getByRole("button", { name: "Run step", exact: true }).click();
+}
+
+test("input nodes collapse to their name and primary actions and persist", async ({ page }) => {
+  const state = await setup(page);
+  const node = page.locator('.react-flow__node-step[data-id="step"]');
+
+  await node.getByRole("button", { name: "Collapse step", exact: true }).click();
+  await expect(node.getByRole("button", { name: "Expand step", exact: true })).toHaveAttribute("aria-expanded", "false");
+  await expect(node.getByRole("textbox", { name: "Step name", exact: true })).toBeVisible();
+  await expect(node.getByRole("button", { name: "Run step", exact: true })).toBeVisible();
+  const activeControl = node.getByTitle("Node active — turn off to skip");
+  const activeToggle = activeControl.getByRole("checkbox");
+  await expect(activeToggle).toBeChecked();
+  await activeControl.click();
+  await expect.poll(() => state.graph.nodes[0].data.skipped).toBe(true);
+  await expect(node.getByRole("button", { name: "Run step", exact: true })).toBeDisabled();
+  await activeControl.click();
+  await expect.poll(() => state.graph.nodes[0].data.skipped).toBe(false);
+  await expect(node.getByRole("button", { name: "Delete step", exact: true })).toBeVisible();
+  await expect(node.getByText("Perform inference", { exact: true })).toHaveCount(0);
+  await expect(node.locator("textarea")).toHaveCount(0);
+  await expect.poll(() => state.graph.nodes[0].data.collapsed).toBe(true);
+
+  await page.reload();
+  await expect(node.getByRole("button", { name: "Expand step", exact: true })).toBeVisible();
+  await node.getByRole("button", { name: "Expand step", exact: true }).click();
+  await expect(node.getByText("Perform inference", { exact: true })).toBeVisible();
+});
+
 test("refresh recovers pending output exactly once", async ({ page }) => {
   const state = await setup(page);
-  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  await runStep(page);
   await expect.poll(() => state.executions.length).toBe(1);
   await page.reload();
   state.complete = true;
@@ -71,19 +102,20 @@ test("refresh recovers pending output exactly once", async ({ page }) => {
 
 test("cancellation stops the server execution and creates no output", async ({ page }) => {
   const state = await setup(page);
-  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  await runStep(page);
   await expect.poll(() => state.executions.length).toBe(1);
   await page.getByRole("button", { name: "Stop all", exact: true }).click();
   await expect.poll(() => state.cancelled.size).toBe(1);
   state.complete = true;
-  await expect(page.getByRole("button", { name: "Run all", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Run step", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Run all", exact: true })).toHaveCount(0);
   await expect(page.locator(".react-flow__node-artifact")).toHaveCount(0);
 });
 
 test("a completed output survives refresh before graph autosave succeeds", async ({ page }) => {
   const state = await setup(page);
   state.complete = true; state.offline = true;
-  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  await runStep(page);
   await expect(page.locator(".react-flow__node-artifact")).toHaveCount(1);
   await page.reload();
   await expect(page.locator(".react-flow__node-artifact")).toHaveCount(1);
@@ -94,7 +126,7 @@ test("a completed output survives refresh before graph autosave succeeds", async
 
 test("partial fan-out keeps the successful output", async ({ page }) => {
   const state = await setup(page, 2); state.complete = true; state.partial = true;
-  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  await runStep(page);
   await expect(page.locator(".react-flow__node-artifact")).toHaveCount(1);
   await expect(page.getByText(/1 of 2 generations failed/)).toBeVisible();
 });
@@ -205,7 +237,7 @@ test("tagged thinking appears between the step and answer with visible tags", as
   await page.route("**/api/executions/**", (route) => route.fulfill({ json: {
     status: "ok", text: "<think>Keep these tags.</think>\n\nHello!", model: "test",
   } }));
-  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  await runStep(page);
   const artifacts = page.locator(".react-flow__node-artifact");
   await expect(artifacts).toHaveCount(2);
   const thinking = artifacts.filter({ hasText: "<think>Keep these tags.</think>" });
@@ -246,7 +278,8 @@ test("node provider selection filters models, persists, and routes execution", a
   await expect(second.getByRole("combobox", { name: "Provider", exact: true })).toHaveValue("openai");
   await second.locator("textarea.prompt").fill("Another provider");
   state.complete = true;
-  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  await node.getByRole("button", { name: "Run step", exact: true }).click();
+  await second.getByRole("button", { name: "Run step", exact: true }).click();
   await expect.poll(() => state.executions.length).toBe(2);
   expect(state.executions.map((e) => [e.provider, e.model])).toEqual([
     ["compatible", "local-model"], ["openai", "test"],
@@ -386,7 +419,7 @@ test("sandbox editor preserves drafts and recommendations without running or app
   expect(state.executions).toHaveLength(0);
   await panel.getByRole("button", { name: "Close", exact: true }).click();
   state.complete = true;
-  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  await runStep(page);
   await expect.poll(() => state.executions.length).toBe(1);
   expect(state.executions[0].sandboxConfig).toBe(saved);
 });
@@ -466,7 +499,7 @@ test("per-node tool switches persist and are sent with runs", async ({ page }) =
   await page.reload();
   await expect(page.getByLabel("Enable workspace_write", { exact: true })).not.toBeChecked();
   await expect(page.getByLabel("Enable Example", { exact: true })).not.toBeChecked();
-  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  await runStep(page);
   await expect.poll(() => state.executions.length).toBe(1);
   expect(state.executions[0].workspaceTools.workspace_write).toBe(false);
   expect(state.executions[0].tools[0].enabled).toBe(false);
@@ -490,7 +523,7 @@ test("sandbox changes track partial acceptance and completion across refresh", a
     }
     return route.fulfill({ json: proposal });
   });
-  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  await runStep(page);
   await expect(page.getByRole("button", { name: "Review changes (2)", exact: true })).toBeVisible();
   await expect(page.locator(".save-status")).toHaveText("Saved");
   await page.reload();
@@ -542,7 +575,7 @@ test("external provider sandbox remains selectable after a failed availability c
   await toggle.press("Space");
   await expect.poll(() => checks).toBeGreaterThan(before);
   await expect(page.getByText("Docker is starting.", { exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  await runStep(page);
   await expect.poll(() => state.executions.length).toBe(1);
   expect(state.executions[0].sandbox).toBe(true);
 });
@@ -691,7 +724,7 @@ test("context-only nodes hide inference controls and feed downstream runs", asyn
   await expect(source.getByRole("button", { name: "Add links", exact: true })).toBeVisible();
 
   state.complete = true;
-  await page.getByRole("button", { name: "Run all", exact: true }).click();
+  await runStep(page);
   await expect.poll(() => state.executions.length).toBe(1);
   expect(state.executions[0].input).toBe('<context from="Sources">\nResearch brief\n</context>\n\nMake an output');
   expect(state.executions[0].instructions).toContain('<document name="guide.md">\nStanding guidance\n</document>');
