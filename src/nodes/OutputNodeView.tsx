@@ -74,7 +74,7 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
             {data.edited && " · edited"}
           </span>
         </div>
-        <SkipToggle on={skipped} onChange={(v) => setSkipped(id, v)} title="Skip this node" />
+        <SkipToggle accent on={!skipped} onChange={(active) => setSkipped(id, !active)} title="Node active — turn off to skip" />
         <DeleteButton onClick={() => onDelete(id)} title="Delete output" />
       </header>
 

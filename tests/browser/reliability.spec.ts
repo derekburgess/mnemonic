@@ -127,8 +127,13 @@ test("a completed output survives refresh before graph autosave succeeds", async
 test("partial fan-out keeps the successful output", async ({ page }) => {
   const state = await setup(page, 2); state.complete = true; state.partial = true;
   await runStep(page);
-  await expect(page.locator(".react-flow__node-artifact")).toHaveCount(1);
+  const output = page.locator(".react-flow__node-artifact");
+  await expect(output).toHaveCount(1);
   await expect(page.getByText(/1 of 2 generations failed/)).toBeVisible();
+  const activeControl = output.getByTitle("Node active — turn off to skip");
+  await expect(activeControl.getByRole("checkbox")).toBeChecked();
+  await activeControl.click();
+  await expect.poll(() => state.graph.nodes.find((node: any) => node.type === "artifact")?.data.skipped).toBe(true);
 });
 
 test("saved trace output can be added manually without duplicates", async ({ page }) => {
