@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runStep } from "../src/api.ts";
-import { commitRun, splitThinking, resolveContext, resolveInheritedInput, topoOrder } from "../src/graph.ts";
-import type { InputNode } from "../src/types.ts";
+import { commitRun, composePrompt, splitThinking, resolveContext, resolveInheritedInput, topoOrder } from "../src/graph.ts";
+import type { CommentNode, InputNode } from "../src/types.ts";
 
 const args = { model: "test", effort: "off" as const, input: "test", timeoutSec: 1,
   trace: { runId: "run", execId: "exec", kind: "step" as const, seq: 0, nodeId: "step", label: "Step", context: [] } };
@@ -201,4 +201,22 @@ test("context-only inputs pass their prompt and resources through without being 
     links: context.data.links,
     workspaces: context.data.workspaces,
   });
+});
+
+test("comments contribute attributed context without becoming scheduled steps", () => {
+  const comment = { id: "comment", type: "comment", position: { x: 0, y: 0 }, data: {
+    author: "Ada", text: "Check the **assumptions**.", createdAt: 1,
+  } } as CommentNode;
+  const consumer = { id: "consumer", type: "step", position: { x: 500, y: 0 }, data: {
+    label: "Consumer", model: "test", effort: "off", prompt: "Revise", outputs: 1, status: "idle",
+  } } as InputNode;
+  const nodes = [comment, consumer];
+  const edges = [{ id: "context", source: comment.id, target: consumer.id }];
+
+  assert.deepEqual(topoOrder(nodes, edges), { order: [consumer.id], cycle: [] });
+  assert.deepEqual(resolveContext(consumer.id, nodes, edges), [
+    { label: "Ada", text: "Check the **assumptions**." },
+  ]);
+  assert.equal(composePrompt(resolveContext(consumer.id, nodes, edges), consumer.data.prompt),
+    '<context from="Ada">\nCheck the **assumptions**.\n</context>\n\nRevise');
 });

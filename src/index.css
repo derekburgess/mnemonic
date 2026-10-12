@@ -11,6 +11,19 @@
   --warn: #f0b357;
   --err: #f2777a;
   --err-soft: rgba(242, 119, 122, 0.12);
+  /* 3M specifies Post-it Yellow as PMS 109 C; this is its screen palette seed. */
+  --sticky-yellow: #ffd100;
+  --sticky-panel: #28250f;
+  --sticky-field: #332f12;
+  --sticky-line: #8f7910;
+  --sticky-text: #fff1a3;
+  --sticky-dim: #c6b866;
+  --output-purple: #9b6cff;
+  --output-panel: #21172e;
+  --output-field: #2a1d3a;
+  --output-line: #62417e;
+  --output-text: #efe4ff;
+  --output-dim: #aa96c2;
 
   --node-w: 300px;
   --node-pad: 10px;
@@ -369,6 +382,70 @@ textarea.text { font-family: inherit; resize: both; }
 }
 
 .react-flow__node.selected .node { border-color: var(--accent); }
+
+/* Comments borrow the familiar Post-it yellow without sacrificing dark-theme contrast. */
+.node.comment {
+  min-width: 260px;
+  background: var(--sticky-panel);
+  border-color: var(--sticky-line);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 209, 0, 0.08);
+}
+
+.node.comment .label { color: var(--sticky-text); }
+.node.comment .label:hover { border-color: var(--sticky-line); }
+.node.comment .label:focus { border-color: var(--sticky-yellow); }
+.node.comment .label::placeholder,
+.node.comment .dim { color: var(--sticky-dim); }
+
+.node.comment .text {
+  min-width: 238px;
+  height: 190px;
+  background: var(--sticky-field);
+  border-color: var(--sticky-line);
+}
+
+.node.comment .field .copy {
+  color: var(--sticky-dim);
+  background: var(--sticky-field);
+  opacity: 1;
+}
+.node.comment .field .copy:disabled { opacity: 0.35; }
+.node.comment .field .edit-toggle.editing { color: var(--sticky-yellow); }
+.node.comment .react-flow__handle::after { background: var(--sticky-yellow); }
+.react-flow__node.selected .node.comment { border-color: var(--sticky-yellow); }
+
+/* Generated artifacts use a deep-purple family, distinct from blue inputs and yellow notes. */
+.node.output:not(.comment) {
+  background: var(--output-panel);
+  border-color: var(--output-line);
+  color: var(--output-text);
+}
+
+.node.output:not(.comment) .text,
+.node.output:not(.comment) .call-detail {
+  background: var(--output-field);
+  border-color: var(--output-line);
+}
+
+.node.output:not(.comment) .dim,
+.node.output:not(.comment) .calls-toggle { color: var(--output-dim); }
+.node.output:not(.comment) .field .copy { background: var(--output-field); }
+.node.output:not(.comment) .field .edit-toggle.editing { color: var(--output-purple); }
+.node.output:not(.comment) .react-flow__handle::after { background: var(--output-purple); }
+.react-flow__node.selected .node.output:not(.comment) { border-color: var(--output-purple); }
+
+.node.output:not(.comment) .skip .track {
+  background: var(--output-field);
+  border-color: var(--output-line);
+}
+.node.output:not(.comment) .skip .track::after { background: var(--output-dim); }
+.node.output:not(.comment) .skip.accent:hover .track,
+.node.output:not(.comment) .skip input:focus-visible ~ .track { border-color: var(--output-purple); }
+.node.output:not(.comment) .skip.accent input:checked ~ .track {
+  background: color-mix(in srgb, var(--output-purple) 30%, var(--output-field));
+  border-color: var(--output-purple);
+}
+.node.output:not(.comment) .skip.accent input:checked ~ .track::after { background: var(--output-purple); }
 
 /* Handles ride the node's own border rather than a wrapper box around it. */
 .react-flow__handle {

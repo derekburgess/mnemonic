@@ -8,7 +8,7 @@ import type {
   OutputNode,
   ToolConfig,
 } from "./types";
-import { isInput, isOutput } from "./types";
+import { isComment, isInput, isOutput } from "./types";
 
 export const uid = () => crypto.randomUUID();
 
@@ -159,10 +159,15 @@ export function resolveInheritedInput(inputId: string, nodes: GraphNode[], edges
     if (visited.has(sourceId)) return;
     visited.add(sourceId);
     const source = map.get(sourceId);
-    if (!source || source.data.skipped) return;
+    if (!source) return;
 
     if (isOutput(source)) {
+      if (source.data.skipped) return;
       result.context.push({ label: source.data.sourceLabel, text: source.data.text });
+      return;
+    }
+    if (isComment(source)) {
+      result.context.push({ label: source.data.author.trim() || "Anonymous", text: source.data.text });
       return;
     }
     if (source.data.performInference !== false) return;
@@ -176,15 +181,17 @@ export function resolveInheritedInput(inputId: string, nodes: GraphNode[], edges
   };
 
   const direct = incoming.get(inputId) ?? [];
-  const outputIds = direct.filter((id) => {
+  const contextIds = direct.filter((id) => {
     const node = map.get(id);
-    return node && isOutput(node);
+    return node && (isOutput(node) || isComment(node));
   }).sort((a, b) => {
     const left = map.get(a);
     const right = map.get(b);
-    return left && right && isOutput(left) && isOutput(right) ? left.data.createdAt - right.data.createdAt : 0;
+    return left && right && (isOutput(left) || isComment(left)) && (isOutput(right) || isComment(right))
+      ? left.data.createdAt - right.data.createdAt
+      : 0;
   });
-  for (const sourceId of [...outputIds, ...direct.filter((id) => !outputIds.includes(id))]) visit(sourceId);
+  for (const sourceId of [...contextIds, ...direct.filter((id) => !contextIds.includes(id))]) visit(sourceId);
   return result;
 }
 

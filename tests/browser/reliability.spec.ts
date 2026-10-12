@@ -91,6 +91,52 @@ test("left drag separates node movement from canvas panning and handles have for
   await expect.poll(() => state.graph.edges.some((edge: any) => edge.source === "step" && edge.target === secondId)).toBe(true);
 });
 
+test("canvas can zoom out beyond the React Flow default", async ({ page }) => {
+  await setup(page);
+  const zoomOut = page.locator(".react-flow__controls-zoomout");
+  for (let index = 0; index < 12 && await zoomOut.isEnabled(); index++) await zoomOut.click();
+  const transform = await page.locator(".react-flow__viewport").getAttribute("style");
+  const scale = Number(transform?.match(/scale\(([^)]+)\)/)?.[1]);
+  expect(scale).toBeLessThan(0.5);
+  expect(scale).toBeGreaterThanOrEqual(0.1);
+  expect(scale).toBeLessThanOrEqual(0.11);
+});
+
+test("comments provide named Markdown context and are traced with the next step", async ({ page }) => {
+  const state = await setup(page);
+  state.complete = true;
+  await page.getByRole("button", { name: "Comment", exact: true }).click();
+  const comment = page.locator(".react-flow__node-comment");
+  await expect(comment).toHaveCount(1);
+  await comment.getByRole("textbox", { name: "Comment author", exact: true }).fill("Ada");
+  await comment.getByRole("textbox", { name: "Comment text", exact: true }).fill("Check the **assumptions**.");
+  await expect(comment.getByRole("button", { name: "Delete comment", exact: true })).toBeVisible();
+  await expect(comment.getByRole("checkbox")).toHaveCount(0);
+  await expect(comment.locator(".react-flow__handle.target")).toHaveCount(0);
+  await expect(comment.getByRole("button", { name: "Copy comment", exact: true })).toHaveCSS("opacity", "1");
+  const appearance = await comment.locator(".node").evaluate((node) => ({
+    width: (node as HTMLElement).offsetWidth,
+    yellow: getComputedStyle(node).getPropertyValue("--sticky-yellow").trim(),
+    textHeight: (node.querySelector(".text") as HTMLElement).offsetHeight,
+  }));
+  expect(appearance).toEqual({ width: 260, yellow: "#ffd100", textHeight: 190 });
+
+  await page.locator(".react-flow__controls-fitview").click();
+  const source = comment.locator(".react-flow__handle.source");
+  const target = page.locator('.react-flow__node-step[data-id="step"] .react-flow__handle.target');
+  await source.dragTo(target);
+  const commentId = (await comment.getAttribute("data-id"))!;
+  await expect.poll(() => state.graph.edges.some((edge: any) => edge.source === commentId && edge.target === "step")).toBe(true);
+  await runStep(page);
+  await expect.poll(() => state.executions.length).toBe(1);
+  expect(state.executions[0].trace.context).toEqual([{ label: "Ada", text: "Check the **assumptions**." }]);
+  expect(state.executions[0].input).toContain('<context from="Ada">\nCheck the **assumptions**.\n</context>');
+
+  await comment.getByRole("button", { name: "Preview comment", exact: true }).click();
+  await expect(comment.locator(".md strong")).toHaveText("assumptions");
+  await expect(comment.getByRole("button", { name: "Copy comment", exact: true })).toBeVisible();
+});
+
 test("outputs call an unnamed source step Unnamed", async ({ page }) => {
   const state = await setup(page);
   state.complete = true;
@@ -254,6 +300,20 @@ test("partial fan-out keeps the successful output", async ({ page }) => {
   await expect(page.getByText(/1 of 2 generations failed/)).toBeVisible();
   const activeControl = output.getByTitle("Node active — turn off to skip");
   await expect(activeControl.getByRole("checkbox")).toBeChecked();
+  const purple = await output.evaluate((node) => {
+    const card = node.querySelector(".node")!;
+    const track = node.querySelector(".skip .track")!;
+    return {
+      palette: getComputedStyle(card).getPropertyValue("--output-purple").trim(),
+      toggleBorder: getComputedStyle(track).borderColor,
+      toggleKnob: getComputedStyle(track, "::after").backgroundColor,
+    };
+  });
+  expect(purple).toEqual({
+    palette: "#9b6cff",
+    toggleBorder: "rgb(155, 108, 255)",
+    toggleKnob: "rgb(155, 108, 255)",
+  });
   await activeControl.click();
   await expect.poll(() => state.graph.nodes.find((node: any) => node.type === "artifact")?.data.skipped).toBe(true);
 });

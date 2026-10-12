@@ -118,12 +118,21 @@ export type OutputData = {
   edited?: boolean;
 };
 
+export type CommentData = {
+  /** Person associated with this note and used as its downstream context label. */
+  author: string;
+  text: string;
+  createdAt: number;
+};
+
 // "input", "output", "default" and "group" are React Flow's own built-in node types; using
 // those keys would apply its default node chrome (white box, fixed width) underneath ours.
 export type InputNode = Node<InputData, "step">;
 export type OutputNode = Node<OutputData, "artifact">;
-export type GraphNode = InputNode | OutputNode;
+export type CommentNode = Node<CommentData, "comment">;
+export type GraphNode = InputNode | OutputNode | CommentNode;
 export type GraphEdge = Edge;
 
 export const isInput = (n: GraphNode): n is InputNode => n.type === "step";
 export const isOutput = (n: GraphNode): n is OutputNode => n.type === "artifact";
+export const isComment = (n: GraphNode): n is CommentNode => n.type === "comment";

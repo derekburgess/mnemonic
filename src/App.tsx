@@ -42,11 +42,15 @@ import {
   uid,
 } from "./graph";
 import { GraphActionsContext } from "./nodes/context";
+import { CommentNodeView } from "./nodes/CommentNodeView";
 import { InputNodeView } from "./nodes/InputNodeView";
 import { OutputNodeView } from "./nodes/OutputNodeView";
 import {
+  isComment,
   isInput,
   isOutput,
+  type CommentData,
+  type CommentNode,
   type GraphEdge,
   type GraphNode,
   type InputData,
@@ -56,7 +60,7 @@ import {
   type ToolConfig,
 } from "./types";
 
-const nodeTypes = { step: InputNodeView, artifact: OutputNodeView };
+const nodeTypes = { step: InputNodeView, artifact: OutputNodeView, comment: CommentNodeView };
 const edgeTypes = { adaptive: AdaptiveEdge };
 
 /** Edges are directed and that direction decides run order, so every edge shows an arrowhead. */
@@ -91,6 +95,10 @@ function newInput(model: string, position: { x: number; y: number }): InputNode 
       status: "idle",
     },
   };
+}
+
+function newComment(position: { x: number; y: number }): CommentNode {
+  return { id: uid(), type: "comment", position, data: { author: "", text: "", createdAt: Date.now() } };
 }
 
 /** Graphs saved before the rename still carry React Flow's reserved type names. */
@@ -268,6 +276,14 @@ function Canvas() {
       setNodes((current) =>
         current.map((n) => (n.id === id && isOutput(n) ? { ...n, data: { ...n.data, ...patch } } : n)),
       );
+    },
+    [setNodes],
+  );
+
+  const updateComment = useCallback(
+    (id: string, patch: Partial<CommentData>) => {
+      setNodes((current) => current.map((node) =>
+        node.id === id && isComment(node) ? { ...node, data: { ...node.data, ...patch } } : node));
     },
     [setNodes],
   );
@@ -582,12 +598,18 @@ function Canvas() {
     });
   }, [providerModels, providerSettings, defaultProvider, setNodes, viewportSpot]);
 
+  const addComment = useCallback(() => {
+    setNodes((current) => [...current, newComment(freeSpot(viewportSpot(), current.map(boxOf)))]);
+  }, [setNodes, viewportSpot]);
+
   /** Outputs feed inputs, inputs feed outputs. Output -> output would carry no context. */
   const isValidConnection = useCallback<IsValidConnection<GraphEdge>>(
     (conn) => {
       const source = nodes.find((n) => n.id === conn.source);
       const target = nodes.find((n) => n.id === conn.target);
       if (!source || !target || source.id === target.id) return false;
+      if (isComment(source)) return isInput(target);
+      if (isComment(target)) return false;
       return !(isOutput(source) && isOutput(target));
     },
     [nodes],
@@ -695,8 +717,8 @@ function Canvas() {
   );
 
   const actions = useMemo(
-    () => ({ activeNodeIds, stopNode, openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, runOne, removeNode, setSkipped }),
-    [activeNodeIds, stopNode, openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, runOne, removeNode, setSkipped],
+    () => ({ activeNodeIds, stopNode, openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, updateComment, runOne, removeNode, setSkipped }),
+    [activeNodeIds, stopNode, openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, updateComment, runOne, removeNode, setSkipped],
   );
 
   return (
@@ -724,6 +746,9 @@ function Canvas() {
             )}
             <button onClick={addStep}>
               <Icon name="page" /> Add Step
+            </button>
+            <button onClick={addComment}>
+              <Icon name="pencil" /> Comment
             </button>
             <button onClick={() => setPanel((p) => (p === "trace" ? null : "trace"))}>
               <Icon name="list" /> Trace Logs
@@ -791,6 +816,7 @@ function Canvas() {
               nodeDragThreshold={0}
               connectionDragThreshold={0}
               connectionRadius={44}
+              minZoom={0.1}
               fitView
               proOptions={{ hideAttribution: false }}
             >
@@ -801,7 +827,7 @@ function Canvas() {
                 zoomable
                 bgColor="var(--panel)"
                 maskColor="rgba(15, 17, 21, 0.72)"
-                nodeColor={(n) => (isInput(n as GraphNode) ? "#6ea8fe" : "#3a4150")}
+                nodeColor={(n) => isInput(n as GraphNode) ? "#6ea8fe" : isComment(n as GraphNode) ? "#ffd100" : "#62417e"}
                 nodeStrokeWidth={0}
               />
             </ReactFlow>

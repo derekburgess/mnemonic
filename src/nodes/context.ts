@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { InputData, OutputData } from "../types";
+import type { CommentData, InputData, OutputData } from "../types";
 
 export type GraphActions = {
   openWorkspaceChanges: (id: string) => void;
@@ -16,6 +16,7 @@ export type GraphActions = {
     patch: Partial<InputData> | ((data: InputData) => Partial<InputData>),
   ) => void;
   updateOutput: (id: string, patch: Partial<OutputData>) => void;
+  updateComment: (id: string, patch: Partial<CommentData>) => void;
   setSkipped: (id: string, value: boolean) => void;
   runOne: (id: string) => void;
   stopNode: (id: string) => void;

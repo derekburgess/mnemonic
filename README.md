@@ -58,7 +58,7 @@ listed as-is.
 
 ## The model
 
-There are two kinds of node: **steps** and **artifacts**.
+There are three kinds of node: **steps**, **artifacts**, and **comments**.
 
 **Input nodes** are the steps. Each holds a model, a thinking level (`reasoning_effort`), an
 **Output N** fan-out count, a **Role**, **Instructions**, and its own input text.
@@ -76,9 +76,13 @@ that succeeded and reports how many did not.
 **Output nodes** are immutable artifacts. Every run produces a *new* output node — outputs are never
 overwritten, they accumulate on the canvas as a visible history.
 
+**Comment nodes** are human-authored Markdown notes. Add one with **Comment**, record the author's
+name, and connect it to an input step to include the attributed note in that step's context and
+execution trace. Comments are never scheduled or skipped.
+
 ### Skip
 
-Both node kinds have a **Skip** toggle. Skipping keeps the node on the canvas with its wiring
+Steps and artifacts have a **Skip** toggle. Skipping keeps the node on the canvas with its wiring
 intact, but takes it out of play:
 
 - a skipped **step** is not scheduled by `Run` or `Next`, and its own Run button is disabled;
@@ -372,6 +376,7 @@ an older context as the live branch, drag an edge from that output node into a s
 | Edge | Meaning |
 | --- | --- |
 | output → input | context: that artifact's text is fed to the step |
+| comment → input | context: the attributed human comment is fed to the step |
 | input → output | provenance: marks which artifact is that step's current one |
 | input → input | pre-wiring: resolves into `output → input` once the upstream step first runs |
 | output → output | rejected — carries no context |
