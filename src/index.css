@@ -227,7 +227,9 @@ button.tinted:hover:not(:disabled) {
   border: 1px solid transparent;
   border-radius: 4px;
   color: var(--text);
-  font: 600 13px inherit;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
   padding: 3px 4px;
 }
 .label:hover { border-color: var(--line); }
@@ -600,19 +602,6 @@ textarea.text { font-family: inherit; resize: both; }
 .node.output:not(.comment) .react-flow__handle::after { background: var(--output-purple); }
 .react-flow__node.selected .node.output:not(.comment) { border-color: var(--output-purple); }
 
-.node.output:not(.comment) .skip .track {
-  background: var(--output-field);
-  border-color: var(--output-line);
-}
-.node.output:not(.comment) .skip .track::after { background: var(--output-dim); }
-.node.output:not(.comment) .skip.accent:hover .track,
-.node.output:not(.comment) .skip input:focus-visible ~ .track { border-color: var(--output-purple); }
-.node.output:not(.comment) .skip.accent input:checked ~ .track {
-  background: color-mix(in srgb, var(--output-purple) 30%, var(--output-field));
-  border-color: var(--output-purple);
-}
-.node.output:not(.comment) .skip.accent input:checked ~ .track::after { background: var(--output-purple); }
-
 /* Handles ride the node's own border rather than a wrapper box around it. */
 .react-flow__handle {
   width: 36px;
@@ -736,12 +725,12 @@ textarea.text { font-family: inherit; resize: both; }
 
 /* The sandbox switch is the same control as skip, but affirmative: it turns something on
    rather than taking a node out of play, so it reads in the accent rather than the warning. */
-.skip.sandbox:hover .track, .skip.accent:hover .track { border-color: var(--accent); }
-.skip.sandbox input:checked ~ .track, .skip.accent input:checked ~ .track {
+.skip.sandbox:hover .track { border-color: var(--accent); }
+.skip.sandbox input:checked ~ .track {
   background: color-mix(in srgb, var(--accent) 28%, transparent);
   border-color: var(--accent);
 }
-.skip.sandbox input:checked ~ .track::after, .skip.accent input:checked ~ .track::after { background: var(--accent); }
+.skip.sandbox input:checked ~ .track::after { background: var(--accent); }
 .skip.sandbox input:disabled ~ .track { opacity: 0.4; cursor: not-allowed; }
 
 .sandbox-row {
@@ -752,11 +741,6 @@ textarea.text { font-family: inherit; resize: both; }
 .sandbox-row:hover:not(.locked), .sandbox-row:focus-within { border-color: var(--accent); }
 .sandbox-row.on { color: var(--accent); }
 .sandbox-row.locked, .sandbox-row.locked .skip { cursor: not-allowed; }
-
-/* A skipped node stays legible but visibly out of play. */
-.node.skipped { opacity: 0.55; }
-.node.skipped:hover { opacity: 0.8; }
-.node.skipped .skip { color: var(--warn); }
 
 @media (prefers-reduced-motion: reduce) {
   .skip .track, .skip .track::after { transition: none; }
@@ -920,7 +904,7 @@ textarea.text { font-family: inherit; resize: both; }
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--dim);
 }
 /* Same square and resting colour as the delete icon; accent rather than red on hover,
@@ -939,6 +923,9 @@ textarea.text { font-family: inherit; resize: both; }
   border-radius: 6px;
   background: var(--panel-2);
 }
+.tool.disabled {
+  border-color: color-mix(in srgb, var(--tool) 16%, var(--line));
+}
 .tool-head { display: flex; align-items: center; gap: 4px; padding: 4px 6px 4px 2px; }
 .tool-head > .icon.tint-err {
   background: transparent;
@@ -950,14 +937,32 @@ textarea.text { font-family: inherit; resize: both; }
 }
 
 .tool-head > .label { flex: 1; min-width: 40px; color: var(--tool); }
+.tool.disabled .tool-head > .label:disabled,
+.tool.disabled .builtin-tool-name,
+.tool.disabled .tool-head > .dim {
+  opacity: 0.38;
+  filter: saturate(0.45);
+}
+.tool.disabled .tool-head > .label:disabled { cursor: not-allowed; }
 .tool-collapse-toggle.open .glyph { transform: rotate(90deg); }
 
 .tool-body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
+  margin: 0;
+  border: 0;
   padding: 0 8px 8px;
 }
+
+/* Disabled tools mirror the loop block while leaving Collapse, Remove and Enable usable. */
+.tool-body:disabled :is(input, select, textarea, button, .picker) {
+  opacity: 0.38;
+  filter: saturate(0.45);
+  cursor: not-allowed;
+}
+.tool-body:disabled :is(label, .pick) { cursor: not-allowed; }
 
 /* MCP tool picker */
 /* Sized and resized like the text fields: a long tool list scrolls rather than growing the node. */

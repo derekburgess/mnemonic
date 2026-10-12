@@ -11,7 +11,6 @@ import { SandboxToggle } from "./SandboxToggle";
 import { WorkspaceRow } from "./WorkspaceRow";
 import { CopyButton } from "./CopyButton";
 import { DeleteButton } from "./DeleteButton";
-import { SkipToggle } from "./SkipToggle";
 import { ToolEditor, BuiltinTool, WORKSPACE_TOOLS } from "./ToolEditor";
 import { useGraphActions } from "./context";
 import { useFieldWidth } from "./useFieldWidth";
@@ -26,7 +25,7 @@ const DEFAULT_TIMEOUT_SEC = 300;
 const asDuration = (sec: number) => (sec < 60 ? `${sec}s` : `${sec / 60}m`);
 
 export function InputNodeView({ id, data }: NodeProps<InputNode>) {
-  const { activeNodeIds, stopNode, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput: onChange, runOne: onRun, removeNode: onDelete, setSkipped } =
+  const { activeNodeIds, stopNode, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput: onChange, runOne: onRun, removeNode: onDelete } =
     useGraphActions();
   const provider = data.provider ?? defaultProvider;
   const models = providerModels[provider] ?? [];
@@ -34,7 +33,6 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
   const providers = providerSettings?.providers?.filter((p) => p.configured) ?? [];
   const providerNames = { openai: "OpenAI", compatible: "OpenAI-compatible", huggingface: "Hugging Face" };
   const busy = activeNodeIds.includes(id) || data.status === "running";
-  const skipped = !!data.skipped;
   const collapsed = !!data.collapsed;
   const performInference = data.performInference !== false;
   const current = currentId === id;
@@ -154,14 +152,13 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
     setTools(tools.map((t) => (t.id === toolId ? { ...t, ...patch } : t)));
 
   return (
-    <div className={`node input nopan${current ? " current" : ""} status-${data.status}${skipped ? " skipped" : ""}${collapsed ? " collapsed" : ""}`}>
+    <div className={`node input nopan${current ? " current" : ""} status-${data.status}${collapsed ? " collapsed" : ""}`}>
       <Handle type="target" position={Position.Left} />
 
       <header className="node-head">
         <button
           className="icon collapse-toggle nodrag"
           onClick={() => onChange(id, { collapsed: !collapsed })}
-          title={collapsed ? "Expand step" : "Collapse step"}
           aria-label={collapsed ? "Expand step" : "Collapse step"}
           aria-expanded={!collapsed}
         >
@@ -174,7 +171,6 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
           onChange={(e) => onChange(id, { label: e.target.value })}
           aria-label="Step name"
         />
-        <SkipToggle accent on={!skipped} onChange={(active) => setSkipped(id, !active)} title="Node active — turn off to skip" />
         <DeleteButton onClick={() => onDelete(id)} title="Delete step" />
       </header>
 
@@ -259,7 +255,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
       </div>
 
       <div className="row">
-        <label title="How many times the model may come back asking for more tools. One turn may contain several calls.">
+        <label>
           Max Tool Turns
           <select
             className="nodrag"
@@ -273,7 +269,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
             ))}
           </select>
         </label>
-        <label title="Budget for the whole step: preparation, model loading, every round, and tool calls">
+        <label>
           Timeout
           <select
             className="nodrag"
@@ -359,7 +355,6 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
               onClick={() =>
                 onChange(id, { attachments: attachments.filter((a) => a.id !== file.id) })
               }
-              title={`Remove ${file.name}`}
               aria-label={`Remove ${file.name}`}
             >
               <Icon name="close" size={11} />
@@ -389,7 +384,6 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
             <button
               className="icon tinted tint-err nodrag"
               onClick={() => onChange(id, { files: files.filter((f) => f.id !== file.id) })}
-              title={`Remove ${file.name}`}
               aria-label={`Remove ${file.name}`}
             >
               <Icon name="close" size={11} />
@@ -422,7 +416,6 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
             <button
               className="icon tinted tint-err nodrag"
               onClick={() => onChange(id, { links: links.filter((l) => l.id !== link.id) })}
-              title="Remove link"
               aria-label="Remove link"
             >
               <Icon name="close" size={11} />
@@ -449,7 +442,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
             value={data.instructions ?? ""}
             onChange={(e) => onChange(id, { instructions: e.target.value })}
           />
-          <CopyButton text={data.instructions ?? ""} title="Copy instructions" />
+          <CopyButton text={data.instructions ?? ""} label="Copy instructions" />
         </div>
       </label>}
 
@@ -462,7 +455,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
             value={data.prompt}
             onChange={(e) => onChange(id, { prompt: e.target.value })}
           />
-          <CopyButton text={data.prompt} title="Copy input" />
+          <CopyButton text={data.prompt} label="Copy input" />
         </div>
       </label>
 
@@ -472,7 +465,6 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
           <span>Tools ({tools.length + (workspaces.some((w) => w.path.trim()) ? WORKSPACE_TOOLS.length : 0)})</span>
           <button
             className="nodrag add-tool"
-            title="Add a tool"
             aria-label="Add a tool"
             onClick={() =>
               setTools([
@@ -512,7 +504,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
       </>}
       </>}
 
-      {performInference && <button className={`run tinted ${busy ? "tint-err" : "tint-ok"} nodrag`} onClick={() => busy ? stopNode(id) : onRun(id)} disabled={!busy && skipped}>
+      {performInference && <button className={`run tinted ${busy ? "tint-err" : "tint-ok"} nodrag`} onClick={() => busy ? stopNode(id) : onRun(id)}>
         {busy ? (
           <><Icon name="stop" /> {data.loop ? "Stop loop" : "Stop step"}</>
         ) : (

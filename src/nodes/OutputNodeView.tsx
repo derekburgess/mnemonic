@@ -8,7 +8,6 @@ import type { OutputNode } from "../types";
 import { Icon } from "../icons";
 import { CopyButton } from "./CopyButton";
 import { DeleteButton } from "./DeleteButton";
-import { SkipToggle } from "./SkipToggle";
 import { useGraphActions } from "./context";
 import { useFieldWidth } from "./useFieldWidth";
 
@@ -17,8 +16,7 @@ const NAME_COLUMN = 150;
 const ROW_GAP = 6;
 
 export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
-  const { openWorkspaceChanges, removeNode: onDelete, setSkipped, updateOutput } = useGraphActions();
-  const skipped = !!data.skipped;
+  const { openWorkspaceChanges, removeNode: onDelete, updateOutput } = useGraphActions();
   const pendingChanges = usePendingWorkspaceChanges(data.workspaceChanges);
 
   const { min, field } = useFieldWidth();
@@ -65,7 +63,7 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
     : null;
 
   return (
-    <div className={`node output nopan${attached ? "" : " detached"}${skipped ? " skipped" : ""}`}>
+    <div className={`node output nopan${attached ? "" : " detached"}`}>
       <Handle type="target" position={Position.Left} />
 
       <header className="node-head">
@@ -79,7 +77,6 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
             {data.edited && " · edited"}
           </span>
         </div>
-        <SkipToggle accent on={!skipped} onChange={(active) => setSkipped(id, !active)} title="Node active — turn off to skip" />
         <DeleteButton onClick={() => onDelete(id)} title="Delete output" />
       </header>
 
@@ -107,12 +104,11 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
         <button
           className={`copy edit-toggle nodrag${editing ? " editing" : ""}`}
           onClick={() => setEditing((v) => !v)}
-          title={editing ? "Done editing" : "Edit this output"}
           aria-label={editing ? "Done editing" : "Edit this output"}
         >
           <Icon name={editing ? "check" : "pencil"} size={13} />
         </button>
-        <CopyButton text={data.text} title="Copy output" />
+        <CopyButton text={data.text} label="Copy output" />
       </div>
       {data.workspaceChanges && data.kind !== "thinking" && <button className="nodrag"
         onClick={() => openWorkspaceChanges(data.workspaceChanges!)}>{pendingChanges === 0 ? "View changes" : `Review changes${pendingChanges === undefined ? "" : ` (${pendingChanges})`}`}</button>}
@@ -141,7 +137,7 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
                   <span className="dim">no arguments</span>
                 )}
               </div>
-              <CopyButton text={row.text} title={row.href ? "Copy URL" : "Copy arguments"} />
+              <CopyButton text={row.text} label={row.href ? "Copy URL" : "Copy arguments"} />
             </div>
           </div>
         ))}

@@ -47,8 +47,6 @@ export type InputData = {
   timeoutSec?: number;
   /** How many artifacts one run of this step generates. */
   outputs: number;
-  /** Kept in the graph and wired, but never executed. */
-  skipped?: boolean;
   /** Trace identity only; live status is read from the existing execution events. */
   lastExecution?: import("./executionStatus").NodeExecution;
   status: NodeStatus;
@@ -111,8 +109,6 @@ export type OutputData = {
   text: string;
   createdAt: number;
   usage?: { input?: number; output?: number };
-  /** Kept in the graph and wired, but withheld from downstream context. */
-  skipped?: boolean;
   toolCalls?: ToolCallRecord[];
   /** Set once the text has been changed by hand, so the node stops claiming to be verbatim. */
   edited?: boolean;

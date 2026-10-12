@@ -7,6 +7,7 @@ import { reportTraceEvent } from "./traceEvents";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
+  ControlButton,
   Controls,
   MiniMap,
   ReactFlow,
@@ -21,6 +22,7 @@ import {
   useEdgesState,
   useNodesState,
   useReactFlow,
+  useStore,
   type Connection,
   type IsValidConnection,
 } from "@xyflow/react";
@@ -62,6 +64,12 @@ import {
 
 const nodeTypes = { step: InputNodeView, artifact: OutputNodeView, comment: CommentNodeView };
 const edgeTypes = { adaptive: AdaptiveEdge };
+
+function CanvasControlIcon({ kind }: { kind: "in" | "out" | "fit" }) {
+  if (kind === "in") return <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M32 18.133H18.133V32h-4.266V18.133H0v-4.266h13.867V0h4.266v13.867H32z" /></svg>;
+  if (kind === "out") return <svg viewBox="0 0 32 5" aria-hidden="true"><path d="M0 0h32v4.2H0z" /></svg>;
+  return <svg viewBox="0 0 32 30" aria-hidden="true"><path d="M3.692 4.63c0-.53.4-.938.939-.938h5.215V0H4.708C2.13 0 0 2.054 0 4.63v5.216h3.692V4.631zM27.354 0h-5.2v3.692h5.17c.53 0 .984.4.984.939v5.215H32V4.631A4.624 4.624 0 0027.354 0zm.954 24.83c0 .532-.4.94-.939.94h-5.215v3.768h5.215c2.577 0 4.631-2.13 4.631-4.707v-5.139h-3.692v5.139zm-23.677.94c-.531 0-.939-.4-.939-.94v-5.138H0v5.139c0 2.577 2.13 4.707 4.708 4.707h5.138V25.77H4.631z" /></svg>;
+}
 
 /** Edges are directed and that direction decides run order, so every edge shows an arrowhead. */
 const MARKER = { type: MarkerType.ArrowClosed, width: 18, height: 18, color: "#8b93a3" };
@@ -212,7 +220,9 @@ function Canvas() {
   const [notice, setNotice] = useState<string | null>(null);
   // One side panel at a time; the canvas keeps the rest of the width.
   const [panel, setPanel] = useState<"trace" | "settings" | "sandbox" | "changes" | null>(null);
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, zoomIn, zoomOut, fitView: fitCanvas } = useReactFlow();
+  const minZoomReached = useStore((state) => state.transform[2] <= state.minZoom);
+  const maxZoomReached = useStore((state) => state.transform[2] >= state.maxZoom);
   const wrapper = useRef<HTMLDivElement>(null);
 
   const [changesId, setChangesId] = useState<string | null>(null);
@@ -225,6 +235,12 @@ function Canvas() {
   useEffect(() => {
     steppedRef.current = stepped;
   }, [stepped]);
+
+  useEffect(() => {
+    const minimap = wrapper.current?.querySelector(".react-flow__minimap-svg");
+    minimap?.removeAttribute("aria-labelledby");
+    minimap?.setAttribute("aria-label", "Mini Map");
+  }, []);
 
   useEffect(() => {
     fetchSettings().then(refreshProviders).catch(() => {});
@@ -294,15 +310,6 @@ function Canvas() {
     [setNodes],
   );
 
-  const setSkipped = useCallback(
-    (id: string, value: boolean) => {
-      setNodes((current) =>
-        current.map((n) => (n.id === id ? ({ ...n, data: { ...n.data, skipped: value } } as GraphNode) : n)),
-      );
-    },
-    [setNodes],
-  );
-
   const stopNode = useCallback((id: string) => {
     nodeRuns.current.get(id)?.abort();
     cancelPending(id).forEach((entry) => void cancelExecution(entry));
@@ -311,7 +318,7 @@ function Canvas() {
   useEffect(() => {
     for (const id of nodeRuns.current.keys()) {
       const node = nodes.find((node) => node.id === id);
-      if (!node || (isInput(node) && (node.data.skipped || node.data.performInference === false))) stopNode(id);
+      if (!node || (isInput(node) && node.data.performInference === false)) stopNode(id);
     }
   }, [nodes, stopNode]);
 
@@ -327,7 +334,7 @@ function Canvas() {
   const executeNode = useCallback(
     async (snap: Snapshot, id: string, trace?: { runId: string; kind: "run" | "next" | "step"; seq: number }, options: { signal?: AbortSignal; preserveRoutes?: boolean; loopOutputMode?: LoopOutputMode } = {}): Promise<Snapshot> => {
       const producer = snap.nodes.find((n) => n.id === id);
-      if (!producer || !isInput(producer) || producer.data.performInference === false || producer.data.skipped) return snap;
+      if (!producer || !isInput(producer) || producer.data.performInference === false) return snap;
 
       if (!producer.data.prompt.trim()) {
         const next = patchStatus(snap, id, { status: "error", error: "This step has no input text.", lastExecution: undefined });
@@ -529,7 +536,7 @@ function Canvas() {
     async (id: string, trace?: { runId: string; kind: "run" | "next" | "step"; seq: number }) => {
       if (nodeRuns.current.has(id) || pendingAtMount.current.some((entry) => entry.nodeId === id && !entry.cancelled)) return;
       const initial = live.current.nodes.find((node) => node.id === id);
-      if (!initial || !isInput(initial) || initial.data.performInference === false || initial.data.skipped) return;
+      if (!initial || !isInput(initial) || initial.data.performInference === false) return;
       const looping = !!initial.data.loop && trace?.kind !== "run";
       const controller = new AbortController();
       nodeRuns.current.set(id, controller);
@@ -541,13 +548,13 @@ function Canvas() {
       try {
         do {
           const current = live.current.nodes.find((node) => node.id === id);
-          if (controller.signal.aborted || !current || !isInput(current) || current.data.skipped) break;
+          if (controller.signal.aborted || !current || !isInput(current)) break;
           await executeNode(live.current, id, { runId, kind: trace?.kind ?? "step", seq: seq++ },
             { signal: controller.signal, loopOutputMode: looping ? current.data.loopOutputMode ?? "last" : undefined });
           iterations++;
           setStepped((s) => s.includes(id) ? s : [...s, id]);
           const next = live.current.nodes.find((node) => node.id === id);
-          if (!looping || controller.signal.aborted || !next || !isInput(next) || !next.data.loop || next.data.skipped || next.data.error) break;
+          if (!looping || controller.signal.aborted || !next || !isInput(next) || !next.data.loop || next.data.error) break;
           if (iterations >= normalizeLoopLimit(next.data.loopLimit)) {
             publish(patchStatus(live.current, id, { loop: false }));
             break;
@@ -734,8 +741,8 @@ function Canvas() {
   );
 
   const actions = useMemo(
-    () => ({ activeNodeIds, stopNode, openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, updateComment, runOne, removeNode, setSkipped }),
-    [activeNodeIds, stopNode, openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, updateComment, runOne, removeNode, setSkipped],
+    () => ({ activeNodeIds, stopNode, openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, updateComment, runOne, removeNode }),
+    [activeNodeIds, stopNode, openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, updateComment, runOne, removeNode],
   );
 
   return (
@@ -773,6 +780,8 @@ function Canvas() {
               <input
                 type="file"
                 accept="application/json"
+                title=""
+                aria-label="Import"
                 disabled={runningAny}
                 onChange={(e) => {
                   const f = e.target.files?.[0];
@@ -784,7 +793,6 @@ function Canvas() {
             <button
               className="icon-only"
               onClick={() => setPanel((p) => (p === "settings" ? null : "settings"))}
-              title="Settings"
               aria-label="Settings"
             >
               <Icon name="gear" />
@@ -833,8 +841,22 @@ function Canvas() {
               proOptions={{ hideAttribution: false }}
             >
               <Background gap={20} />
-              <Controls />
+              <Controls showZoom={false} showFitView={false} showInteractive={false}>
+                <ControlButton className="react-flow__controls-zoomin" aria-label="Zoom In"
+                  disabled={maxZoomReached} onClick={() => void zoomIn()}>
+                  <CanvasControlIcon kind="in" />
+                </ControlButton>
+                <ControlButton className="react-flow__controls-zoomout" aria-label="Zoom Out"
+                  disabled={minZoomReached} onClick={() => void zoomOut()}>
+                  <CanvasControlIcon kind="out" />
+                </ControlButton>
+                <ControlButton className="react-flow__controls-fitview" aria-label="Fit View"
+                  onClick={() => void fitCanvas()}>
+                  <CanvasControlIcon kind="fit" />
+                </ControlButton>
+              </Controls>
               <MiniMap
+                ariaLabel=""
                 pannable
                 zoomable
                 bgColor="var(--panel)"

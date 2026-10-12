@@ -93,6 +93,13 @@ test("left drag separates node movement from canvas panning and handles have for
 
 test("canvas can zoom out beyond the React Flow default", async ({ page }) => {
   await setup(page);
+  const controls = page.locator(".react-flow__controls");
+  await expect(controls.locator("button")).toHaveCount(3);
+  await expect(controls.locator("button[title]")).toHaveCount(0);
+  await expect(controls.locator(".react-flow__controls-interactive")).toHaveCount(0);
+  const minimap = page.locator(".react-flow__minimap-svg");
+  await expect(minimap.locator("title")).toHaveCount(0);
+  await expect(minimap).toHaveAttribute("aria-label", "Mini Map");
   const zoomOut = page.locator(".react-flow__controls-zoomout");
   for (let index = 0; index < 12 && await zoomOut.isEnabled(); index++) await zoomOut.click();
   const transform = await page.locator(".react-flow__viewport").getAttribute("style");
@@ -108,7 +115,7 @@ test("input cards use the active-toggle blue palette", async ({ page }) => {
   const appearance = await input.evaluate((node) => {
     const card = node.querySelector(".node")!;
     const field = node.querySelector("textarea")!;
-    const track = node.querySelector('.skip.accent .track')!;
+    const track = node.querySelector('.skip.sandbox .track')!;
     return {
       palette: getComputedStyle(card).getPropertyValue("--input-blue").trim(),
       card: getComputedStyle(card).backgroundColor,
@@ -141,6 +148,8 @@ test("input cards use the active-toggle blue palette", async ({ page }) => {
     };
     return {
       addTool: styleOf(".add-tool"),
+      toolHeadingSize: getComputedStyle(node.querySelector(".tools-head")!).fontSize,
+      nameSize: getComputedStyle(node.querySelector(".label")!).fontSize,
       sandboxGear: styleOf(".sandbox-config-open"),
       disabledLoopMode: disabledStyle(".loop-output-mode"),
       disabledLoopLimit: disabledStyle(".loop-limit .line"),
@@ -149,6 +158,7 @@ test("input cards use the active-toggle blue palette", async ({ page }) => {
   expect(blueControls.addTool).toEqual({
     color: "rgb(110, 168, 254)", background: "rgb(26, 42, 64)", border: "rgb(54, 91, 133)",
   });
+  expect(blueControls.toolHeadingSize).toBe(blueControls.nameSize);
   expect(blueControls.sandboxGear).toEqual({
     color: "rgb(110, 168, 254)", background: "rgb(26, 42, 64)", border: "rgba(0, 0, 0, 0)",
   });
@@ -289,6 +299,7 @@ test("comments provide named Markdown context and are traced with the next step"
   await expect(comment.getByRole("checkbox")).toHaveCount(0);
   await expect(comment.locator(".react-flow__handle.target")).toHaveCount(0);
   const commentCopy = comment.getByRole("button", { name: "Copy comment", exact: true });
+  await expect(commentCopy).not.toHaveAttribute("title");
   await page.locator(".brand").hover();
   await expect(commentCopy).toHaveCSS("opacity", "0");
   await expect(comment.getByRole("button", { name: /(?:Edit|Preview) (?:comment|reply)/ })).toHaveCount(0);
@@ -391,14 +402,8 @@ test("input nodes collapse to their name and primary actions and persist", async
   await expect(node.getByRole("button", { name: "Expand step", exact: true })).toHaveAttribute("aria-expanded", "false");
   await expect(node.getByRole("textbox", { name: "Step name", exact: true })).toBeVisible();
   await expect(node.getByRole("button", { name: "Run step", exact: true })).toBeVisible();
-  const activeControl = node.getByTitle("Node active — turn off to skip");
-  const activeToggle = activeControl.getByRole("checkbox");
-  await expect(activeToggle).toBeChecked();
-  await activeControl.click();
-  await expect.poll(() => state.graph.nodes[0].data.skipped).toBe(true);
-  await expect(node.getByRole("button", { name: "Run step", exact: true })).toBeDisabled();
-  await activeControl.click();
-  await expect.poll(() => state.graph.nodes[0].data.skipped).toBe(false);
+  await expect(node.getByRole("checkbox", { name: "Node active — turn off to skip" })).toHaveCount(0);
+  await expect(node.getByRole("button", { name: "Delete step", exact: true })).not.toHaveAttribute("title");
   await expect(node.getByRole("button", { name: "Delete step", exact: true })).toBeVisible();
   await expect(node.getByText("Perform inference", { exact: true })).toHaveCount(0);
   await expect(node.locator("textarea")).toHaveCount(0);
@@ -487,10 +492,12 @@ test("partial fan-out keeps the successful output", async ({ page }) => {
   const output = page.locator(".react-flow__node-artifact");
   await expect(output).toHaveCount(1);
   await expect(page.getByText(/1 of 2 generations failed/)).toBeVisible();
-  const activeControl = output.getByTitle("Node active — turn off to skip");
-  await expect(activeControl.getByRole("checkbox")).toBeChecked();
+  await expect(output.getByRole("checkbox", { name: "Node active — turn off to skip" })).toHaveCount(0);
+  await expect(output.getByRole("button", { name: "Delete output", exact: true })).not.toHaveAttribute("title");
   const outputCopy = output.getByRole("button", { name: "Copy output", exact: true });
   const outputEdit = output.getByRole("button", { name: "Edit this output", exact: true });
+  await expect(outputCopy).not.toHaveAttribute("title");
+  await expect(outputEdit).not.toHaveAttribute("title");
   await page.locator(".brand").hover();
   await expect(outputCopy).toHaveCSS("opacity", "0");
   await expect(outputEdit).toHaveCSS("opacity", "0");
@@ -503,20 +510,9 @@ test("partial fan-out keeps the successful output", async ({ page }) => {
   await outputCopy.hover();
   await expect(outputCopy).toHaveCSS("border-color", "rgb(155, 108, 255)");
   await expect(outputCopy).toHaveCSS("color", "rgb(155, 108, 255)");
-  const purple = await output.evaluate((node) => {
-    const card = node.querySelector(".node")!;
-    const track = node.querySelector(".skip .track")!;
-    return {
-      palette: getComputedStyle(card).getPropertyValue("--output-purple").trim(),
-      toggleBorder: getComputedStyle(track).borderColor,
-      toggleKnob: getComputedStyle(track, "::after").backgroundColor,
-    };
-  });
-  expect(purple).toEqual({
-    palette: "#9b6cff",
-    toggleBorder: "rgb(155, 108, 255)",
-    toggleKnob: "rgb(155, 108, 255)",
-  });
+  const purple = await output.evaluate((node) =>
+    getComputedStyle(node.querySelector(".node")!).getPropertyValue("--output-purple").trim());
+  expect(purple).toBe("#9b6cff");
   await outputEdit.click();
   const finishEdit = output.getByRole("button", { name: "Done editing", exact: true });
   await expect(finishEdit).toBeVisible();
@@ -528,8 +524,6 @@ test("partial fan-out keeps the successful output", async ({ page }) => {
   await expect(outputCopy).toBeDisabled();
   await output.locator(".field").first().hover();
   await expect(outputCopy).toHaveCSS("opacity", "0.35");
-  await activeControl.click();
-  await expect.poll(() => state.graph.nodes.find((node: any) => node.type === "artifact")?.data.skipped).toBe(true);
 });
 
 test("saved trace output can be added manually without duplicates", async ({ page }) => {
@@ -575,6 +569,9 @@ test("local models force container switches on and unlock them when disabled", a
   const switches = page.getByRole("checkbox", { name: "Run in a sandbox" });
   await expect(switches.first()).toBeChecked();
   await expect(switches.first()).toBeDisabled();
+  const requiredSandbox = page.locator(".sandbox-main-control").first();
+  await expect(requiredSandbox).toContainText("Run in a sandbox (Required)");
+  await expect(requiredSandbox).not.toHaveAttribute("title");
   await page.getByRole("button", { name: "Add Step", exact: true }).click();
   await page.getByRole("button", { name: "Expand step", exact: true }).last().click();
   await expect(switches).toHaveCount(2);
@@ -600,6 +597,8 @@ test("local models force container switches on and unlock them when disabled", a
   await expect(page.getByRole("region", { name: "Hugging Face settings" }).getByRole("textbox", { name: /Base URL/ })).toBeVisible();
   await expect(switches.first()).toBeEnabled();
   await expect(switches.first()).not.toBeChecked();
+  await expect(page.locator(".sandbox-main-control").first()).toContainText("Run in a sandbox");
+  await expect(page.locator(".sandbox-main-control").first()).not.toContainText("(Required)");
 });
 
 test("Hugging Face library downloads before runs, shows progress, and deletes cached models", async ({ page }) => {
@@ -901,7 +900,8 @@ test("per-node tool switches persist and are sent with runs", async ({ page }) =
   await page.reload();
   await expect(page.getByLabel("Enable workspace_write", { exact: true })).toBeChecked();
   await expect(page.locator(".tool").filter({ hasText: "workspace_write" }).getByRole("button", { name: "Remove tool" })).toBeDisabled();
-  const removeTool = page.locator('.tool:has([aria-label="Enable Example"])').getByRole("button", { name: "Remove tool" });
+  const exampleTool = page.locator('.tool:has([aria-label="Enable Example"])');
+  const removeTool = exampleTool.getByRole("button", { name: "Remove tool" });
   await expect(removeTool).toHaveCSS("border-color", "rgba(0, 0, 0, 0)");
   await expect(removeTool).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await removeTool.hover();
@@ -911,7 +911,22 @@ test("per-node tool switches persist and are sent with runs", async ({ page }) =
   await page.getByLabel("Enable Example", { exact: true }).locator("..").click();
   await expect.poll(() => state.graph.nodes[0].data.workspaceTools?.workspace_write).toBe(false);
   await expect.poll(() => state.graph.nodes[0].data.tools[0].enabled).toBe(false);
+  await expect(exampleTool).toHaveClass(/disabled/);
+  await expect(page.getByLabel("Enable Example", { exact: true })).toBeEnabled();
+  await expect(removeTool).toBeEnabled();
+  const toolName = exampleTool.getByRole("textbox", { name: "Tool name", exact: true });
+  await expect(toolName).toBeDisabled();
+  await expect(toolName).toHaveCSS("cursor", "not-allowed");
+  await exampleTool.getByRole("button", { name: "Expand tool", exact: true }).click();
+  const toolType = exampleTool.getByRole("combobox", { name: "Type", exact: true });
+  const functionName = exampleTool.getByRole("textbox", { name: "Function name", exact: true });
+  await expect(toolType).toBeDisabled();
+  await expect(toolType).toHaveCSS("cursor", "not-allowed");
+  await expect(functionName).toBeDisabled();
+  await expect(functionName).toHaveCSS("cursor", "not-allowed");
+  await expect(exampleTool.getByRole("button", { name: "Copy code", exact: true })).toBeDisabled();
   await page.reload();
+  await expect(page.locator(".tool").filter({ hasText: "workspace_write" })).toHaveClass(/disabled/);
   await expect(page.getByLabel("Enable workspace_write", { exact: true })).not.toBeChecked();
   await expect(page.getByLabel("Enable Example", { exact: true })).not.toBeChecked();
   await runStep(page);

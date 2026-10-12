@@ -75,7 +75,7 @@ function LiveStatus({ data, execution }: { data: InputData; execution: NodeExecu
 }
 
 function StatusLine({ message, timing, outcome }: { message: string; timing?: string; outcome?: string }) {
-  return <div className={`sandbox-row sandbox-status nodrag${outcome ? ` ${outcome}` : ""}`} title={message}>
+  return <div className={`sandbox-row sandbox-status nodrag${outcome ? ` ${outcome}` : ""}`}>
     <span className="sandbox-status-message" role="status" aria-label="Sandbox status" aria-live="polite" aria-atomic="true">{message}</span>
     {timing && <span className="sandbox-status-time" aria-label="Elapsed time and timeout budget">{timing}</span>}
   </div>;

@@ -10,7 +10,7 @@ const ICON = {
 };
 
 /** Copies a text field's contents, acknowledging with a tick before settling back. */
-export function CopyButton({ text, title }: { text: string; title: string }) {
+export function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -22,8 +22,7 @@ export function CopyButton({ text, title }: { text: string; title: string }) {
   return (
     <button
       className={`copy nodrag${copied ? " copied" : ""}`}
-      title={copied ? "Copied" : title}
-      aria-label={title}
+      aria-label={label}
       disabled={!text}
       onClick={async () => {
         try {

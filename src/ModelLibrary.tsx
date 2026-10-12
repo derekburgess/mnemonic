@@ -54,7 +54,7 @@ export function ModelLibrary({ onChange }: { onChange: () => void }) {
       <label className="stack">Hugging Face model ID
         <input className="line" value={model} onChange={(e) => setModel(e.target.value)} placeholder="organization/model-name" />
       </label>
-      <button className="icon model-download" disabled={busy || !model.trim()} type="submit" title="Download model" aria-label="Download"><Icon name="download" size={13} /></button>
+      <button className="icon model-download" disabled={busy || !model.trim()} type="submit" aria-label="Download"><Icon name="download" size={13} /></button>
     </form>
     {error && <p className="error" role="alert">{error}</p>}
     {!models.length && <p className="dim">No local models downloaded yet.</p>}
@@ -70,9 +70,8 @@ export function ModelLibrary({ onChange }: { onChange: () => void }) {
       <div className="settings-actions">
         {entry.active ? <button className="icon tinted tint-err" title="Cancel download" aria-label="Cancel download" disabled={busy || entry.status === "Cancelling"} onClick={() => void action("cancel", entry.model)}><Icon name="stop" size={13} /></button>
           : <>
-            {entry.status !== "Downloaded" && <button className="icon model-download" disabled={busy} title="Download or retry model" aria-label="Download / Retry" onClick={() => void action("download", entry.model)}><Icon name="download" size={13} /></button>}
+            {entry.status !== "Downloaded" && <button className="icon model-download" disabled={busy} aria-label="Download / Retry" onClick={() => void action("download", entry.model)}><Icon name="download" size={13} /></button>}
             <button className="icon tinted tint-err" aria-label="Delete" disabled={busy || runtimeBusy || models.some((m) => m.active)}
-              title={runtimeBusy ? "Wait for local runs and downloads to finish before deleting" : "Delete this model's cached files"}
               onClick={() => void action("delete", entry.model)}><Icon name="trash" size={13} /></button>
           </>}
       </div>

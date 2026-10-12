@@ -64,7 +64,7 @@ function CommentMessage({ author, text, createdAt, replyNumber, onChange, onDele
           aria-label={`${prefix} text`}
           onChange={(event) => onChange({ text: event.target.value })}
         />
-        <CopyButton text={text} title={`Copy ${prefix.toLowerCase()}`} />
+        <CopyButton text={text} label={`Copy ${prefix.toLowerCase()}`} />
       </div>
     </section>
   );

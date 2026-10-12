@@ -16,7 +16,7 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
     label="Settings" resizeLabel="Resize settings panel">
     <header className="trace-head">
       <strong>Settings</strong><div className="spacer" />
-      <button className="tinted tint-err" onClick={onClose} title="Close" aria-label="Close"><Icon name="close" /></button>
+      <button className="tinted tint-err" onClick={onClose} aria-label="Close"><Icon name="close" /></button>
     </header>
     <div className="trace-list">
       {PROVIDERS.map(({ provider, label }) => <ProviderSettingsSection key={provider} provider={provider} label={label} onSaved={onSaved} />)}

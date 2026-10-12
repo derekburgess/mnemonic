@@ -58,7 +58,6 @@ export function WorkspaceRow({
           value={path}
           spellCheck={false}
           aria-label="Workspace folder"
-          title={path || "Choose a folder, or type a path"}
           list={listId}
           autoComplete="off"
           onChange={(e) => onChange(e.target.value)}
@@ -86,7 +85,6 @@ export function WorkspaceRow({
           className="icon browse nodrag"
           onClick={onBrowse}
           disabled={busy}
-          title="Choose a folder"
           aria-label="Choose a folder"
         >
           <Icon name="folder" size={11} />
@@ -94,7 +92,6 @@ export function WorkspaceRow({
         <button
           className="icon tinted tint-err nodrag"
           onClick={onRemove}
-          title="Remove workspace"
           aria-label="Remove workspace"
         >
           <Icon name="close" size={11} />

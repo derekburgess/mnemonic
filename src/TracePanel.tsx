@@ -32,7 +32,7 @@ const Pre = ({ value, tone }: { value: unknown; tone?: "error" }) => {
   return (
     <div className="field trace-block">
       <pre className={`trace-pre${tone === "error" ? " trace-error" : ""}`}>{text}</pre>
-      <CopyButton text={text} title="Copy" />
+      <CopyButton text={text} label="Copy" />
     </div>
   );
 };
@@ -257,7 +257,6 @@ function RunRow({ run, onDelete, onRecover, outputExecIds }: { run: TraceRun; on
         <button
           className="tinted tint-err"
           onClick={() => onDelete(run.runId)}
-          title="Delete this run"
           aria-label="Delete this run"
         >
           <Icon name="trash" />
@@ -325,12 +324,11 @@ export function TracePanel({ onClose, onRecover, outputExecIds }: { onClose: () 
         <button
           className="tinted tint-warn"
           onClick={load}
-          title="Refresh trace logs"
           aria-label="Refresh trace logs"
         >
           <Icon name="refresh" />
         </button>
-        <button className="tinted tint-err" onClick={onClose} title="Close" aria-label="Close">
+        <button className="tinted tint-err" onClick={onClose} aria-label="Close">
           <Icon name="close" />
         </button>
       </header>

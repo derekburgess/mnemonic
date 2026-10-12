@@ -31,6 +31,7 @@ export function ToolEditor({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const enabled = tool.enabled !== false;
 
   const loadMcpTools = async () => {
     setLoading(true);
@@ -58,7 +59,7 @@ export function ToolEditor({
   };
 
   return (
-    <div className="tool">
+    <div className={`tool${enabled ? "" : " disabled"}`}>
       <header className="tool-head">
         <button
           className={`icon collapse-toggle tool-collapse-toggle nodrag${open ? " open" : ""}`}
@@ -72,15 +73,16 @@ export function ToolEditor({
         <input
           className="label nodrag"
           value={tool.label}
+          disabled={!enabled}
           onChange={(e) => onChange({ label: e.target.value })}
           aria-label="Tool name"
         />
-        <ToolEnabledToggle name={tool.label} enabled={tool.enabled !== false} onChange={(enabled) => onChange({ enabled })} />
+        <ToolEnabledToggle name={tool.label} enabled={enabled} onChange={(enabled) => onChange({ enabled })} />
         <DeleteButton onClick={onRemove} title="Remove tool" />
       </header>
 
       {open && (
-        <div className="tool-body">
+        <fieldset className="tool-body" disabled={!enabled}>
           <div className="row">
             <label>
               Type
@@ -219,7 +221,7 @@ export function ToolEditor({
               value={tool.fnParameters ?? ""}
               onChange={(e) => onChange({ fnParameters: e.target.value })}
             />
-            <CopyButton text={tool.fnParameters ?? ""} title="Copy parameters" />
+            <CopyButton text={tool.fnParameters ?? ""} label="Copy parameters" />
           </div>
         </label>
         <label className="stack">
@@ -231,14 +233,14 @@ export function ToolEditor({
               value={tool.fnCode ?? ""}
               onChange={(e) => onChange({ fnCode: e.target.value })}
             />
-            <CopyButton text={tool.fnCode ?? ""} title="Copy code" />
+            <CopyButton text={tool.fnCode ?? ""} label="Copy code" />
           </div>
         </label>
       </>
     )}
 
           {error && <p className="error nodrag">{error}</p>}
-        </div>
+        </fieldset>
       )}
     </div>
   );
@@ -254,7 +256,7 @@ export function ToolEnabledToggle({ name, enabled, onChange }: { name: string; e
 export const WORKSPACE_TOOLS = ["workspace_list", "workspace_read", "workspace_write"] as const;
 
 export function BuiltinTool({ name, enabled, onChange }: { name: string; enabled: boolean; onChange: (enabled: boolean) => void }) {
-  return <div className="tool"><header className="tool-head">
+  return <div className={`tool${enabled ? "" : " disabled"}`}><header className="tool-head">
     <span className="builtin-tool-name">{name}</span><span className="dim">Built-in</span>
     <ToolEnabledToggle name={name} enabled={enabled} onChange={onChange} />
     <DeleteButton disabled onClick={() => {}} title="Remove tool" />

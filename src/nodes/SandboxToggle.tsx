@@ -33,9 +33,8 @@ export function SandboxToggle({ onConfigure, on, onChange, required = false }: {
         <div className="sandbox-main-row">
           <label
             className={`sandbox-control sandbox-main-control${on ? " on" : ""}${locked ? " locked" : ""}`}
-            title="Required for running local models."
           >
-            <span>Run in a sandbox</span>
+            <span>Run in a sandbox{required ? " (Required)" : ""}</span>
             <span className="skip sandbox">
               <input
                 type="checkbox"

@@ -72,8 +72,6 @@ const byId = (nodes: GraphNode[]) => new Map(nodes.map((n) => [n.id, n]));
  * An artifact resolves to the step that produced it, so `step -> artifact -> step` orders those
  * steps just as a pre-wired `step -> step` does.
  *
- * Skipped steps never run, so they are neither scheduled nor waited on — depending on one
- * would otherwise deadlock its dependents and read as a false cycle.
  */
 export function inputDependencies(nodes: GraphNode[], edges: GraphEdge[]): Map<string, Set<string>> {
   const map = byId(nodes);
@@ -82,7 +80,7 @@ export function inputDependencies(nodes: GraphNode[], edges: GraphEdge[]): Map<s
 
   const deps = new Map<string, Set<string>>();
   for (const n of nodes) {
-    if (isInput(n) && n.data.performInference !== false && !n.data.skipped) deps.set(n.id, new Set());
+    if (isInput(n) && n.data.performInference !== false) deps.set(n.id, new Set());
   }
 
   for (const [id, set] of deps) {
@@ -94,7 +92,6 @@ export function inputDependencies(nodes: GraphNode[], edges: GraphEdge[]): Map<s
       if (!source) return;
 
       if (isInput(source)) {
-        if (source.data.skipped) return;
         if (source.data.performInference === false) {
           for (const upstreamId of incoming.get(source.id) ?? []) visit(upstreamId);
         } else {
@@ -102,7 +99,7 @@ export function inputDependencies(nodes: GraphNode[], edges: GraphEdge[]): Map<s
         }
       } else if (isOutput(source)) {
         const producer = map.get(source.data.sourceId);
-        if (producer && isInput(producer) && producer.data.performInference !== false && !producer.data.skipped) {
+        if (producer && isInput(producer) && producer.data.performInference !== false) {
           set.add(producer.id);
         }
       }
@@ -162,7 +159,6 @@ export function resolveInheritedInput(inputId: string, nodes: GraphNode[], edges
     if (!source) return;
 
     if (isOutput(source)) {
-      if (source.data.skipped) return;
       result.context.push({ label: source.data.sourceLabel, text: source.data.text });
       return;
     }
@@ -212,7 +208,7 @@ export function composePrompt(context: ContextBlock[], prompt: string): string {
   return `${blocks}\n\n${prompt}`;
 }
 
-/** The tools a step will offer the model on this run. Skipping the step withholds them all. */
+/** The tools a step will offer the model on this run. */
 export function resolveTools(step: InputNode): ToolConfig[] {
   return step.data.tools ?? [];
 }
