@@ -55,7 +55,7 @@ export async function prepareModelContainer(signal: AbortSignal, emit: EmitEvent
     emit(event("proxy", "local.image_build_started", { image, device: gpu ? "cuda" : "cpu" }));
     await new Promise<void>((resolve, reject) => {
       const build = spawn("docker", ["build", "-t", image, "--build-arg",
-        `TORCH_INDEX=https://download.pytorch.org/whl/${gpu ? "cu124" : "cpu"}`, root], { signal, stdio: ["ignore", "pipe", "pipe"] });
+        `TORCH_INDEX=https://download.pytorch.org/whl/${gpu ? "cu126" : "cpu"}`, root], { signal, stdio: ["ignore", "pipe", "pipe"] });
       let output = "";
       const log = (chunk: Buffer) => { output = (output + chunk.toString()).slice(-8000); };
       build.stdout.on("data", log); build.stderr.on("data", log);
