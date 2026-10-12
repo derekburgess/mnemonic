@@ -59,6 +59,45 @@ test("recovery is idempotent and appended outputs retain existing graph connecti
   assert.equal(next.edges.length, 2);
 });
 
+test("fan-out outputs form a compact staggered cluster away from their producer", () => {
+  const producer = { id: "step", type: "step", position: { x: 40, y: 60 }, data: { label: "Step" } } as InputNode;
+  const committed = commitRun([producer], [], producer, ["one", "two", "three"].map((text, index) => ({
+    text, model: "test", effort: "off" as const, execId: `output-${index}`,
+  })));
+  const outputs = committed.outputIds.map((id) => committed.nodes.find((node) => node.id === id)!);
+
+  assert.ok(outputs.every((node) => node.position.x - (producer.position.x + 300) >= 120));
+  assert.ok(outputs[1].position.x > outputs[0].position.x);
+  assert.ok(outputs[1].position.y > outputs[0].position.y);
+  assert.ok(outputs[2].position.x > outputs[1].position.x);
+  assert.ok(outputs[2].position.y < outputs[1].position.y);
+  assert.ok(Math.max(...outputs.map((node) => node.position.y)) - Math.min(...outputs.map((node) => node.position.y)) < 150);
+
+  const next = commitRun(committed.nodes, committed.edges, producer, ["four", "five", "six"].map((text, index) => ({
+    text, model: "test", effort: "off" as const, execId: `next-${index}`,
+  })));
+  const nextOutputs = next.outputIds.map((id) => next.nodes.find((node) => node.id === id)!);
+  const firstRight = Math.max(...outputs.map((node) => node.position.x)) + 300;
+  const nextLeft = Math.min(...nextOutputs.map((node) => node.position.x));
+  assert.ok(nextOutputs[0].position.x > outputs[0].position.x);
+  assert.ok(nextOutputs[0].position.y > outputs[0].position.y);
+  assert.ok(nextOutputs[0].position.y - outputs[0].position.y > 300);
+  assert.ok(nextLeft > firstRight);
+  assert.equal(nextOutputs[0].data.outputSetIndex, 1);
+
+  const third = commitRun(next.nodes, next.edges, producer, ["seven", "eight", "nine"].map((text, index) => ({
+    text, model: "test", effort: "off" as const, execId: `third-${index}`,
+  })));
+  const thirdOutputs = third.outputIds.map((id) => third.nodes.find((node) => node.id === id)!);
+  const nextTop = Math.min(...nextOutputs.map((node) => node.position.y));
+  const thirdBottom = Math.max(...thirdOutputs.map((node) => node.position.y)) + 336;
+  assert.equal(thirdOutputs[0].position.x, nextOutputs[0].position.x);
+  assert.ok(thirdOutputs[0].position.y < nextOutputs[0].position.y);
+  assert.ok(thirdOutputs[0].position.y < outputs[0].position.y);
+  assert.ok(thirdBottom < nextTop);
+  assert.equal(thirdOutputs[0].data.outputSetIndex, 2);
+});
+
 test("thinking blocks keep their exact tags and unmatched blocks remain in the answer", () => {
   const block = "<think> line one\nline two </think>";
   assert.deepEqual(splitThinking(block + "\n\nHello"), { thinking: block, answer: "Hello" });
@@ -92,19 +131,37 @@ test("thinking chains preserve recovery, fan-out and downstream connections on r
   assert.deepEqual(resolveContext("next", second.nodes, second.edges).map((c) => c.text), ["Answer", "Plain"]);
 });
 
-test("loop iterations append outputs without moving or inheriting manually selected routes", () => {
+test("loop iterations append outputs and move selected routes to the latest output set", () => {
   const producer = { id: "step", type: "step", position: { x: 0, y: 0 }, data: { label: "Loop", loop: true } } as InputNode;
   const consumer = { ...producer, id: "transform", data: { ...producer.data, label: "Transform", loop: false }, position: { x: 1200, y: 0 } };
   const result = { text: "first", model: "test", effort: "off" as const, execId: "first" };
-  const options = { append: true, preserveRoutes: true };
+  const options = { append: true, moveRoutes: true };
   const first = commitRun([producer, consumer], [], producer, [result], options);
   const linked = [...first.edges, { id: "selected", source: first.outputIds[0], target: consumer.id },
     { id: "feedback", source: first.outputIds[0], target: producer.id }];
   const second = commitRun(first.nodes, linked, producer, [{ ...result, text: "second", execId: "second" }], options);
-  assert.ok(linked.every((edge) => second.edges.some((e) => e.id === edge.id && e.source === edge.source && e.target === edge.target)));
-  assert.deepEqual(resolveContext(consumer.id, second.nodes, second.edges).map((c) => c.text), ["first"]);
-  assert.deepEqual(resolveContext(producer.id, second.nodes, second.edges).map((c) => c.text), ["first"]);
+  assert.ok(second.edges.some((edge) => edge.source === producer.id && edge.target === first.outputIds[0]));
+  assert.ok(!second.edges.some((edge) => edge.id === "selected" || edge.id === "feedback"));
+  assert.ok(second.edges.some((edge) => edge.source === second.outputIds[0] && edge.target === consumer.id));
+  assert.ok(second.edges.some((edge) => edge.source === second.outputIds[0] && edge.target === producer.id));
+  assert.deepEqual(resolveContext(consumer.id, second.nodes, second.edges).map((c) => c.text), ["second"]);
+  assert.deepEqual(resolveContext(producer.id, second.nodes, second.edges).map((c) => c.text), ["second"]);
   assert.equal(second.nodes.length, 4);
+});
+
+test("all-output loops retain every iteration route and provide ordered accumulated context", () => {
+  const producer = { id: "step", type: "step", position: { x: 0, y: 0 }, data: { label: "Loop", loop: true, loopOutputMode: "all" } } as InputNode;
+  const consumer = { ...producer, id: "next", data: { ...producer.data, label: "Next", loop: false }, position: { x: 1200, y: 0 } };
+  const options = { append: true };
+  const first = commitRun([producer, consumer], [], producer,
+    [{ text: "first", model: "test", effort: "off", execId: "first" }], options);
+  const linked = [...first.edges, { id: "selected", source: first.outputIds[0], target: consumer.id }];
+  const second = commitRun(first.nodes, linked, producer,
+    [{ text: "second", model: "test", effort: "off", execId: "second" }], options);
+
+  assert.ok(second.edges.some((edge) => edge.id === "selected"));
+  assert.ok(second.edges.some((edge) => edge.source === second.outputIds[0] && edge.target === consumer.id));
+  assert.deepEqual(resolveContext(consumer.id, second.nodes, second.edges).map((c) => c.text), ["first", "second"]);
 });
 
 

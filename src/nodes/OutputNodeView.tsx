@@ -58,6 +58,7 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
   // tool in the chain the artifact hangs off the tool, so tool edges count here.
   const attached = useStore((s) => s.edges.some((e) => e.source === id || e.target === id));
   const stamp = new Date(data.createdAt).toLocaleTimeString();
+  const sourceLabel = !data.sourceLabel.trim() || data.sourceLabel === "Name this step" ? "Unnamed" : data.sourceLabel;
   const tokens = data.usage
     ? `Tokens: ${data.usage.input ?? "?"} in / ${data.usage.output ?? "?"} out`
     : null;
@@ -70,7 +71,7 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
         <div className="meta">
           <strong>{data.model}</strong>
           <span className="dim">
-            {data.sourceLabel} · {data.effort} · {stamp}
+            {sourceLabel} · {data.effort} · {stamp}
             {data.edited && " · edited"}
           </span>
         </div>

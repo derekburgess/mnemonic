@@ -1187,4 +1187,9 @@ body.resizing-col { cursor: col-resize; user-select: none; }
 .provider-settings > section { padding: 0 10px 10px; }
 .provider-settings-fields { display: flex; flex-direction: column; gap: 10px; min-width: 0; border: 0; padding: 0; margin: 0; }
 
-.loop-controls { padding-top: 6px; padding-bottom: 6px; }
+.loop-controls { flex-direction: column; align-items: stretch; justify-content: flex-start; height: auto; min-height: 28px; padding-top: 6px; padding-bottom: 6px; }
+.loop-controls-main { display: flex; align-items: center; width: 100%; }
+.loop-limit { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 11px; cursor: text; }
+.loop-limit .line { width: 54px; padding: 3px 5px; }
+.loop-limit .line:disabled { opacity: 0.45; cursor: not-allowed; }
+.loop-output-mode { width: 100%; }

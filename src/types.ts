@@ -3,6 +3,7 @@ import type { Node, Edge } from "@xyflow/react";
 export type Effort = "off" | "minimal" | "low" | "medium" | "high";
 
 export type NodeStatus = "idle" | "running" | "done" | "error";
+export type LoopOutputMode = "last" | "all";
 
 export type InputData = {
   /** Whether the node is shown as only its title and primary actions. */
@@ -38,6 +39,10 @@ export type InputData = {
   maxRounds?: number;
   /** Repeat explicit node runs until stopped; each iteration preserves its outputs. */
   loop?: boolean;
+  /** Maximum iterations for one loop start. */
+  loopLimit?: number;
+  /** Whether downstream routes advance to the latest iteration or accumulate every iteration. */
+  loopOutputMode?: LoopOutputMode;
   /** Budget for the whole step: every round plus the tools they call. Seconds. */
   timeoutSec?: number;
   /** How many artifacts one run of this step generates. */
@@ -91,6 +96,10 @@ export type ToolCallRecord = { name: string; detail?: string; urls?: string[] };
 
 export type OutputData = {
   kind?: "thinking";
+  /** Placement identity for one fan-out result set; shared by its thinking and answer cards. */
+  outputSetId?: string;
+  /** Stable macro-cluster position among the source step's historical result sets. */
+  outputSetIndex?: number;
   workspaceChanges?: string;
   execId?: string;
   runId?: string;

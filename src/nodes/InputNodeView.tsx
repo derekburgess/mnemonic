@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import type { Attachment, Effort, InputFile, InputNode, ToolConfig, Workspace } from "../types";
+import type { Attachment, Effort, InputFile, InputNode, LoopOutputMode, ToolConfig, Workspace } from "../types";
 import { Icon } from "../icons";
+import { DEFAULT_LOOP_LIMIT, MAX_LOOP_LIMIT, normalizeLoopLimit } from "../loop";
 import { pickFolderNatively, resolveFolder, type Provider } from "../api";
 import { pickDirectory } from "../pickDirectory";
 import { uid } from "../graph";
@@ -178,7 +179,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
       </header>
 
       {!collapsed && <>
-      <div className="sandbox-row loop-controls nodrag">
+      <div className="sandbox-row nodrag">
         <label className="sandbox-control">
           <span className="skip sandbox"><input type="checkbox" checked={performInference}
             onChange={(e) => onChange(id, { performInference: e.target.checked })} /><span className="track" aria-hidden="true" /></span>
@@ -289,11 +290,24 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
       </div>
 
       <div className="sandbox-row loop-controls nodrag">
-        <label className="sandbox-control">
-          <span className="skip sandbox"><input type="checkbox" checked={!!data.loop}
-            onChange={(e) => onChange(id, { loop: e.target.checked })} /><span className="track" aria-hidden="true" /></span>
-          <span>Loop node</span>
-        </label>
+        <div className="loop-controls-main">
+          <label className="sandbox-control">
+            <span className="skip sandbox"><input type="checkbox" checked={!!data.loop}
+              onChange={(e) => onChange(id, { loop: e.target.checked })} /><span className="track" aria-hidden="true" /></span>
+            <span>Loop node</span>
+          </label>
+          <label className="loop-limit">
+            <input className="line nodrag" type="number" min={1} max={MAX_LOOP_LIMIT} step={1}
+              value={data.loopLimit ?? DEFAULT_LOOP_LIMIT} aria-label="Loop iterations" disabled={!data.loop}
+              onChange={(e) => onChange(id, { loopLimit: normalizeLoopLimit(Number(e.target.value)) })} />
+          </label>
+        </div>
+        <select className="loop-output-mode nodrag" aria-label="Loop outputs" disabled={!data.loop}
+          value={data.loopOutputMode ?? "last"}
+          onChange={(e) => onChange(id, { loopOutputMode: e.target.value as LoopOutputMode })}>
+          <option value="last">Last output</option>
+          <option value="all">All outputs</option>
+        </select>
       </div>
       </>}
 

@@ -27,6 +27,7 @@ import {
 
 import { fetchSettings, fetchModels, runStep, toolSpec, waitForExecution, cancelExecution, type TraceStep, type Provider, type PlatformSettings } from "./api";
 import { Icon } from "./icons";
+import { DEFAULT_LOOP_LIMIT, normalizeLoopLimit } from "./loop";
 import { SettingsPanel } from "./SettingsPanel";
 import { TracePanel } from "./TracePanel";
 import {
@@ -50,6 +51,7 @@ import {
   type GraphNode,
   type InputData,
   type InputNode,
+  type LoopOutputMode,
   type OutputData,
   type ToolConfig,
 } from "./types";
@@ -84,6 +86,8 @@ function newInput(model: string, position: { x: number; y: number }): InputNode 
       outputs: 1,
       maxRounds: DEFAULT_ROUNDS,
       timeoutSec: DEFAULT_TIMEOUT_SEC,
+      loopLimit: DEFAULT_LOOP_LIMIT,
+      loopOutputMode: "last",
       status: "idle",
     },
   };
@@ -299,7 +303,7 @@ function Canvas() {
 
   /** Execute a single input node against a working snapshot and return the snapshot it produced. */
   const executeNode = useCallback(
-    async (snap: Snapshot, id: string, trace?: { runId: string; kind: "run" | "next" | "step"; seq: number }, options: { signal?: AbortSignal; preserveRoutes?: boolean } = {}): Promise<Snapshot> => {
+    async (snap: Snapshot, id: string, trace?: { runId: string; kind: "run" | "next" | "step"; seq: number }, options: { signal?: AbortSignal; preserveRoutes?: boolean; loopOutputMode?: LoopOutputMode } = {}): Promise<Snapshot> => {
       const producer = snap.nodes.find((n) => n.id === id);
       if (!producer || !isInput(producer) || producer.data.performInference === false || producer.data.skipped) return snap;
 
@@ -330,6 +334,7 @@ function Canvas() {
       const group = uid();
       rememberExecutions(executions.map((execution) => ({ ...execution, nodeId: id, label: producer.data.label, effort: producer.data.effort, group,
         preserveRoutes: options.preserveRoutes,
+        loopOutputMode: options.loopOutputMode,
         deadline: Date.now() + ((producer.data.timeoutSec || 300) + (producer.data.sandbox ? 720 : 60)) * 1000 })));
       const settled = await Promise.allSettled(
         executions.map((execution) =>
@@ -357,6 +362,7 @@ function Canvas() {
                       nodeId: id,
                       label: producer.data.label,
                       context,
+                      loopOutputMode: options.loopOutputMode,
                     },
                   }
                 : {}),
@@ -378,7 +384,7 @@ function Canvas() {
         return working;
       }
       const cancelled = failed.some((f) => f.message === "cancelled");
-      if (cancelled && !(options.preserveRoutes && done.length)) {
+      if (cancelled && !((options.preserveRoutes || options.loopOutputMode) && done.length)) {
         successfulExecutions.forEach((execution) => reportTraceEvent(execution, "delivery.cancelled", { reason: "fan-out cancelled before graph commit" }));
         working = patchStatus(working, id, { status: "idle", error: undefined });
       } else if (!done.length) {
@@ -399,7 +405,9 @@ function Canvas() {
               toolCalls: result.toolCalls,
               workspaceChanges: result.workspaceChanges,
             })),
-            options.preserveRoutes ? { append: true, preserveRoutes: true } : {},
+            options.loopOutputMode
+              ? { append: true, moveRoutes: options.loopOutputMode === "last" }
+              : options.preserveRoutes ? { append: true, preserveRoutes: true } : {},
           );
           committedIds = committed.outputIds;
           working = patchStatus({ nodes: committed.nodes, edges: committed.edges }, id, {
@@ -469,7 +477,13 @@ function Canvas() {
         forgetExecutions(entries.filter((_, i) => settled[i].status === "rejected" && (settled[i] as PromiseRejectedResult).reason?.terminal).map((e) => e.execId));
         const producer = live.current.nodes.find((n) => n.id === entries[0].nodeId && isInput(n)) as InputNode | undefined;
         if (producer && results.length && !controller.signal.aborted) {
-          const committed = commitRun(live.current.nodes, live.current.edges, producer, results, { append: true, preserveRoutes: entries.some((entry) => entry.preserveRoutes) });
+          const loopOutputMode = entries.find((entry) => entry.loopOutputMode)?.loopOutputMode;
+          const moveRoutes = loopOutputMode ? loopOutputMode === "last" : entries.some((entry) => entry.moveRoutes);
+          const committed = commitRun(live.current.nodes, live.current.edges, producer, results, {
+            append: true,
+            moveRoutes,
+            preserveRoutes: !loopOutputMode && !moveRoutes && entries.some((entry) => entry.preserveRoutes),
+          });
           publish(patchStatus({ nodes: committed.nodes, edges: committed.edges }, producer.id, { status: "done",
             error: failures.length ? `${failures.length} executions failed; inspect Trace Logs.` : undefined }));
           localStorage.setItem(STORAGE_KEY, JSON.stringify(live.current));
@@ -501,15 +515,21 @@ function Canvas() {
       setNotice(null);
       const runId = trace?.runId ?? uid();
       let seq = trace?.seq ?? 0;
+      let iterations = 0;
       try {
         do {
           const current = live.current.nodes.find((node) => node.id === id);
           if (controller.signal.aborted || !current || !isInput(current) || current.data.skipped) break;
           await executeNode(live.current, id, { runId, kind: trace?.kind ?? "step", seq: seq++ },
-            { signal: controller.signal, preserveRoutes: looping });
+            { signal: controller.signal, loopOutputMode: looping ? current.data.loopOutputMode ?? "last" : undefined });
+          iterations++;
           setStepped((s) => s.includes(id) ? s : [...s, id]);
           const next = live.current.nodes.find((node) => node.id === id);
           if (!looping || controller.signal.aborted || !next || !isInput(next) || !next.data.loop || next.data.skipped || next.data.error) break;
+          if (iterations >= normalizeLoopLimit(next.data.loopLimit)) {
+            publish(patchStatus(live.current, id, { loop: false }));
+            break;
+          }
           // Yield between iterations so graph edits, Stop, and other nodes remain responsive.
           await new Promise<void>((resolve) => {
             const done = () => { clearTimeout(timer); controller.signal.removeEventListener("abort", done); resolve(); };

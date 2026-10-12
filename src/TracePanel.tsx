@@ -80,6 +80,7 @@ function StepDetail({ step, onRecover, outputExecIds }: { step: TraceStep; onRec
         <div><dt>Tokens</dt><dd>{step.usage ? `${step.usage.input ?? "?"} in / ${step.usage.output ?? "?"} out` : "—"}</dd></div>
         <div><dt>Max rounds</dt><dd>{step.params?.maxRounds ?? "default"}</dd></div>
         <div><dt>Timeout</dt><dd>{step.params?.timeoutSec ? `${step.params.timeoutSec}s` : "default"}</dd></div>
+        {step.params?.loopOutputMode && <div><dt>Loop outputs</dt><dd>{step.params.loopOutputMode === "all" ? "All outputs" : "Last output"}</dd></div>}
       </dl>
       </Section>
 

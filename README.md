@@ -589,9 +589,13 @@ editor, save configuration, execute tools, or run the node. Manually copy any de
 ### Looping a node
 
 Enable **Loop node** below Max Tool Turns and Timeout, then click **Start loop**. Each iteration
-uses the node's current configuration and connected outputs, and appends new output nodes without
-moving or inheriting connections from earlier outputs. Timeout and Max Tool Turns apply separately
-to each iteration. Errors stop the loop; turning off Loop node lets the current iteration finish.
+uses the node's current configuration and connected outputs, and appends new output nodes. Any
+downstream connections move from the previous output set to the latest one, so the next step reads
+the newest loop result. Choose **All outputs** to retain each iteration's downstream connection and
+accumulate every loop result in the next step's context. The exact context and selected loop-output
+mode are recorded in the execution trace. Timeout and Max Tool Turns apply separately
+to each iteration. The loop limit defaults to 3; reaching it stops the loop and turns off
+Loop node. Errors stop the loop; turning off Loop node lets the current iteration finish.
 
 While a loop runs, you can add steps, edit connections, and run other nodes independently. For
 example, connect one loop output to a transformation step, run that step, and connect its output

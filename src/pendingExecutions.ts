@@ -1,5 +1,5 @@
-import type { Effort } from "./types";
-export type PendingExecution = { runId: string; execId: string; nodeId: string; label: string; effort: Effort; group: string; deadline: number; preserveRoutes?: boolean; cancelled?: boolean };
+import type { Effort, LoopOutputMode } from "./types";
+export type PendingExecution = { runId: string; execId: string; nodeId: string; label: string; effort: Effort; group: string; deadline: number; preserveRoutes?: boolean; moveRoutes?: boolean; loopOutputMode?: LoopOutputMode; cancelled?: boolean };
 const KEY = "mnemonic.pending.v1";
 export function pendingExecutions(): PendingExecution[] {
   try { const value = JSON.parse(localStorage.getItem(KEY) ?? "[]"); return Array.isArray(value) ? value : []; } catch { return []; }

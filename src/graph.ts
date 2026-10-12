@@ -15,6 +15,12 @@ export const uid = () => crypto.randomUUID();
 /** Fallback footprint for a node React Flow has not measured yet. */
 const NODE_SIZE = { width: 300, height: 240 };
 const GAP = 28;
+/** Output cards render taller than the generic fallback because their text area starts at 260px. */
+const OUTPUT_CARD_SIZE = { width: 300, height: 336 };
+const OUTPUT_INPUT_GAP = 120;
+const OUTPUT_CLUSTER_X_STEP = 72;
+const OUTPUT_CLUSTER_Y_STEP = 64;
+const OUTPUT_SET_GAP = 56;
 
 export type Box = { x: number; y: number; w: number; h: number };
 
@@ -33,6 +39,7 @@ export function freeSpot(
   desired: { x: number; y: number },
   taken: Box[],
   size = NODE_SIZE,
+  direction: "down" | "right" = "down",
 ): { x: number; y: number } {
   const hits = (x: number, y: number) =>
     taken.some(
@@ -43,10 +50,12 @@ export function freeSpot(
         y + size.height + GAP > b.y,
     );
 
-  // Column-major: the flow runs left to right, so alternatives stack downward before spilling
-  // further right into the next step's space.
-  for (let col = 0; col < 12; col++) {
-    for (let row = 0; row < 30; row++) {
+  // Ordinary additions stack downward. Output clusters already fan down/up internally, so their
+  // later sets stay close by trying the next horizontal slot first.
+  for (let primary = 0; primary < (direction === "right" ? 30 : 12); primary++) {
+    for (let secondary = 0; secondary < (direction === "right" ? 12 : 30); secondary++) {
+      const col = direction === "right" ? secondary : primary;
+      const row = direction === "right" ? primary : secondary;
       const x = desired.x + col * (size.width + GAP);
       const y = desired.y + row * (size.height + GAP);
       if (!hits(x, y)) return { x, y };
@@ -231,7 +240,7 @@ export type RunResult = Omit<OutputData, "sourceId" | "sourceLabel" | "createdAt
 
 /**
  * Record one execution: spawn a fresh artifact per result, point the producer at all of them,
- * and migrate the replaced artifacts' downstream edges onto the first. Prior outputs stay on
+ * and migrate the replaced artifacts' downstream edges onto the new set. Prior outputs stay on
  * the canvas, detached, holding their text.
  */
 export function commitRun(
@@ -239,7 +248,7 @@ export function commitRun(
   edges: GraphEdge[],
   producer: InputNode,
   results: RunResult[],
-  options: { append?: boolean; preserveRoutes?: boolean } = {},
+  options: { append?: boolean; preserveRoutes?: boolean; moveRoutes?: boolean } = {},
 ): { nodes: GraphNode[]; edges: GraphEdge[]; outputIds: string[] } {
   const existing = new Map(nodes.filter(isOutput).filter((n) => n.data.execId && n.data.kind !== "thinking").map((n) => [n.data.execId, n.id]));
   const unique = results.filter((result, i) => !result.execId || (!existing.has(result.execId) && results.findIndex((r) => r.execId === result.execId) === i));
@@ -273,32 +282,64 @@ export function commitRun(
   });
   const inherited = edges.filter((e) => activeOutputIds.has(e.source));
 
-  // Artifacts land beside the step, fanning down into whatever space is free. Existing nodes
-  // are never moved to make room — a run should not rearrange the canvas under you.
+  // Reserve one compact footprint for the fan-out, then fan cards rightward in an alternating
+  // down/up formation. Siblings deliberately overlap like a hand of cards; unrelated nodes do
+  // not. Existing nodes are never moved to make room.
+  const relatedOutputs = nodes.filter((node): node is OutputNode => isOutput(node) && node.data.sourceId === producer.id);
+  const legacySets = new Set(relatedOutputs.map((node) => node.data.outputSetId ?? `legacy:${node.data.createdAt}`));
+  const greatestSetIndex = relatedOutputs.reduce((greatest, node) =>
+    Math.max(greatest, node.data.outputSetIndex ?? -1), -1);
+  const outputSetIndex = Math.max(legacySets.size, greatestSetIndex + 1);
+  const outputSetId = uid();
+  // Sibling cards may overlap inside one set, but every historical set remains an obstacle to
+  // the next set. This preserves the macro stagger without letting whole sets cover each other.
   const taken = nodes.map(boxOf);
-  const beside = { x: producer.position.x + boxOf(producer).w + GAP, y: producer.position.y };
+  const beside = { x: producer.position.x + boxOf(producer).w + OUTPUT_INPUT_GAP, y: producer.position.y };
   const createdAt = Date.now();
+  const parsed = unique.map((result) => ({ result, ...splitThinking(result.text) }));
+  const offsets = parsed.map((_, index) => ({
+    x: index * OUTPUT_CLUSTER_X_STEP,
+    y: index === 0 ? 0 : (index % 2 ? 1 : -1) * Math.ceil(index / 2) * OUTPUT_CLUSTER_Y_STEP,
+  }));
+  const minY = Math.min(...offsets.map(({ y }) => y));
+  const maxY = Math.max(...offsets.map(({ y }) => y));
+  const clusterSize = {
+    width: parsed.some(({ thinking }) => thinking)
+      ? OUTPUT_CARD_SIZE.width * 2 + GAP + offsets.at(-1)!.x
+      : OUTPUT_CARD_SIZE.width + offsets.at(-1)!.x,
+    height: OUTPUT_CARD_SIZE.height + maxY - minY,
+  };
+  // Match the steep diagonal used inside a set. A small fixed Y offset made whole sets read as
+  // one horizontal row once their non-overlapping X gap was applied.
+  const outputSetYStep = clusterSize.height - OUTPUT_CLUSTER_Y_STEP;
+  const outputSetColumn = Math.ceil(outputSetIndex / 2);
+  const setOffset = {
+    x: outputSetColumn * (clusterSize.width + OUTPUT_SET_GAP),
+    y: outputSetIndex === 0
+      ? 0
+      : (outputSetIndex % 2 ? 1 : -1) * Math.ceil(outputSetIndex / 2) * outputSetYStep,
+  };
+  const cluster = freeSpot({
+    x: beside.x + setOffset.x,
+    y: beside.y + minY + setOffset.y,
+  }, taken, clusterSize, "right");
 
   const thinkingNodes: OutputNode[] = [];
   const resultEdges: GraphEdge[] = [];
-  const outputs: OutputNode[] = unique.map((result) => {
-    const { thinking, answer } = splitThinking(result.text);
+  const outputs: OutputNode[] = parsed.map(({ result, thinking, answer }, index) => {
     let source = producer.id;
-    let desired = beside;
+    const row = { x: cluster.x + offsets[index].x, y: cluster.y + offsets[index].y - minY };
+    let position = row;
     if (thinking) {
-      const position = freeSpot(beside, taken);
-      taken.push({ ...position, w: NODE_SIZE.width, h: NODE_SIZE.height });
-      const node: OutputNode = { id: uid(), type: "artifact", position, data: {
-        kind: "thinking", text: thinking, sourceId: producer.id, sourceLabel: producer.data.label,
+      const node: OutputNode = { id: uid(), type: "artifact", position: row, data: {
+        kind: "thinking", outputSetId, outputSetIndex, text: thinking, sourceId: producer.id, sourceLabel: producer.data.label,
         model: result.model, effort: result.effort, createdAt, runId: result.runId,
       } };
       thinkingNodes.push(node);
       resultEdges.push({ id: uid(), source: producer.id, target: node.id });
       source = node.id;
-      desired = { x: position.x + NODE_SIZE.width + GAP, y: position.y };
+      position = { x: row.x + OUTPUT_CARD_SIZE.width + GAP, y: row.y };
     }
-    const position = freeSpot(desired, taken);
-    taken.push({ x: position.x, y: position.y, w: NODE_SIZE.width, h: NODE_SIZE.height });
     const id = uid();
     resultEdges.push({ id: uid(), source, target: id });
     return {
@@ -307,6 +348,8 @@ export function commitRun(
       position,
       data: {
         ...result,
+        outputSetId,
+        outputSetIndex,
         text: answer,
         sourceId: producer.id,
         sourceLabel: producer.data.label,
@@ -314,7 +357,10 @@ export function commitRun(
       },
     };
   });
-  const stale = new Set((options.preserveRoutes ? [] : [...(options.append ? [] : inherited), ...prewired]).map((e) => e.id));
+  const stale = new Set((options.preserveRoutes ? [] : [
+    ...(options.moveRoutes || !options.append ? inherited : []),
+    ...prewired,
+  ]).map((e) => e.id));
   const kept = edges.filter(
     (e) => !stale.has(e.id) && !(!options.append && e.source === producer.id && activeRootIds.has(e.target)),
   );

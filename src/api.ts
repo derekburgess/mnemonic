@@ -1,6 +1,6 @@
 import { reportTraceEvent } from "./traceEvents";
 import type { TraceEvent } from "../server/events";
-import type { Effort, ToolCallRecord, ToolConfig } from "./types";
+import type { Effort, LoopOutputMode, ToolCallRecord, ToolConfig } from "./types";
 import type { ContainerTrace } from "../server/containerTrace";
 
 const FALLBACK_MODELS = ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4o", "gpt-4o-mini"];
@@ -191,6 +191,7 @@ export type TraceMeta = {
   nodeId: string;
   label: string;
   context: { label: string; text: string }[];
+  loopOutputMode?: LoopOutputMode;
 };
 
 export type TraceRun = {
@@ -228,7 +229,7 @@ export type TraceStep = {
   toolCalls: ToolCallRecord[] | null;
   outputText: string | null;
   usage: { input?: number; output?: number } | null;
-  params: { workspaceChanges?: string; sandboxConfig?: string | null; maxRounds: number | null; timeoutSec: number | null; deliveryTimeoutSec?: number } | null;
+  params: { workspaceChanges?: string; sandboxConfig?: string | null; maxRounds: number | null; timeoutSec: number | null; deliveryTimeoutSec?: number; loopOutputMode?: LoopOutputMode | null } | null;
   files: { name: string; mime: string; bytes: number }[] | null;
   links: { url: string; kind: string; note?: string }[] | null;
 };

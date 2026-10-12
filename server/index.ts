@@ -381,6 +381,7 @@ app.post("/api/run", async (req, res) => {
           sandboxConfig: sandboxConfig ?? null,
           maxRounds: typeof maxRounds === "number" ? maxRounds : null,
           timeoutSec: typeof timeoutSec === "number" ? timeoutSec : null,
+          loopOutputMode: trace.loopOutputMode === "last" || trace.loopOutputMode === "all" ? trace.loopOutputMode : null,
           deliveryTimeoutSec: typeof timeoutSec === "number" && timeoutSec > 0 ? timeoutSec + (contained ? 720 : 60) : 300 + (contained ? 720 : 60),
         },
         // Sizes rather than payloads: the bytes are already elided from the rounds.

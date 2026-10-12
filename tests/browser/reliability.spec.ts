@@ -60,6 +60,64 @@ async function runStep(page: Page) {
   await page.getByRole("button", { name: "Run step", exact: true }).click();
 }
 
+test("outputs call an unnamed source step Unnamed", async ({ page }) => {
+  const state = await setup(page);
+  state.complete = true;
+  await page.getByRole("textbox", { name: "Step name", exact: true }).fill("Name this step");
+  await runStep(page);
+  const output = page.locator(".react-flow__node-artifact");
+  await expect(output).toHaveCount(1);
+  await expect(output.locator(".meta .dim")).toContainText("Unnamed · off");
+  await expect(output.locator(".meta .dim")).not.toContainText("Name this step");
+});
+
+test("fan-out outputs and their successive sets render as staggered clusters", async ({ page }) => {
+  const state = await setup(page, 3);
+  state.complete = true;
+  await runStep(page);
+  const outputs = page.locator(".react-flow__node-artifact");
+  await expect(outputs).toHaveCount(3);
+
+  const inputBox = (await page.locator('.react-flow__node-step[data-id="step"]').boundingBox())!;
+  const outputBoxes = await outputs.evaluateAll((nodes) => nodes.map((node) => {
+    const box = node.getBoundingClientRect();
+    return { x: box.x, y: box.y, width: box.width, height: box.height };
+  }).sort((a, b) => a.y - b.y));
+  expect(outputBoxes[0].x - (inputBox.x + inputBox.width)).toBeGreaterThan(50);
+  const byX = [...outputBoxes].sort((a, b) => a.x - b.x);
+  expect(byX[1].y).toBeGreaterThan(byX[0].y);
+  expect(byX[2].y).toBeLessThan(byX[1].y);
+  expect(byX[1].x - byX[0].x).toBeLessThan(byX[0].width);
+  expect(byX[2].x - byX[1].x).toBeLessThan(byX[1].width);
+
+  await runStep(page);
+  await expect(outputs).toHaveCount(6);
+  await runStep(page);
+  await expect(outputs).toHaveCount(9);
+  await expect.poll(() => state.graph.nodes.filter((node: any) => node.type === "artifact").length).toBe(9);
+  const anchors = [0, 1, 2].map((setIndex) => state.graph.nodes.find((node: any) =>
+    node.type === "artifact" && node.data.outputSetIndex === setIndex));
+  expect(anchors.every(Boolean)).toBe(true);
+  expect(anchors[1].position.x).toBeGreaterThan(anchors[0].position.x);
+  expect(anchors[1].position.y).toBeGreaterThan(anchors[0].position.y);
+  expect(anchors[1].position.y - anchors[0].position.y).toBeGreaterThan(300);
+  expect(anchors[2].position.x).toBe(anchors[1].position.x);
+  expect(anchors[2].position.y).toBeLessThan(anchors[1].position.y);
+  expect(anchors[2].position.y).toBeLessThan(anchors[0].position.y);
+  const setBounds = [0, 1, 2].map((setIndex) => {
+    const members = state.graph.nodes.filter((node: any) => node.type === "artifact" && node.data.outputSetIndex === setIndex);
+    return { left: Math.min(...members.map((node: any) => node.position.x)),
+      right: Math.max(...members.map((node: any) => node.position.x + 300)),
+      top: Math.min(...members.map((node: any) => node.position.y)),
+      bottom: Math.max(...members.map((node: any) => node.position.y + 336)) };
+  });
+  const overlaps = (a: typeof setBounds[number], b: typeof setBounds[number]) =>
+    a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  expect(overlaps(setBounds[0], setBounds[1])).toBe(false);
+  expect(overlaps(setBounds[0], setBounds[2])).toBe(false);
+  expect(overlaps(setBounds[1], setBounds[2])).toBe(false);
+});
+
 test("input nodes collapse to their name and primary actions and persist", async ({ page }) => {
   const state = await setup(page);
   const node = page.locator('.react-flow__node-step[data-id="step"]');
@@ -661,7 +719,39 @@ test("provider settings expand independently and save to their own provider", as
   expect(saved[1]).toEqual({ provider: "huggingface", baseUrl: "http://localhost:8000/v1" });
 });
 
-test("looping nodes preserve outputs and routes while another node transforms feedback", async ({ page }) => {
+test("loop limit stops after the configured iterations and switches looping off", async ({ page }) => {
+  const state = await setup(page);
+  state.complete = true;
+  const loop = page.locator('.react-flow__node-step[data-id="step"]');
+  const toggle = loop.getByRole("checkbox", { name: "Loop node", exact: true });
+  const limit = loop.getByRole("spinbutton", { name: "Loop iterations", exact: true });
+  const outputMode = loop.getByRole("combobox", { name: "Loop outputs", exact: true });
+
+  await expect(limit).toHaveValue("3");
+  await expect(limit).toBeDisabled();
+  await expect(outputMode).toHaveValue("last");
+  await expect(outputMode).toBeDisabled();
+  const loopBounds = await outputMode.locator("..").boundingBox();
+  const modeBounds = await outputMode.boundingBox();
+  const workspaceBounds = await loop.getByRole("button", { name: "Add workspace", exact: true }).boundingBox();
+  expect(loopBounds!.height).toBeGreaterThan(28);
+  expect(modeBounds!.y + modeBounds!.height).toBeLessThanOrEqual(workspaceBounds!.y);
+  await toggle.press("Space");
+  await expect(limit).toBeEnabled();
+  await expect(outputMode).toBeEnabled();
+  await limit.fill("2");
+  await loop.getByRole("button", { name: "Start loop", exact: true }).click();
+  await expect.poll(() => state.executions.length).toBe(2);
+  await expect(toggle).not.toBeChecked();
+  await expect(limit).toBeDisabled();
+  await expect(outputMode).toBeDisabled();
+  await expect(loop.getByRole("button", { name: "Run step", exact: true })).toBeVisible();
+  await expect(page.locator(".react-flow__node-artifact")).toHaveCount(2);
+  await page.waitForTimeout(400);
+  expect(state.executions).toHaveLength(2);
+});
+
+test("all-output loops preserve outputs, context, and trace routing while another node transforms feedback", async ({ page }) => {
   await page.setViewportSize({ width: 2000, height: 1600 });
   const state = await setup(page);
   const graph = seed() as any;
@@ -684,6 +774,9 @@ test("looping nodes preserve outputs and routes while another node transforms fe
   });
   await page.reload();
   const loop = page.locator('.react-flow__node-step[data-id="step"]');
+  const outputMode = loop.getByRole("combobox", { name: "Loop outputs", exact: true });
+  await expect(outputMode).toHaveValue("last");
+  await outputMode.selectOption("all");
   await loop.getByRole("button", { name: "Start loop", exact: true }).click();
   await expect.poll(() => state.executions.length).toBe(1);
   await expect(page.getByRole("button", { name: "Run all", exact: true })).toHaveCount(0);
@@ -697,7 +790,7 @@ test("looping nodes preserve outputs and routes while another node transforms fe
   const transformId = (await transform.getAttribute("data-id"))!;
 
   async function connect(sourceId: string, targetId: string) {
-    await page.getByRole("button", { name: "fit view", exact: true }).click();
+    await page.locator(".react-flow__controls-fitview").click();
     const source = page.locator(`.react-flow__node[data-id="${sourceId}"] .react-flow__handle.source`);
     const target = page.locator(`.react-flow__node[data-id="${targetId}"] .react-flow__handle.target`);
     await source.dragTo(target);
@@ -716,8 +809,11 @@ test("looping nodes preserve outputs and routes while another node transforms fe
   completed.set(state.executions[1].trace.execId, "second loop output");
   await expect.poll(() => state.executions.length).toBe(4);
   expect(state.executions[3].input).toContain("transformed feedback");
+  expect(state.executions[1].trace.loopOutputMode).toBe("all");
+  expect(state.executions[3].trace.context).toEqual([{ label: "Transform", text: "transformed feedback" }]);
   await expect(page.locator(".react-flow__node-artifact")).toHaveCount(3);
-  await expect.poll(() => state.graph.edges.filter((e: any) => e.target === transformId).map((e: any) => e.source)).toEqual([firstId]);
+  const secondLoopId = (await page.locator(".react-flow__node-artifact").filter({ hasText: "second loop output" }).getAttribute("data-id"))!;
+  await expect.poll(() => state.graph.edges.filter((e: any) => e.target === transformId).map((e: any) => e.source)).toEqual([firstId, secondLoopId]);
   await loop.getByRole("button", { name: "Stop loop", exact: true }).click();
   await expect(loop.getByRole("button", { name: "Start loop", exact: true })).toBeVisible();
   expect(state.cancelled.has(state.executions[3].trace.execId)).toBe(true);

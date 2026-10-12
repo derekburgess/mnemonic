@@ -53,7 +53,8 @@ test("async admission is idempotent and result delivery is independent of the re
   const controller = new AbortController();
   const request = fetch(`${base}/api/run`, { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model: "test", input: "test", timeoutSec: 5,
-      trace: { runId: "run", execId: "exec", nodeId: "step", clientSentMs: Date.now() } }), signal: controller.signal });
+      trace: { runId: "run", execId: "exec", nodeId: "step", clientSentMs: Date.now(), loopOutputMode: "all",
+        context: [{ label: "Loop", text: "first" }, { label: "Loop", text: "second" }] } }), signal: controller.signal });
   const accepted = await request;
   assert.equal(accepted.status, 202);
   assert.equal((await accepted.json()).execId, "exec");
@@ -89,6 +90,8 @@ test("async admission is idempotent and result delivery is independent of the re
   }
   const { steps } = await (await fetch(`${base}/api/trace/runs/run`)).json();
   assert.equal(steps[0].status, "ok");
+  assert.equal(steps[0].params.loopOutputMode, "all");
+  assert.deepEqual(steps[0].context, [{ label: "Loop", text: "first" }, { label: "Loop", text: "second" }]);
   assert.equal(steps[0].delivery, "added to graph");
   assert.equal(steps[0].events.filter((e: { kind: string }) => e.kind === "graph.committed").length, 1);
   assert.ok(steps[0].events.some((e: { kind: string }) => e.kind === "response.sent"));
