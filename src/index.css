@@ -168,6 +168,8 @@ button.tinted:hover:not(:disabled) {
 
 .file { position: relative; overflow: hidden; }
 .file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.file input::file-selector-button,
+.file input::-webkit-file-upload-button { cursor: pointer; }
 
 .notice {
   padding: 8px 14px;

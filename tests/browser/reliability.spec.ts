@@ -109,6 +109,13 @@ test("canvas can zoom out beyond the React Flow default", async ({ page }) => {
   expect(scale).toBeLessThanOrEqual(0.11);
 });
 
+test("header import uses a pointer cursor across the file input surface", async ({ page }) => {
+  await setup(page);
+  const input = page.getByLabel("Import", { exact: true });
+  await expect(input.locator("..")).toHaveCSS("cursor", "pointer");
+  await expect(input).toHaveCSS("cursor", "pointer");
+});
+
 test("input cards use the active-toggle blue palette", async ({ page }) => {
   await setup(page);
   const input = page.locator('.react-flow__node-step[data-id="step"]');
