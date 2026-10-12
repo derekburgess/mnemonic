@@ -243,6 +243,8 @@ button.tinted:hover:not(:disabled) {
 /* Icons sit on the text baseline-ish and never shrink when a label wraps. */
 .glyph { flex: none; }
 .tokens { font-variant-numeric: tabular-nums; }
+.output-footer { display: flex; align-items: center; gap: 8px; }
+.edited-flag { margin-left: auto; }
 
 .spinner {
   flex: none;
@@ -609,6 +611,12 @@ textarea.text { font-family: inherit; resize: both; }
 .node.output:not(.comment) .field .copy:not(.edit-toggle):hover:not(:disabled) { color: var(--output-purple); }
 .node.output:not(.comment) .field .copy:hover:not(:disabled) { border-color: var(--output-purple); }
 .node.output:not(.comment) .field .edit-toggle.editing { color: var(--output-purple); }
+.output-collapse-toggle[aria-expanded="true"] .glyph { transform: rotate(90deg); }
+.node.output:not(.comment) .output-collapse-toggle:hover:not(:disabled) {
+  color: var(--output-purple);
+  background: color-mix(in srgb, var(--output-purple) 14%, transparent);
+  border-color: transparent;
+}
 .node.output:not(.comment) .react-flow__handle::after { background: var(--output-purple); }
 .react-flow__node.selected .node.output:not(.comment) { border-color: var(--output-purple); }
 

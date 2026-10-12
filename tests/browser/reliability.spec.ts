@@ -424,7 +424,10 @@ test("input nodes collapse to their name and primary actions and persist", async
   await expect(node.getByRole("checkbox", { name: "Node active — turn off to skip" })).toHaveCount(0);
   await expect(node.getByRole("button", { name: "Delete step", exact: true })).not.toHaveAttribute("title");
   await expect(node.getByRole("button", { name: "Delete step", exact: true })).toBeVisible();
-  await expect(node.getByText("Perform inference", { exact: true })).toHaveCount(0);
+  await expect(node.getByText("Perform inference", { exact: true })).toBeVisible();
+  await expect(node.getByRole("combobox", { name: "Provider", exact: true })).toBeVisible();
+  await expect(node.getByRole("combobox", { name: "Model", exact: true })).toBeVisible();
+  await expect(node.getByRole("combobox", { name: "Thinking", exact: true })).toHaveCount(0);
   await expect(node.locator("textarea")).toHaveCount(0);
   await expect.poll(() => state.graph.nodes[0].data.collapsed).toBe(true);
 
@@ -511,6 +514,13 @@ test("partial fan-out keeps the successful output", async ({ page }) => {
   const output = page.locator(".react-flow__node-artifact");
   await expect(output).toHaveCount(1);
   await expect(page.getByText(/1 of 2 generations failed/)).toBeVisible();
+  await output.getByRole("button", { name: "Collapse output", exact: true }).click();
+  await expect(output.locator(".field").first()).toHaveCount(0);
+  await expect(output.locator("footer.tokens")).toBeVisible();
+  await expect(output.getByRole("button", { name: "Delete output", exact: true })).toBeVisible();
+  await expect.poll(() => state.graph.nodes.find((node: any) => node.type === "artifact")?.data.collapsed).toBe(true);
+  await output.getByRole("button", { name: "Expand output", exact: true }).click();
+  await expect(output.locator(".field").first()).toBeVisible();
   await expect(output.getByRole("checkbox", { name: "Node active — turn off to skip" })).toHaveCount(0);
   await expect(output.getByRole("button", { name: "Delete output", exact: true })).not.toHaveAttribute("title");
   const outputCopy = output.getByRole("button", { name: "Copy output", exact: true });
@@ -540,6 +550,11 @@ test("partial fan-out keeps the successful output", async ({ page }) => {
   await output.locator(".field").first().hover();
   await expect(finishEdit).toHaveCSS("opacity", "1");
   await output.getByRole("textbox", { name: "Output text", exact: true }).fill("");
+  await expect(output.locator(".edited-flag")).toHaveText("Edited");
+  await expect(output.locator(".output-stats")).toHaveText("off");
+  const editedBox = (await output.locator(".edited-flag").boundingBox())!;
+  const statsBox = (await output.locator(".output-stats").boundingBox())!;
+  expect(editedBox.x).toBeGreaterThan(statsBox.x);
   await expect(outputCopy).toBeDisabled();
   await output.locator(".field").first().hover();
   await expect(outputCopy).toHaveCSS("opacity", "0.35");

@@ -109,6 +109,8 @@ export type OutputData = {
   text: string;
   createdAt: number;
   usage?: { input?: number; output?: number };
+  /** Hide the main output text while retaining metadata and trace controls. */
+  collapsed?: boolean;
   toolCalls?: ToolCallRecord[];
   /** Set once the text has been changed by hand, so the node stops claiming to be verbatim. */
   edited?: boolean;

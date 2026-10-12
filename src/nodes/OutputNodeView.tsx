@@ -17,6 +17,7 @@ const ROW_GAP = 6;
 
 export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
   const { openWorkspaceChanges, removeNode: onDelete, updateOutput } = useGraphActions();
+  const collapsed = !!data.collapsed;
   const pendingChanges = usePendingWorkspaceChanges(data.workspaceChanges);
 
   const { min, field } = useFieldWidth();
@@ -63,7 +64,7 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
     : null;
 
   return (
-    <div className={`node output nopan${attached ? "" : " detached"}`}>
+    <div className={`node output nopan${attached ? "" : " detached"}${collapsed ? " collapsed" : ""}`}>
       <Handle type="target" position={Position.Left} />
 
       <header className="node-head">
@@ -74,13 +75,20 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
             <time dateTime={validDate ? created.toISOString() : undefined}>
               {validDate ? created.toLocaleString() : "Unknown time"}
             </time>
-            {data.edited && " · edited"}
           </span>
         </div>
+        <button
+          className="icon collapse-toggle output-collapse-toggle nodrag"
+          onClick={() => updateOutput(id, { collapsed: !collapsed })}
+          aria-label={collapsed ? "Expand output" : "Collapse output"}
+          aria-expanded={!collapsed}
+        >
+          <Icon name="chevron" size={13} />
+        </button>
         <DeleteButton onClick={() => onDelete(id)} title="Delete output" />
       </header>
 
-      <div className="field">
+      {!collapsed && <div className="field">
         {editing ? (
           <textarea
             {...textProps}
@@ -109,7 +117,7 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
           <Icon name={editing ? "check" : "pencil"} size={13} />
         </button>
         <CopyButton text={data.text} label="Copy output" />
-      </div>
+      </div>}
       {data.workspaceChanges && data.kind !== "thinking" && <button className="nodrag"
         onClick={() => openWorkspaceChanges(data.workspaceChanges!)}>{pendingChanges === 0 ? "View changes" : `Review changes${pendingChanges === undefined ? "" : ` (${pendingChanges})`}`}</button>}
       {callRows.length > 0 && (
@@ -142,8 +150,9 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
           </div>
         ))}
 
-      <footer className="dim tokens">
-        {data.effort}{tokens && ` · ${tokens}`}
+      <footer className="dim tokens output-footer">
+        <span className="output-stats">{data.effort}{tokens && ` · ${tokens}`}</span>
+        {data.edited && <span className="edited-flag">Edited</span>}
       </footer>
 
       <Handle type="source" position={Position.Right} />

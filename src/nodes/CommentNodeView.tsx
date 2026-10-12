@@ -41,14 +41,6 @@ function CommentMessage({ author, text, createdAt, collapsed = false, replyNumbe
   return (
     <section className={`comment-message${isReply ? " comment-reply" : ""}${collapsed ? " collapsed" : ""}`}>
       <header className="node-head comment-head">
-        <button
-          className="icon collapse-toggle comment-collapse-toggle nodrag"
-          onClick={() => onChange({ collapsed: !collapsed })}
-          aria-label={`${collapsed ? "Expand" : "Collapse"} ${prefix.toLowerCase()}`}
-          aria-expanded={!collapsed}
-        >
-          <Icon name="chevron" size={13} />
-        </button>
         <div className="comment-author">
           <input
             className="label nodrag"
@@ -61,6 +53,14 @@ function CommentMessage({ author, text, createdAt, collapsed = false, replyNumbe
             {validDate ? created.toLocaleString() : "Unknown time"}
           </time>
         </div>
+        <button
+          className="icon collapse-toggle comment-collapse-toggle nodrag"
+          onClick={() => onChange({ collapsed: !collapsed })}
+          aria-label={`${collapsed ? "Expand" : "Collapse"} ${prefix.toLowerCase()}`}
+          aria-expanded={!collapsed}
+        >
+          <Icon name="chevron" size={13} />
+        </button>
         <DeleteButton onClick={onDelete} title={isReply ? `Delete reply ${replyNumber}` : "Delete comment"} />
       </header>
 

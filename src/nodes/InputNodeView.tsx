@@ -156,6 +156,13 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
       <Handle type="target" position={Position.Left} />
 
       <header className="node-head">
+        <input
+          className={`label nodrag${data.label === "Unnamed" || data.label === "Name this step" ? " unnamed" : ""}`}
+          placeholder="Unnamed"
+          value={data.label}
+          onChange={(e) => onChange(id, { label: e.target.value })}
+          aria-label="Step name"
+        />
         <button
           className="icon collapse-toggle nodrag"
           onClick={() => onChange(id, { collapsed: !collapsed })}
@@ -164,17 +171,9 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         >
           <Icon name="chevron" size={13} />
         </button>
-        <input
-          className={`label nodrag${data.label === "Unnamed" || data.label === "Name this step" ? " unnamed" : ""}`}
-          placeholder="Unnamed"
-          value={data.label}
-          onChange={(e) => onChange(id, { label: e.target.value })}
-          aria-label="Step name"
-        />
         <DeleteButton onClick={() => onDelete(id)} title="Delete step" />
       </header>
 
-      {!collapsed && <>
       <div className="sandbox-row nodrag">
         <label className="sandbox-control">
           <span className="skip sandbox"><input type="checkbox" checked={performInference}
@@ -223,6 +222,10 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         </label>
       </div>
 
+      </>}
+
+      {!collapsed && <>
+      {performInference && <>
       <div className="row">
         <label>
           Thinking
