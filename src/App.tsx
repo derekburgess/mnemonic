@@ -786,6 +786,11 @@ function Canvas() {
               isValidConnection={isValidConnection}
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
+              panOnDrag
+              autoPanOnNodeDrag={false}
+              nodeDragThreshold={0}
+              connectionDragThreshold={0}
+              connectionRadius={44}
               fitView
               proOptions={{ hideAttribution: false }}
             >

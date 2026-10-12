@@ -372,17 +372,25 @@ textarea.text { font-family: inherit; resize: both; }
 
 /* Handles ride the node's own border rather than a wrapper box around it. */
 .react-flow__handle {
-  width: 14px;
-  height: 14px;
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+}
+.react-flow__handle::after {
+  content: "";
+  position: absolute;
+  inset: 11px;
   background: var(--dim);
   border: 2px solid var(--bg);
   border-radius: 50%;
 }
-/* Half the handle, so it still straddles the node's border. */
-.react-flow__handle-left { left: -7px; }
-.react-flow__handle-right { right: -7px; }
-.react-flow__handle:hover,
-.react-flow__handle.connecting { background: var(--accent); }
+/* React Flow's translate already centers the hit area on the border. */
+.react-flow__handle-left { left: 0; }
+.react-flow__handle-right { right: 0; }
+.react-flow__handle:hover::after,
+.react-flow__handle.connecting::after { background: var(--accent); }
 .react-flow__edge-path { stroke: var(--dim); stroke-width: 1.6; }
 /* Widen the grab target so an endpoint is easy to catch and drag off. */
 .react-flow__edge .react-flow__edge-interaction { stroke-width: 18; }

@@ -154,7 +154,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
     setTools(tools.map((t) => (t.id === toolId ? { ...t, ...patch } : t)));
 
   return (
-    <div className={`node input${current ? " current" : ""} status-${data.status}${skipped ? " skipped" : ""}${collapsed ? " collapsed" : ""}`}>
+    <div className={`node input nopan${current ? " current" : ""} status-${data.status}${skipped ? " skipped" : ""}${collapsed ? " collapsed" : ""}`}>
       <Handle type="target" position={Position.Left} />
 
       <header className="node-head">

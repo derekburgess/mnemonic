@@ -60,6 +60,37 @@ async function runStep(page: Page) {
   await page.getByRole("button", { name: "Run step", exact: true }).click();
 }
 
+test("left drag separates node movement from canvas panning and handles have forgiving connection targets", async ({ page }) => {
+  const state = await setup(page);
+  const node = page.locator('.react-flow__node-step[data-id="step"]');
+  const before = { ...state.graph.nodes[0].position };
+  const viewportBefore = await page.locator(".react-flow__viewport").getAttribute("style");
+  const box = (await node.locator(".node").boundingBox())!;
+  await page.mouse.move(box.x + 5, box.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 85, box.y + 45, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(() => state.graph.nodes[0].position).not.toEqual(before);
+  expect(await page.locator(".react-flow__viewport").getAttribute("style")).toBe(viewportBefore);
+
+  const pane = (await page.locator(".react-flow__pane").boundingBox())!;
+  await page.mouse.move(pane.x + pane.width - 80, pane.y + 80);
+  await page.mouse.down();
+  await page.mouse.move(pane.x + pane.width - 140, pane.y + 120, { steps: 5 });
+  await page.mouse.up();
+  expect(await page.locator(".react-flow__viewport").getAttribute("style")).not.toBe(viewportBefore);
+
+  await page.getByRole("button", { name: "Add Step", exact: true }).click();
+  const second = page.locator(".react-flow__node-step").last();
+  const secondId = (await second.getAttribute("data-id"))!;
+  const source = node.locator(".react-flow__handle.source");
+  const target = second.locator(".react-flow__handle.target");
+  expect((await source.boundingBox())!.width).toBeGreaterThanOrEqual(24);
+  expect((await target.boundingBox())!.width).toBeGreaterThanOrEqual(24);
+  await source.dragTo(target);
+  await expect.poll(() => state.graph.edges.some((edge: any) => edge.source === "step" && edge.target === secondId)).toBe(true);
+});
+
 test("outputs call an unnamed source step Unnamed", async ({ page }) => {
   const state = await setup(page);
   state.complete = true;

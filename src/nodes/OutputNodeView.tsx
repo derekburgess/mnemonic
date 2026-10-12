@@ -64,7 +64,7 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
     : null;
 
   return (
-    <div className={`node output${attached ? "" : " detached"}${skipped ? " skipped" : ""}`}>
+    <div className={`node output nopan${attached ? "" : " detached"}${skipped ? " skipped" : ""}`}>
       <Handle type="target" position={Position.Left} />
 
       <header className="node-head">
