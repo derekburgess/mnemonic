@@ -76,9 +76,10 @@ that succeeded and reports how many did not.
 **Output nodes** are immutable artifacts. Every run produces a *new* output node — outputs are never
 overwritten, they accumulate on the canvas as a visible history.
 
-**Comment nodes** are human-authored Markdown notes. Add one with **Comment**, record the author's
-name, and connect it to an input step to include the attributed note in that step's context and
-execution trace. Comments are never scheduled or skipped.
+**Comment nodes** are human-authored Markdown threads. Add one with **Comment**, record the author's
+name, and use **Reply** to append attributed responses below it. Connect the thread to an input step
+to include the original note and its replies, in order, in that step's context and execution trace.
+Comments are never scheduled or skipped.
 
 ### Skip
 

@@ -24,6 +24,12 @@
   --output-line: #62417e;
   --output-text: #efe4ff;
   --output-dim: #aa96c2;
+  --input-blue: #6ea8fe;
+  --input-panel: #142033;
+  --input-field: #1a2a40;
+  --input-line: #365b85;
+  --input-text: #e2efff;
+  --input-dim: #91a9c7;
 
   --node-w: 300px;
   --node-pad: 10px;
@@ -79,6 +85,31 @@ body {
 }
 .toolbar .icon-only { width: 32px; padding: 0; }
 .bar-right { justify-content: flex-end; }
+
+.toolbar .node-create { font-weight: 600; }
+.toolbar .create-step {
+  color: var(--input-blue);
+  background: var(--input-field);
+  border-color: var(--input-line);
+}
+.toolbar .create-step:hover:not(:disabled) {
+  color: var(--input-text);
+  background: color-mix(in srgb, var(--input-blue) 18%, var(--input-field));
+  border-color: var(--input-blue);
+}
+.toolbar .create-step:focus-visible { outline: 2px solid var(--input-blue); outline-offset: 2px; }
+
+.toolbar .create-comment {
+  color: var(--sticky-yellow);
+  background: var(--sticky-field);
+  border-color: var(--sticky-line);
+}
+.toolbar .create-comment:hover:not(:disabled) {
+  color: var(--sticky-text);
+  background: color-mix(in srgb, var(--sticky-yellow) 16%, var(--sticky-field));
+  border-color: var(--sticky-yellow);
+}
+.toolbar .create-comment:focus-visible { outline: 2px solid var(--sticky-yellow); outline-offset: 2px; }
 
 .brand {
   display: flex;
@@ -383,9 +414,55 @@ textarea.text { font-family: inherit; resize: both; }
 
 .react-flow__node.selected .node { border-color: var(--accent); }
 
+/* Input steps extend the blue used by their active toggles across the whole card. */
+.node.input {
+  background: var(--input-panel);
+  border-color: var(--input-line);
+  color: var(--input-text);
+}
+
+.node.input .label { color: var(--input-text); }
+.node.input .label:hover { border-color: var(--input-line); }
+.node.input .label:focus { border-color: var(--input-blue); }
+.node.input .node-head .label.unnamed,
+.node.input .node-head .label::placeholder,
+.node.input .dim,
+.node.input .row label,
+.node.input .stack,
+.node.input .tools-head,
+.node.input .loop-limit { color: var(--input-dim); }
+
+.node.input select,
+.node.input textarea,
+.node.input .line,
+.node.input .attach,
+.node.input .sandbox-row,
+.node.input .run,
+.node.input .tool,
+.node.input .picker,
+.node.input .field .copy {
+  background: var(--input-field);
+  border-color: var(--input-line);
+  color: var(--input-text);
+}
+.node.input select:focus,
+.node.input textarea:focus,
+.node.input .line:focus { border-color: var(--input-blue); }
+
+.node.input .skip .track {
+  background: var(--input-field);
+  border-color: var(--input-line);
+}
+.node.input .skip .track::after { background: var(--input-dim); }
+.node.input .react-flow__handle::after { background: var(--input-blue); }
+.react-flow__node.selected .node.input { border-color: var(--input-blue); }
+.node.input.current { border-color: var(--ok); }
+.node.input.status-running { border-color: var(--input-blue); }
+.node.input.status-error { border-color: var(--err); }
+
 /* Comments borrow the familiar Post-it yellow without sacrificing dark-theme contrast. */
 .node.comment {
-  min-width: 260px;
+  min-width: 240px;
   background: var(--sticky-panel);
   border-color: var(--sticky-line);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 209, 0, 0.08);
@@ -397,11 +474,38 @@ textarea.text { font-family: inherit; resize: both; }
 .node.comment .label::placeholder,
 .node.comment .dim { color: var(--sticky-dim); }
 
+.comment-message,
+.comment-replies {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.comment-replies { gap: 10px; }
+.comment-reply {
+  padding-top: 10px;
+  border-top: 1px solid var(--sticky-line);
+}
+
 .node.comment .text {
-  min-width: 238px;
-  height: 190px;
+  min-width: 218px;
+  height: 125px;
   background: var(--sticky-field);
   border-color: var(--sticky-line);
+}
+.node.comment .comment-reply .text { height: 100px; }
+
+.comment-reply-button {
+  width: 100%;
+  padding: 5px 8px;
+  color: var(--sticky-text);
+  background: color-mix(in srgb, var(--sticky-yellow) 8%, var(--sticky-field));
+  border-color: var(--sticky-line);
+}
+.comment-reply-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--sticky-yellow) 14%, var(--sticky-field));
+  border-color: var(--sticky-yellow);
 }
 
 .node.comment .field .copy {

@@ -98,7 +98,7 @@ function newInput(model: string, position: { x: number; y: number }): InputNode 
 }
 
 function newComment(position: { x: number; y: number }): CommentNode {
-  return { id: uid(), type: "comment", position, data: { author: "", text: "", createdAt: Date.now() } };
+  return { id: uid(), type: "comment", position, data: { author: "", text: "", createdAt: Date.now(), replies: [] } };
 }
 
 /** Graphs saved before the rename still carry React Flow's reserved type names. */
@@ -281,9 +281,11 @@ function Canvas() {
   );
 
   const updateComment = useCallback(
-    (id: string, patch: Partial<CommentData>) => {
+    (id: string, patch: Partial<CommentData> | ((data: CommentData) => Partial<CommentData>)) => {
       setNodes((current) => current.map((node) =>
-        node.id === id && isComment(node) ? { ...node, data: { ...node.data, ...patch } } : node));
+        node.id === id && isComment(node)
+          ? { ...node, data: { ...node.data, ...(typeof patch === "function" ? patch(node.data) : patch) } }
+          : node));
     },
     [setNodes],
   );
@@ -578,6 +580,17 @@ function Canvas() {
     setNotice(null);
   }, []);
 
+  const clearCanvas = useCallback(() => {
+    if (!window.confirm("Are you sure you want to clear the entire canvas?")) return;
+    publish({ nodes: [], edges: [] });
+    steppedRef.current = [];
+    setStepped([]);
+    setNotice(null);
+    setChangesId(null);
+    setSandboxNodeId(null);
+    setPanel((current) => current === "changes" || current === "sandbox" ? null : current);
+  }, [publish]);
+
   /** Centre of what the user is currently looking at, in canvas coordinates. */
   const viewportSpot = useCallback(() => {
     const rect = wrapper.current?.getBoundingClientRect();
@@ -739,15 +752,13 @@ function Canvas() {
                 {saveState.label}
               </span>
             </div>
-            {runningAny && (
-              <button className="tinted tint-err" onClick={stopRun}>
-                <Icon name="stop" /> Stop all
-              </button>
-            )}
-            <button onClick={addStep}>
+            <button className="tinted tint-err" onClick={runningAny ? stopRun : clearCanvas}>
+              <Icon name={runningAny ? "stop" : "trash"} /> {runningAny ? "Stop all" : "Clear canvas"}
+            </button>
+            <button className="node-create create-step" onClick={addStep}>
               <Icon name="page" /> Add Step
             </button>
-            <button onClick={addComment}>
+            <button className="node-create create-comment" onClick={addComment}>
               <Icon name="pencil" /> Comment
             </button>
             <button onClick={() => setPanel((p) => (p === "trace" ? null : "trace"))}>

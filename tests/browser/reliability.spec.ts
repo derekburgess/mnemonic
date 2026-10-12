@@ -102,6 +102,82 @@ test("canvas can zoom out beyond the React Flow default", async ({ page }) => {
   expect(scale).toBeLessThanOrEqual(0.11);
 });
 
+test("input cards use the active-toggle blue palette", async ({ page }) => {
+  await setup(page);
+  const input = page.locator('.react-flow__node-step[data-id="step"]');
+  const appearance = await input.evaluate((node) => {
+    const card = node.querySelector(".node")!;
+    const field = node.querySelector("textarea")!;
+    const track = node.querySelector('.skip.accent .track')!;
+    return {
+      palette: getComputedStyle(card).getPropertyValue("--input-blue").trim(),
+      card: getComputedStyle(card).backgroundColor,
+      field: getComputedStyle(field).backgroundColor,
+      toggleBorder: getComputedStyle(track).borderColor,
+      toggleKnob: getComputedStyle(track, "::after").backgroundColor,
+    };
+  });
+  expect(appearance).toEqual({
+    palette: "#6ea8fe",
+    card: "rgb(20, 32, 51)",
+    field: "rgb(26, 42, 64)",
+    toggleBorder: "rgb(110, 168, 254)",
+    toggleKnob: "rgb(110, 168, 254)",
+  });
+});
+
+test("node creation buttons match their node palettes", async ({ page }) => {
+  await setup(page);
+  const styles = async (name: "Add Step" | "Comment") => page.getByRole("button", { name, exact: true }).evaluate((button) => {
+    const style = getComputedStyle(button);
+    return { color: style.color, background: style.backgroundColor, border: style.borderColor };
+  });
+  expect(await styles("Add Step")).toEqual({
+    color: "rgb(110, 168, 254)",
+    background: "rgb(26, 42, 64)",
+    border: "rgb(54, 91, 133)",
+  });
+  expect(await styles("Comment")).toEqual({
+    color: "rgb(255, 209, 0)",
+    background: "rgb(51, 47, 18)",
+    border: "rgb(143, 121, 16)",
+  });
+});
+
+test("the idle Stop all slot confirms before clearing every node and edge", async ({ page }) => {
+  const state = await setup(page);
+  await expect(page.getByRole("button", { name: "Clear canvas", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop all", exact: true })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Comment", exact: true }).click();
+  const comment = page.locator(".react-flow__node-comment");
+  await page.locator(".react-flow__controls-fitview").click();
+  await comment.locator(".react-flow__handle.source").dragTo(
+    page.locator('.react-flow__node-step[data-id="step"] .react-flow__handle.target'),
+  );
+  await expect.poll(() => state.graph.edges.length).toBe(1);
+
+  page.once("dialog", async (dialog) => {
+    expect(dialog.type()).toBe("confirm");
+    expect(dialog.message()).toBe("Are you sure you want to clear the entire canvas?");
+    await dialog.dismiss();
+  });
+  await page.getByRole("button", { name: "Clear canvas", exact: true }).click();
+  await expect(page.locator(".react-flow__node")).toHaveCount(2);
+  await expect(page.locator(".react-flow__edge")).toHaveCount(1);
+
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toBe("Are you sure you want to clear the entire canvas?");
+    await dialog.accept();
+  });
+  await page.getByRole("button", { name: "Clear canvas", exact: true }).click();
+  await expect(page.locator(".react-flow__node")).toHaveCount(0);
+  await expect(page.locator(".react-flow__edge")).toHaveCount(0);
+  await expect.poll(() => ({ nodes: state.graph.nodes.length, edges: state.graph.edges.length }))
+    .toEqual({ nodes: 0, edges: 0 });
+  await expect(page.getByRole("button", { name: "Clear canvas", exact: true })).toBeVisible();
+});
+
 test("comments provide named Markdown context and are traced with the next step", async ({ page }) => {
   const state = await setup(page);
   state.complete = true;
@@ -110,6 +186,11 @@ test("comments provide named Markdown context and are traced with the next step"
   await expect(comment).toHaveCount(1);
   await comment.getByRole("textbox", { name: "Comment author", exact: true }).fill("Ada");
   await comment.getByRole("textbox", { name: "Comment text", exact: true }).fill("Check the **assumptions**.");
+  await comment.getByRole("button", { name: "Reply", exact: true }).click();
+  await comment.getByRole("textbox", { name: "Reply 1 author", exact: true }).fill("Grace");
+  await comment.getByRole("textbox", { name: "Reply 1 text", exact: true }).fill("I checked the **edge cases**.");
+  await expect(comment.getByRole("button", { name: "Delete reply 1", exact: true })).toBeVisible();
+  await expect(comment.getByRole("button", { name: "Copy reply 1", exact: true })).toHaveCSS("opacity", "1");
   await expect(comment.getByRole("button", { name: "Delete comment", exact: true })).toBeVisible();
   await expect(comment.getByRole("checkbox")).toHaveCount(0);
   await expect(comment.locator(".react-flow__handle.target")).toHaveCount(0);
@@ -119,7 +200,7 @@ test("comments provide named Markdown context and are traced with the next step"
     yellow: getComputedStyle(node).getPropertyValue("--sticky-yellow").trim(),
     textHeight: (node.querySelector(".text") as HTMLElement).offsetHeight,
   }));
-  expect(appearance).toEqual({ width: 260, yellow: "#ffd100", textHeight: 190 });
+  expect(appearance).toEqual({ width: 240, yellow: "#ffd100", textHeight: 125 });
 
   await page.locator(".react-flow__controls-fitview").click();
   const source = comment.locator(".react-flow__handle.source");
@@ -129,12 +210,18 @@ test("comments provide named Markdown context and are traced with the next step"
   await expect.poll(() => state.graph.edges.some((edge: any) => edge.source === commentId && edge.target === "step")).toBe(true);
   await runStep(page);
   await expect.poll(() => state.executions.length).toBe(1);
-  expect(state.executions[0].trace.context).toEqual([{ label: "Ada", text: "Check the **assumptions**." }]);
+  expect(state.executions[0].trace.context).toEqual([
+    { label: "Ada", text: "Check the **assumptions**." },
+    { label: "Grace", text: "I checked the **edge cases**." },
+  ]);
   expect(state.executions[0].input).toContain('<context from="Ada">\nCheck the **assumptions**.\n</context>');
+  expect(state.executions[0].input).toContain('<context from="Grace">\nI checked the **edge cases**.\n</context>');
 
   await comment.getByRole("button", { name: "Preview comment", exact: true }).click();
   await expect(comment.locator(".md strong")).toHaveText("assumptions");
   await expect(comment.getByRole("button", { name: "Copy comment", exact: true })).toBeVisible();
+  await comment.getByRole("button", { name: "Preview reply 1", exact: true }).click();
+  await expect(comment.locator(".comment-reply .md strong")).toHaveText("edge cases");
 });
 
 test("outputs call an unnamed source step Unnamed", async ({ page }) => {
@@ -276,6 +363,7 @@ test("cancellation stops the server execution and creates no output", async ({ p
   await expect.poll(() => state.cancelled.size).toBe(1);
   state.complete = true;
   await expect(page.getByRole("button", { name: "Run step", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Clear canvas", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Run all", exact: true })).toHaveCount(0);
   await expect(page.locator(".react-flow__node-artifact")).toHaveCount(0);
 });

@@ -16,7 +16,10 @@ export type GraphActions = {
     patch: Partial<InputData> | ((data: InputData) => Partial<InputData>),
   ) => void;
   updateOutput: (id: string, patch: Partial<OutputData>) => void;
-  updateComment: (id: string, patch: Partial<CommentData>) => void;
+  updateComment: (
+    id: string,
+    patch: Partial<CommentData> | ((data: CommentData) => Partial<CommentData>),
+  ) => void;
   setSkipped: (id: string, value: boolean) => void;
   runOne: (id: string) => void;
   stopNode: (id: string) => void;

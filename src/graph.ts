@@ -168,6 +168,9 @@ export function resolveInheritedInput(inputId: string, nodes: GraphNode[], edges
     }
     if (isComment(source)) {
       result.context.push({ label: source.data.author.trim() || "Anonymous", text: source.data.text });
+      for (const reply of source.data.replies ?? []) {
+        if (reply.text.trim()) result.context.push({ label: reply.author.trim() || "Anonymous", text: reply.text });
+      }
       return;
     }
     if (source.data.performInference !== false) return;

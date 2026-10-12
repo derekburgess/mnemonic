@@ -118,11 +118,20 @@ export type OutputData = {
   edited?: boolean;
 };
 
+export type CommentReply = {
+  id: string;
+  author: string;
+  text: string;
+  createdAt: number;
+};
+
 export type CommentData = {
   /** Person associated with this note and used as its downstream context label. */
   author: string;
   text: string;
   createdAt: number;
+  /** Ordered human responses carried downstream immediately after the original note. */
+  replies?: CommentReply[];
 };
 
 // "input", "output", "default" and "group" are React Flow's own built-in node types; using
