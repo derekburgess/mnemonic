@@ -57,10 +57,11 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
   // A detached artifact is history: still on the canvas, but out of the current flow. With a
   // tool in the chain the artifact hangs off the tool, so tool edges count here.
   const attached = useStore((s) => s.edges.some((e) => e.source === id || e.target === id));
-  const stamp = new Date(data.createdAt).toLocaleTimeString();
+  const created = new Date(data.createdAt);
+  const validDate = Number.isFinite(created.getTime());
   const sourceLabel = !data.sourceLabel.trim() || data.sourceLabel === "Name this step" ? "Unnamed" : data.sourceLabel;
   const tokens = data.usage
-    ? `Tokens: ${data.usage.input ?? "?"} in / ${data.usage.output ?? "?"} out`
+    ? `${data.usage.input ?? "?"} in / ${data.usage.output ?? "?"} out`
     : null;
 
   return (
@@ -71,7 +72,10 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
         <div className="meta">
           <strong>{data.model}</strong>
           <span className="dim">
-            {sourceLabel} · {data.effort} · {stamp}
+            {sourceLabel} · {" "}
+            <time dateTime={validDate ? created.toISOString() : undefined}>
+              {validDate ? created.toLocaleString() : "Unknown time"}
+            </time>
             {data.edited && " · edited"}
           </span>
         </div>
@@ -106,7 +110,7 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
           title={editing ? "Done editing" : "Edit this output"}
           aria-label={editing ? "Done editing" : "Edit this output"}
         >
-          <Icon name="pencil" size={13} />
+          <Icon name={editing ? "check" : "pencil"} size={13} />
         </button>
         <CopyButton text={data.text} title="Copy output" />
       </div>
@@ -142,7 +146,9 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
           </div>
         ))}
 
-      {tokens && <footer className="dim tokens">{tokens}</footer>}
+      <footer className="dim tokens">
+        {data.effort}{tokens && ` · ${tokens}`}
+      </footer>
 
       <Handle type="source" position={Position.Right} />
     </div>

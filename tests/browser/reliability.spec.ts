@@ -124,6 +124,77 @@ test("input cards use the active-toggle blue palette", async ({ page }) => {
     toggleBorder: "rgb(110, 168, 254)",
     toggleKnob: "rgb(110, 168, 254)",
   });
+  const blueControls = await input.evaluate((node) => {
+    const styleOf = (selector: string) => {
+      const style = getComputedStyle(node.querySelector(selector)!);
+      return { color: style.color, background: style.backgroundColor, border: style.borderColor };
+    };
+    const disabledStyle = (selector: string) => {
+      const style = getComputedStyle(node.querySelector(selector)!);
+      return {
+        opacity: style.opacity,
+        cursor: style.cursor,
+        color: style.color,
+        background: style.backgroundColor,
+        border: style.borderColor,
+      };
+    };
+    return {
+      addTool: styleOf(".add-tool"),
+      sandboxGear: styleOf(".sandbox-config-open"),
+      disabledLoopMode: disabledStyle(".loop-output-mode"),
+      disabledLoopLimit: disabledStyle(".loop-limit .line"),
+    };
+  });
+  expect(blueControls.addTool).toEqual({
+    color: "rgb(110, 168, 254)", background: "rgb(26, 42, 64)", border: "rgb(54, 91, 133)",
+  });
+  expect(blueControls.sandboxGear).toEqual({
+    color: "rgb(110, 168, 254)", background: "rgb(26, 42, 64)", border: "rgba(0, 0, 0, 0)",
+  });
+  expect(blueControls.disabledLoopMode).toMatchObject({ opacity: "0.38", cursor: "not-allowed" });
+  expect(blueControls.disabledLoopLimit).toEqual(blueControls.disabledLoopMode);
+
+  const prompt = input.getByRole("textbox", { name: "Input Copy input", exact: true });
+  const instructions = input.getByRole("textbox", { name: "Instructions (System Prompt + Role) Copy instructions", exact: true });
+  const copyInput = input.getByRole("button", { name: "Copy input", exact: true });
+  const copyInstructions = input.getByRole("button", { name: "Copy instructions", exact: true });
+  await expect(copyInstructions).toBeDisabled();
+  await instructions.locator("..").hover();
+  await expect(copyInstructions).toHaveCSS("opacity", "0.35");
+  await instructions.fill("Use concise answers.");
+  await page.locator(".brand").hover();
+  await expect(copyInput).toHaveCSS("opacity", "0");
+  await expect(copyInstructions).toHaveCSS("opacity", "0");
+  await expect(prompt).toHaveCSS("padding-right", "6px");
+  await expect(instructions).toHaveCSS("padding-right", "6px");
+  await prompt.locator("..").hover();
+  await expect(copyInput).toHaveCSS("opacity", "1");
+  await copyInput.hover();
+  await expect(copyInput).toHaveCSS("border-color", "rgb(110, 168, 254)");
+  await instructions.locator("..").hover();
+  await expect(copyInstructions).toHaveCSS("opacity", "1");
+  await copyInstructions.hover();
+  await expect(copyInstructions).toHaveCSS("border-color", "rgb(110, 168, 254)");
+
+  const collapse = input.getByRole("button", { name: "Collapse step", exact: true });
+  await collapse.hover();
+  await expect(collapse).toHaveCSS("color", "rgb(255, 209, 0)");
+  await expect(collapse).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+
+  const greenStyle = async (locator: ReturnType<Page["locator"]>) => locator.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { color: style.color, background: style.backgroundColor, border: style.borderColor };
+  });
+  const runStyle = await greenStyle(input.getByRole("button", { name: "Run step", exact: true }));
+  await input.getByRole("button", { name: "Sandbox configuration", exact: true }).click();
+  const saveStyle = await greenStyle(page.getByRole("complementary", { name: "Sandbox Configuration" })
+    .getByRole("button", { name: "Save", exact: true }));
+  expect(runStyle).toEqual({
+    color: saveStyle.color,
+    background: "rgb(26, 42, 64)",
+    border: saveStyle.border,
+  });
 });
 
 test("node creation buttons match their node palettes", async ({ page }) => {
@@ -200,12 +271,30 @@ test("comments provide named Markdown context and are traced with the next step"
   await comment.getByRole("button", { name: "Reply", exact: true }).click();
   await comment.getByRole("textbox", { name: "Reply 1 author", exact: true }).fill("Grace");
   await comment.getByRole("textbox", { name: "Reply 1 text", exact: true }).fill("I checked the **edge cases**.");
+  const commentId = (await comment.getAttribute("data-id"))!;
+  await expect.poll(() => state.graph.nodes.find((node: any) => node.id === commentId)?.data.replies?.length).toBe(1);
+  const commentData = state.graph.nodes.find((node: any) => node.id === commentId).data;
+  await expect(comment.locator("time")).toHaveCount(2);
+  await expect(comment.locator(".comment-author").first()).toHaveCSS("gap", "2px");
+  const authorBox = (await comment.getByRole("textbox", { name: "Comment author", exact: true }).boundingBox())!;
+  const deleteBox = (await comment.getByRole("button", { name: "Delete comment", exact: true }).boundingBox())!;
+  expect(Math.abs(authorBox.y - deleteBox.y)).toBeLessThanOrEqual(1);
+  await expect(comment.locator("time").nth(0)).toHaveAttribute("datetime", new Date(commentData.createdAt).toISOString());
+  await expect(comment.locator("time").nth(1)).toHaveAttribute("datetime", new Date(commentData.replies[0].createdAt).toISOString());
   await expect(comment.getByRole("button", { name: "Delete reply 1", exact: true })).toBeVisible();
-  await expect(comment.getByRole("button", { name: "Copy reply 1", exact: true })).toHaveCSS("opacity", "1");
+  const replyCopy = comment.getByRole("button", { name: "Copy reply 1", exact: true });
+  await page.locator(".brand").hover();
+  await expect(replyCopy).toHaveCSS("opacity", "0");
   await expect(comment.getByRole("button", { name: "Delete comment", exact: true })).toBeVisible();
   await expect(comment.getByRole("checkbox")).toHaveCount(0);
   await expect(comment.locator(".react-flow__handle.target")).toHaveCount(0);
-  await expect(comment.getByRole("button", { name: "Copy comment", exact: true })).toHaveCSS("opacity", "1");
+  const commentCopy = comment.getByRole("button", { name: "Copy comment", exact: true });
+  await page.locator(".brand").hover();
+  await expect(commentCopy).toHaveCSS("opacity", "0");
+  await expect(comment.getByRole("button", { name: /(?:Edit|Preview) (?:comment|reply)/ })).toHaveCount(0);
+  await expect(comment.getByRole("textbox", { name: "Comment text", exact: true })).toHaveCSS("padding-right", "6px");
+  await commentCopy.hover({ force: true });
+  await expect(commentCopy).toHaveCSS("border-color", "rgb(255, 209, 0)");
   const appearance = await comment.locator(".node").evaluate((node) => ({
     width: (node as HTMLElement).offsetWidth,
     yellow: getComputedStyle(node).getPropertyValue("--sticky-yellow").trim(),
@@ -217,7 +306,6 @@ test("comments provide named Markdown context and are traced with the next step"
   const source = comment.locator(".react-flow__handle.source");
   const target = page.locator('.react-flow__node-step[data-id="step"] .react-flow__handle.target');
   await source.dragTo(target);
-  const commentId = (await comment.getAttribute("data-id"))!;
   await expect.poll(() => state.graph.edges.some((edge: any) => edge.source === commentId && edge.target === "step")).toBe(true);
   await runStep(page);
   await expect.poll(() => state.executions.length).toBe(1);
@@ -228,11 +316,8 @@ test("comments provide named Markdown context and are traced with the next step"
   expect(state.executions[0].input).toContain('<context from="Ada">\nCheck the **assumptions**.\n</context>');
   expect(state.executions[0].input).toContain('<context from="Grace">\nI checked the **edge cases**.\n</context>');
 
-  await comment.getByRole("button", { name: "Preview comment", exact: true }).click();
-  await expect(comment.locator(".md strong")).toHaveText("assumptions");
-  await expect(comment.getByRole("button", { name: "Copy comment", exact: true })).toBeVisible();
-  await comment.getByRole("button", { name: "Preview reply 1", exact: true }).click();
-  await expect(comment.locator(".comment-reply .md strong")).toHaveText("edge cases");
+  await expect(comment.getByRole("textbox", { name: "Comment text", exact: true })).toHaveValue("Check the **assumptions**.");
+  await expect(comment.getByRole("textbox", { name: "Reply 1 text", exact: true })).toHaveValue("I checked the **edge cases**.");
 });
 
 test("outputs call an unnamed source step Unnamed", async ({ page }) => {
@@ -242,8 +327,13 @@ test("outputs call an unnamed source step Unnamed", async ({ page }) => {
   await runStep(page);
   const output = page.locator(".react-flow__node-artifact");
   await expect(output).toHaveCount(1);
-  await expect(output.locator(".meta .dim")).toContainText("Unnamed · off");
+  await expect(output.locator(".meta .dim")).toContainText("Unnamed ·");
   await expect(output.locator(".meta .dim")).not.toContainText("Name this step");
+  await expect(output.locator(".meta .dim")).not.toContainText("off");
+  await expect(output.locator("footer.tokens")).toHaveText("off");
+  await expect.poll(() => state.graph.nodes.find((node: any) => node.type === "artifact")?.data.createdAt).toBeTruthy();
+  const createdAt = state.graph.nodes.find((node: any) => node.type === "artifact").data.createdAt;
+  await expect(output.locator("time")).toHaveAttribute("datetime", new Date(createdAt).toISOString());
 });
 
 test("fan-out outputs and their successive sets render as staggered clusters", async ({ page }) => {
@@ -399,6 +489,20 @@ test("partial fan-out keeps the successful output", async ({ page }) => {
   await expect(page.getByText(/1 of 2 generations failed/)).toBeVisible();
   const activeControl = output.getByTitle("Node active — turn off to skip");
   await expect(activeControl.getByRole("checkbox")).toBeChecked();
+  const outputCopy = output.getByRole("button", { name: "Copy output", exact: true });
+  const outputEdit = output.getByRole("button", { name: "Edit this output", exact: true });
+  await page.locator(".brand").hover();
+  await expect(outputCopy).toHaveCSS("opacity", "0");
+  await expect(outputEdit).toHaveCSS("opacity", "0");
+  await expect(output.locator(".text")).toHaveCSS("padding-right", "6px");
+  await output.locator(".field").first().hover();
+  await expect(outputCopy).toHaveCSS("opacity", "1");
+  await expect(outputEdit).toHaveCSS("opacity", "1");
+  await outputEdit.hover();
+  await expect(outputEdit).toHaveCSS("border-color", "rgb(155, 108, 255)");
+  await outputCopy.hover();
+  await expect(outputCopy).toHaveCSS("border-color", "rgb(155, 108, 255)");
+  await expect(outputCopy).toHaveCSS("color", "rgb(155, 108, 255)");
   const purple = await output.evaluate((node) => {
     const card = node.querySelector(".node")!;
     const track = node.querySelector(".skip .track")!;
@@ -413,6 +517,17 @@ test("partial fan-out keeps the successful output", async ({ page }) => {
     toggleBorder: "rgb(155, 108, 255)",
     toggleKnob: "rgb(155, 108, 255)",
   });
+  await outputEdit.click();
+  const finishEdit = output.getByRole("button", { name: "Done editing", exact: true });
+  await expect(finishEdit).toBeVisible();
+  await page.locator(".brand").hover();
+  await expect(finishEdit).toHaveCSS("opacity", "0");
+  await output.locator(".field").first().hover();
+  await expect(finishEdit).toHaveCSS("opacity", "1");
+  await output.getByRole("textbox", { name: "Output text", exact: true }).fill("");
+  await expect(outputCopy).toBeDisabled();
+  await output.locator(".field").first().hover();
+  await expect(outputCopy).toHaveCSS("opacity", "0.35");
   await activeControl.click();
   await expect.poll(() => state.graph.nodes.find((node: any) => node.type === "artifact")?.data.skipped).toBe(true);
 });
@@ -786,6 +901,12 @@ test("per-node tool switches persist and are sent with runs", async ({ page }) =
   await page.reload();
   await expect(page.getByLabel("Enable workspace_write", { exact: true })).toBeChecked();
   await expect(page.locator(".tool").filter({ hasText: "workspace_write" }).getByRole("button", { name: "Remove tool" })).toBeDisabled();
+  const removeTool = page.locator('.tool:has([aria-label="Enable Example"])').getByRole("button", { name: "Remove tool" });
+  await expect(removeTool).toHaveCSS("border-color", "rgba(0, 0, 0, 0)");
+  await expect(removeTool).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await removeTool.hover();
+  await expect(removeTool).toHaveCSS("border-color", "rgba(0, 0, 0, 0)");
+  await expect(removeTool).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await page.getByLabel("Enable workspace_write", { exact: true }).locator("..").click();
   await page.getByLabel("Enable Example", { exact: true }).locator("..").click();
   await expect.poll(() => state.graph.nodes[0].data.workspaceTools?.workspace_write).toBe(false);

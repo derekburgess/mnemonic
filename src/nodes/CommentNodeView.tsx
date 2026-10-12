@@ -1,8 +1,5 @@
 import { useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import Markdown from "react-markdown";
-import remarkBreaks from "remark-breaks";
-import remarkGfm from "remark-gfm";
 import { uid } from "../graph";
 import { Icon } from "../icons";
 import type { CommentNode, CommentReply } from "../types";
@@ -14,18 +11,20 @@ import { useFieldWidth } from "./useFieldWidth";
 type MessageProps = {
   author: string;
   text: string;
+  createdAt: number;
   replyNumber?: number;
   onChange: (patch: Pick<CommentReply, "author"> | Pick<CommentReply, "text">) => void;
   onDelete: () => void;
 };
 
-/** One message in a comment thread. Replies deliberately share the original's Markdown controls. */
-function CommentMessage({ author, text, replyNumber, onChange, onDelete }: MessageProps) {
+/** One directly editable message in a comment thread. */
+function CommentMessage({ author, text, createdAt, replyNumber, onChange, onDelete }: MessageProps) {
   const { min, field } = useFieldWidth();
-  const [editing, setEditing] = useState(!text);
   const [textHeight, setTextHeight] = useState<number | null>(null);
   const isReply = replyNumber !== undefined;
   const prefix = isReply ? `Reply ${replyNumber}` : "Comment";
+  const created = new Date(createdAt);
+  const validDate = Number.isFinite(created.getTime());
   const textProps = {
     style: {
       ...(min ? { minWidth: min } : {}),
@@ -40,42 +39,31 @@ function CommentMessage({ author, text, replyNumber, onChange, onDelete }: Messa
 
   return (
     <section className={`comment-message${isReply ? " comment-reply" : ""}`}>
-      <header className="node-head">
-        <input
-          className="label nodrag"
-          value={author}
-          placeholder="Your name"
-          aria-label={`${prefix} author`}
-          onChange={(event) => onChange({ author: event.target.value })}
-        />
+      <header className="node-head comment-head">
+        <div className="comment-author">
+          <input
+            className="label nodrag"
+            value={author}
+            placeholder="Your name"
+            aria-label={`${prefix} author`}
+            onChange={(event) => onChange({ author: event.target.value })}
+          />
+          <time className="dim comment-time" dateTime={validDate ? created.toISOString() : undefined}>
+            {validDate ? created.toLocaleString() : "Unknown time"}
+          </time>
+        </div>
         <DeleteButton onClick={onDelete} title={isReply ? `Delete reply ${replyNumber}` : "Delete comment"} />
       </header>
 
       <div className="field">
-        {editing ? (
-          <textarea
-            {...textProps}
-            className="text nodrag nowheel"
-            value={text}
-            placeholder={isReply ? "Write a reply…" : "Write a comment…"}
-            aria-label={`${prefix} text`}
-            onChange={(event) => onChange({ text: event.target.value })}
-          />
-        ) : (
-          <div {...textProps} className="text md nodrag nowheel">
-            {text
-              ? <Markdown remarkPlugins={[remarkGfm, remarkBreaks]}>{text}</Markdown>
-              : <em className="dim">empty {isReply ? "reply" : "comment"}</em>}
-          </div>
-        )}
-        <button
-          className={`copy edit-toggle nodrag${editing ? " editing" : ""}`}
-          onClick={() => setEditing((value) => !value)}
-          title={editing ? `Preview ${prefix.toLowerCase()}` : `Edit ${prefix.toLowerCase()}`}
-          aria-label={editing ? `Preview ${prefix.toLowerCase()}` : `Edit ${prefix.toLowerCase()}`}
-        >
-          <Icon name="pencil" size={13} />
-        </button>
+        <textarea
+          {...textProps}
+          className="text nodrag nowheel"
+          value={text}
+          placeholder={isReply ? "Write a reply…" : "Write a comment…"}
+          aria-label={`${prefix} text`}
+          onChange={(event) => onChange({ text: event.target.value })}
+        />
         <CopyButton text={text} title={`Copy ${prefix.toLowerCase()}`} />
       </div>
     </section>
@@ -107,6 +95,7 @@ export function CommentNodeView({ id, data }: NodeProps<CommentNode>) {
       <CommentMessage
         author={data.author}
         text={data.text}
+        createdAt={data.createdAt}
         onChange={(patch) => updateComment(id, patch)}
         onDelete={() => removeNode(id)}
       />
@@ -118,6 +107,7 @@ export function CommentNodeView({ id, data }: NodeProps<CommentNode>) {
               key={reply.id}
               author={reply.author}
               text={reply.text}
+              createdAt={reply.createdAt}
               replyNumber={index + 1}
               onChange={(patch) => updateReply(reply.id, patch)}
               onDelete={() => removeReply(reply.id)}

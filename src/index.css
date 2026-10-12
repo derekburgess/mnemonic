@@ -280,11 +280,12 @@ button.tinted:hover:not(:disabled) {
 
 /* Sits to the left of the copy button, clearing its 24px plus a gap. */
 .field .edit-toggle { right: 36px; }
-.field .edit-toggle.editing { color: var(--accent); opacity: 1; }
+.field .edit-toggle.editing { color: var(--accent); }
 .field:hover .copy,
 .field .copy:focus-visible { opacity: 1; }
 .field .copy:hover:not(:disabled) { color: var(--text); }
 .field .copy:disabled { opacity: 0; }
+.field:hover .copy:disabled { opacity: 0.35; }
 
 .icon {
   flex: none;
@@ -324,7 +325,7 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   width: 100%;
   min-width: var(--field-w);
   min-height: 54px;
-  padding-right: 34px;
+  padding-right: 6px;
   resize: both;
   line-height: 1.45;
 }
@@ -334,7 +335,7 @@ select:focus, textarea:focus, .line:focus { border-color: var(--accent); outline
   width: 100%;
   min-width: var(--field-w);
   min-height: 76px;
-  padding-right: 34px;
+  padding-right: 6px;
   resize: both;
   line-height: 1.45;
 }
@@ -388,7 +389,8 @@ textarea.text { font-family: inherit; resize: both; }
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: 6px;
-  padding: 5px 64px 5px 6px;
+  /* Edit and copy float over this corner on hover; text keeps the full line width beneath them. */
+  padding: 5px 6px;
   cursor: text;
   user-select: text;
 }
@@ -420,6 +422,14 @@ textarea.text { font-family: inherit; resize: both; }
 .node.input .label { color: var(--input-text); }
 .node.input .label:hover { border-color: var(--input-line); }
 .node.input .label:focus { border-color: var(--input-blue); }
+.node.input .collapse-toggle {
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.node.input .collapse-toggle:hover:not(:disabled) {
+  color: var(--sticky-yellow);
+  background: color-mix(in srgb, var(--sticky-yellow) 14%, transparent);
+  border-color: transparent;
+}
 .node.input .node-head .label.unnamed,
 .node.input .node-head .label::placeholder,
 .node.input .dim,
@@ -433,7 +443,6 @@ textarea.text { font-family: inherit; resize: both; }
 .node.input .line,
 .node.input .attach,
 .node.input .sandbox-row,
-.node.input .run,
 .node.input .tool,
 .node.input .picker,
 .node.input .field .copy {
@@ -444,6 +453,47 @@ textarea.text { font-family: inherit; resize: both; }
 .node.input select:focus,
 .node.input textarea:focus,
 .node.input .line:focus { border-color: var(--input-blue); }
+
+.node.input .field .copy { color: var(--input-dim); }
+.node.input .field .copy:hover:not(:disabled) {
+  color: var(--input-text);
+  border-color: var(--input-blue);
+}
+
+.node.input .run.tinted {
+  color: var(--tint);
+  background: var(--input-field);
+  border-color: color-mix(in srgb, var(--tint) 45%, transparent);
+}
+.node.input .run.tinted:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--tint) 12%, var(--input-field));
+  border-color: var(--tint);
+}
+
+.node.input .add-tool,
+.node.input .sandbox-config-open {
+  color: var(--input-blue);
+  background: var(--input-field);
+  border-color: var(--input-line);
+}
+.node.input .add-tool:hover:not(:disabled),
+.node.input .sandbox-config-open:hover:not(:disabled) {
+  color: var(--input-text);
+  background: color-mix(in srgb, var(--input-blue) 18%, var(--input-field));
+  border-color: var(--input-blue);
+}
+.node.input .sandbox-config-open,
+.node.input .sandbox-config-open:hover:not(:disabled) { border-color: transparent; }
+
+.node.input .loop-output-mode:disabled,
+.node.input .loop-limit .line:disabled {
+  color: var(--input-dim);
+  background: var(--input-panel);
+  border-color: color-mix(in srgb, var(--input-line) 55%, transparent);
+  opacity: 0.38;
+  filter: saturate(0.45);
+  cursor: not-allowed;
+}
 
 .node.input .skip .track {
   background: var(--input-field);
@@ -478,6 +528,21 @@ textarea.text { font-family: inherit; resize: both; }
   width: 100%;
 }
 
+.comment-author {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.comment-head { align-items: flex-start; }
+.comment-author .label { width: 100%; }
+.comment-time {
+  padding: 0 4px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+}
+
 .comment-replies { gap: 10px; }
 .comment-reply {
   padding-top: 10px;
@@ -507,10 +572,8 @@ textarea.text { font-family: inherit; resize: both; }
 .node.comment .field .copy {
   color: var(--sticky-dim);
   background: var(--sticky-field);
-  opacity: 1;
 }
-.node.comment .field .copy:disabled { opacity: 0.35; }
-.node.comment .field .edit-toggle.editing { color: var(--sticky-yellow); }
+.node.comment .field .copy:hover:not(:disabled) { border-color: var(--sticky-yellow); }
 .node.comment .react-flow__handle::after { background: var(--sticky-yellow); }
 .react-flow__node.selected .node.comment { border-color: var(--sticky-yellow); }
 
@@ -530,6 +593,9 @@ textarea.text { font-family: inherit; resize: both; }
 .node.output:not(.comment) .dim,
 .node.output:not(.comment) .calls-toggle { color: var(--output-dim); }
 .node.output:not(.comment) .field .copy { background: var(--output-field); }
+.node.output:not(.comment) .field .copy:not(.edit-toggle) { color: var(--output-dim); }
+.node.output:not(.comment) .field .copy:not(.edit-toggle):hover:not(:disabled) { color: var(--output-purple); }
+.node.output:not(.comment) .field .copy:hover:not(:disabled) { border-color: var(--output-purple); }
 .node.output:not(.comment) .field .edit-toggle.editing { color: var(--output-purple); }
 .node.output:not(.comment) .react-flow__handle::after { background: var(--output-purple); }
 .react-flow__node.selected .node.output:not(.comment) { border-color: var(--output-purple); }
@@ -874,6 +940,14 @@ textarea.text { font-family: inherit; resize: both; }
   background: var(--panel-2);
 }
 .tool-head { display: flex; align-items: center; gap: 4px; padding: 4px 6px 4px 2px; }
+.tool-head > .icon.tint-err {
+  background: transparent;
+  border-color: transparent;
+}
+.tool-head > .icon.tint-err:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+  border-color: transparent;
+}
 
 .tool-head > .label { flex: 1; min-width: 40px; color: var(--tool); }
 .tool-collapse-toggle.open .glyph { transform: rotate(90deg); }

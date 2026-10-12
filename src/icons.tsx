@@ -29,6 +29,7 @@ const PATHS: Record<string, React.ReactNode> = {
       <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
     </>
   ),
+  check: <path d="m5 12 4 4L19 6" />,
   list: (
     <>
       <path d="M8 6h13M8 12h13M8 18h13" />
