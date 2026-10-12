@@ -299,6 +299,18 @@ test("comments provide named Markdown context and are traced with the next step"
   await expect(comment.locator("time").nth(0)).toHaveAttribute("datetime", new Date(commentData.createdAt).toISOString());
   await expect(comment.locator("time").nth(1)).toHaveAttribute("datetime", new Date(commentData.replies[0].createdAt).toISOString());
   await expect(comment.getByRole("button", { name: "Delete reply 1", exact: true })).toBeVisible();
+  await comment.getByRole("button", { name: "Collapse comment", exact: true }).click();
+  await expect(comment.getByRole("textbox", { name: "Comment text", exact: true })).toHaveCount(0);
+  await expect(comment.getByRole("textbox", { name: "Comment author", exact: true })).toBeVisible();
+  await expect(comment.getByRole("textbox", { name: "Reply 1 text", exact: true })).toBeVisible();
+  await expect.poll(() => state.graph.nodes.find((node: any) => node.id === commentId)?.data.collapsed).toBe(true);
+  await comment.getByRole("button", { name: "Expand comment", exact: true }).click();
+  await comment.getByRole("button", { name: "Collapse reply 1", exact: true }).click();
+  await expect(comment.getByRole("textbox", { name: "Reply 1 text", exact: true })).toHaveCount(0);
+  await expect(comment.getByRole("textbox", { name: "Reply 1 author", exact: true })).toBeVisible();
+  await expect(comment.getByRole("button", { name: "Delete reply 1", exact: true })).toBeVisible();
+  await expect.poll(() => state.graph.nodes.find((node: any) => node.id === commentId)?.data.replies[0].collapsed).toBe(true);
+  await comment.getByRole("button", { name: "Expand reply 1", exact: true }).click();
   const replyCopy = comment.getByRole("button", { name: "Copy reply 1", exact: true });
   await page.locator(".brand").hover();
   await expect(replyCopy).toHaveCSS("opacity", "0");

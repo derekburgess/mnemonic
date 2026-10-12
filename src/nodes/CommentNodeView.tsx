@@ -12,13 +12,14 @@ type MessageProps = {
   author: string;
   text: string;
   createdAt: number;
+  collapsed?: boolean;
   replyNumber?: number;
-  onChange: (patch: Pick<CommentReply, "author"> | Pick<CommentReply, "text">) => void;
+  onChange: (patch: Partial<Pick<CommentReply, "author" | "text" | "collapsed">>) => void;
   onDelete: () => void;
 };
 
 /** One directly editable message in a comment thread. */
-function CommentMessage({ author, text, createdAt, replyNumber, onChange, onDelete }: MessageProps) {
+function CommentMessage({ author, text, createdAt, collapsed = false, replyNumber, onChange, onDelete }: MessageProps) {
   const { min, field } = useFieldWidth();
   const [textHeight, setTextHeight] = useState<number | null>(null);
   const isReply = replyNumber !== undefined;
@@ -38,8 +39,16 @@ function CommentMessage({ author, text, createdAt, replyNumber, onChange, onDele
   };
 
   return (
-    <section className={`comment-message${isReply ? " comment-reply" : ""}`}>
+    <section className={`comment-message${isReply ? " comment-reply" : ""}${collapsed ? " collapsed" : ""}`}>
       <header className="node-head comment-head">
+        <button
+          className="icon collapse-toggle comment-collapse-toggle nodrag"
+          onClick={() => onChange({ collapsed: !collapsed })}
+          aria-label={`${collapsed ? "Expand" : "Collapse"} ${prefix.toLowerCase()}`}
+          aria-expanded={!collapsed}
+        >
+          <Icon name="chevron" size={13} />
+        </button>
         <div className="comment-author">
           <input
             className="label nodrag"
@@ -55,7 +64,7 @@ function CommentMessage({ author, text, createdAt, replyNumber, onChange, onDele
         <DeleteButton onClick={onDelete} title={isReply ? `Delete reply ${replyNumber}` : "Delete comment"} />
       </header>
 
-      <div className="field">
+      {!collapsed && <div className="field">
         <textarea
           {...textProps}
           className="text nodrag nowheel"
@@ -65,7 +74,7 @@ function CommentMessage({ author, text, createdAt, replyNumber, onChange, onDele
           onChange={(event) => onChange({ text: event.target.value })}
         />
         <CopyButton text={text} label={`Copy ${prefix.toLowerCase()}`} />
-      </div>
+      </div>}
     </section>
   );
 }
@@ -74,7 +83,7 @@ export function CommentNodeView({ id, data }: NodeProps<CommentNode>) {
   const { updateComment, removeNode } = useGraphActions();
   const replies = data.replies ?? [];
 
-  const updateReply = (replyId: string, patch: Pick<CommentReply, "author"> | Pick<CommentReply, "text">) => {
+  const updateReply = (replyId: string, patch: Partial<Pick<CommentReply, "author" | "text" | "collapsed">>) => {
     updateComment(id, (current) => ({
       replies: (current.replies ?? []).map((reply) => reply.id === replyId ? { ...reply, ...patch } : reply),
     }));
@@ -96,6 +105,7 @@ export function CommentNodeView({ id, data }: NodeProps<CommentNode>) {
         author={data.author}
         text={data.text}
         createdAt={data.createdAt}
+        collapsed={data.collapsed}
         onChange={(patch) => updateComment(id, patch)}
         onDelete={() => removeNode(id)}
       />
@@ -108,6 +118,7 @@ export function CommentNodeView({ id, data }: NodeProps<CommentNode>) {
               author={reply.author}
               text={reply.text}
               createdAt={reply.createdAt}
+              collapsed={reply.collapsed}
               replyNumber={index + 1}
               onChange={(patch) => updateReply(reply.id, patch)}
               onDelete={() => removeReply(reply.id)}

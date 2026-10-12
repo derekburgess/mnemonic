@@ -539,18 +539,26 @@ textarea.text { font-family: inherit; resize: both; }
   gap: 2px;
   min-width: 0;
 }
-.comment-head { align-items: flex-start; }
+.comment-head { align-items: flex-start; width: 100%; contain: inline-size; }
+.comment-collapse-toggle[aria-expanded="true"] .glyph { transform: rotate(90deg); }
+.node.comment .comment-collapse-toggle:hover:not(:disabled) {
+  color: var(--sticky-yellow);
+  background: color-mix(in srgb, var(--sticky-yellow) 14%, transparent);
+  border-color: transparent;
+}
 .comment-author .label { width: 100%; }
 .comment-time {
   padding: 0 4px;
   font-variant-numeric: tabular-nums;
   line-height: 1.25;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .comment-replies { gap: 10px; }
 .comment-reply {
   padding-top: 10px;
-  border-top: 1px solid var(--sticky-line);
 }
 
 .node.comment .text {

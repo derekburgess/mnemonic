@@ -119,6 +119,7 @@ export type CommentReply = {
   author: string;
   text: string;
   createdAt: number;
+  collapsed?: boolean;
 };
 
 export type CommentData = {
@@ -126,6 +127,7 @@ export type CommentData = {
   author: string;
   text: string;
   createdAt: number;
+  collapsed?: boolean;
   /** Ordered human responses carried downstream immediately after the original note. */
   replies?: CommentReply[];
 };
