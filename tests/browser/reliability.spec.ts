@@ -128,6 +128,12 @@ test("input cards use the active-toggle blue palette", async ({ page }) => {
 
 test("node creation buttons match their node palettes", async ({ page }) => {
   await setup(page);
+  await expect(page.locator(".brand")).toHaveText(/mnemonic\s*\|\s*Saved/);
+  await expect(page.locator(".brand .tagline, .save-status-dot")).toHaveCount(0);
+  const primaryActions = page.locator(".bar-right > button");
+  await expect(primaryActions.nth(0)).toHaveText("Add Step");
+  await expect(primaryActions.nth(1)).toHaveText("Comment");
+  await expect(primaryActions.nth(2)).toHaveText("Clear canvas");
   const styles = async (name: "Add Step" | "Comment") => page.getByRole("button", { name, exact: true }).evaluate((button) => {
     const style = getComputedStyle(button);
     return { color: style.color, background: style.backgroundColor, border: style.borderColor };
@@ -142,6 +148,11 @@ test("node creation buttons match their node palettes", async ({ page }) => {
     background: "rgb(51, 47, 18)",
     border: "rgb(143, 121, 16)",
   });
+  await page.getByRole("button", { name: "Add Step", exact: true }).click();
+  const added = page.locator(".react-flow__node-step").last();
+  await expect(added.locator(".node")).toHaveClass(/collapsed/);
+  await expect(added.getByRole("button", { name: "Expand step", exact: true })).toBeVisible();
+  await expect(added.getByRole("textbox", { name: "Step name", exact: true })).toHaveValue("Unnamed");
 });
 
 test("the idle Stop all slot confirms before clearing every node and edge", async ({ page }) => {
@@ -200,7 +211,7 @@ test("comments provide named Markdown context and are traced with the next step"
     yellow: getComputedStyle(node).getPropertyValue("--sticky-yellow").trim(),
     textHeight: (node.querySelector(".text") as HTMLElement).offsetHeight,
   }));
-  expect(appearance).toEqual({ width: 240, yellow: "#ffd100", textHeight: 125 });
+  expect(appearance).toEqual({ width: 240, yellow: "#ffd100", textHeight: 105 });
 
   await page.locator(".react-flow__controls-fitview").click();
   const source = comment.locator(".react-flow__handle.source");
@@ -450,6 +461,7 @@ test("local models force container switches on and unlock them when disabled", a
   await expect(switches.first()).toBeChecked();
   await expect(switches.first()).toBeDisabled();
   await page.getByRole("button", { name: "Add Step", exact: true }).click();
+  await page.getByRole("button", { name: "Expand step", exact: true }).last().click();
   await expect(switches).toHaveCount(2);
   await expect(switches.nth(1)).toBeChecked();
   await expect(switches.nth(1)).toBeDisabled();
@@ -555,6 +567,7 @@ test("node provider selection filters models, persists, and routes execution", a
   await expect(provider).toHaveValue("compatible");
   await page.getByRole("button", { name: "Add Step", exact: true }).click();
   const second = page.locator(".react-flow__node-step").nth(1);
+  await second.getByRole("button", { name: "Expand step", exact: true }).click();
   await expect(second.getByRole("combobox", { name: "Provider", exact: true })).toHaveValue("openai");
   await second.locator("textarea.prompt").fill("Another provider");
   state.complete = true;
@@ -681,7 +694,7 @@ test("sandbox editor preserves drafts and recommendations without running or app
   await expect.poll(() => state.graph.nodes[0].data.sandboxConfig).toBe(saved);
   expect(state.executions).toHaveLength(0);
   await panel.getByRole("textbox", { name: "Instructions" }).fill("Review the memory limit");
-  await panel.getByRole("button", { name: "Generate", exact: true }).click();
+  await panel.getByRole("button", { name: "Generate an AI recommendation", exact: true }).click();
   await expect(panel.getByRole("region", { name: "Recommendation" })).toContainText('Consider more memory.');
   await expect(panel.getByRole("region", { name: "Recommendation" }).locator("pre code")).toHaveText('{"sandbox":{"memory":"4g"}}\n');
   await expect(editor).toHaveValue(saved);
@@ -715,10 +728,11 @@ test("sandbox recommendations finish into their original node after switching pa
   const panel = page.getByRole("complementary", { name: "Sandbox Configuration" });
   await panel.getByRole("textbox", { name: "Configuration", exact: true }).fill('{"sandbox":{"cpus":3}}');
   await panel.getByRole("textbox", { name: "Instructions" }).fill("Review this");
-  await panel.getByRole("button", { name: "Generate", exact: true }).click();
+  await panel.getByRole("button", { name: "Generate an AI recommendation", exact: true }).click();
   await expect.poll(() => !!finish).toBe(true);
   await panel.getByRole("button", { name: "Close", exact: true }).click();
   await page.getByRole("button", { name: "Add Step", exact: true }).click();
+  await page.getByRole("button", { name: "Expand step", exact: true }).last().click();
   await page.getByRole("button", { name: "Sandbox configuration", exact: true }).nth(1).click();
   finish!();
   await expect.poll(() => state.graph.nodes[0].data.sandboxPanel?.recommendation).toBe("First node recommendation");
@@ -964,6 +978,7 @@ test("all-output loops preserve outputs, context, and trace routing while anothe
   await expect.poll(() => state.executions.length).toBe(2);
   await page.getByRole("button", { name: "Add Step", exact: true }).click();
   const transform = page.locator(".react-flow__node-step").last();
+  await transform.getByRole("button", { name: "Expand step", exact: true }).click();
   await transform.getByRole("textbox", { name: "Step name", exact: true }).fill("Transform");
   await transform.locator("textarea.prompt").fill("transform this");
   const transformId = (await transform.getAttribute("data-id"))!;

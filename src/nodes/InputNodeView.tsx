@@ -168,8 +168,8 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
           <Icon name="chevron" size={13} />
         </button>
         <input
-          className={`label nodrag${data.label === "Name this step" ? " unnamed" : ""}`}
-          placeholder="Name this step"
+          className={`label nodrag${data.label === "Unnamed" || data.label === "Name this step" ? " unnamed" : ""}`}
+          placeholder="Unnamed"
           value={data.label}
           onChange={(e) => onChange(id, { label: e.target.value })}
           aria-label="Step name"

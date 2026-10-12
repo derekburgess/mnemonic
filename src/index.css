@@ -112,7 +112,7 @@ body {
 .toolbar .create-comment:focus-visible { outline: 2px solid var(--sticky-yellow); outline-offset: 2px; }
 
 .brand {
-  display: flex;
+  display: inline-flex;
   align-items: baseline;
   gap: 7px;
   font-weight: 600;
@@ -121,12 +121,8 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.brand .tagline { color: var(--dim); font-weight: 400; letter-spacing: 0; }
-
-/* The tagline is the first thing to go when the toolbar gets tight. */
-@media (max-width: 1180px) {
-  .brand .tagline { display: none; }
-}
+.header-divider { color: var(--dim); font-weight: 400; letter-spacing: 0; }
+.brand .save-status { height: auto; padding: 0; letter-spacing: 0; }
 .toolbar .gap { flex: none; width: 10px; }
 
 button, .file, .sandbox-row {
@@ -490,11 +486,11 @@ textarea.text { font-family: inherit; resize: both; }
 
 .node.comment .text {
   min-width: 218px;
-  height: 125px;
+  height: 105px;
   background: var(--sticky-field);
   border-color: var(--sticky-line);
 }
-.node.comment .comment-reply .text { height: 100px; }
+.node.comment .comment-reply .text { height: 85px; }
 
 .comment-reply-button {
   width: 100%;
@@ -1301,13 +1297,6 @@ body.resizing-col { cursor: col-resize; user-select: none; }
   flex: none;
   color: var(--status-color);
   font-weight: 500;
-}
-.save-status-dot {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: 50%;
-  background: currentColor;
 }
 .save-status-detail { flex: 1 1 240px; overflow-wrap: anywhere; }
 .save-status-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }

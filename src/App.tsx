@@ -80,7 +80,8 @@ function newInput(model: string, position: { x: number; y: number }): InputNode 
     type: "step",
     position,
     data: {
-      label: "Name this step",
+      collapsed: true,
+      label: "Unnamed",
       performInference: true,
       model,
       effort: "off",
@@ -105,10 +106,13 @@ function newComment(position: { x: number; y: number }): CommentNode {
 function migrateNode(n: GraphNode): GraphNode {
   const legacy: Record<string, string> = { input: "step", output: "artifact" };
   const typed = legacy[n.type as string] ? ({ ...n, type: legacy[n.type as string] } as GraphNode) : n;
-  // Graphs saved before the fan-out parameter existed generate a single artifact.
-  return isInput(typed) && typeof typed.data.outputs !== "number"
-    ? { ...typed, data: { ...typed.data, outputs: 1 } }
-    : typed;
+  if (!isInput(typed)) return typed;
+  // Preserve old graphs while bringing their former placeholder label forward.
+  return { ...typed, data: {
+    ...typed.data,
+    ...(typeof typed.data.outputs !== "number" ? { outputs: 1 } : {}),
+    ...(typed.data.label === "Name this step" ? { label: "Unnamed" } : {}),
+  } };
 }
 
 /**
@@ -739,27 +743,24 @@ function Canvas() {
       <div className="app">
         <header className="toolbar">
           <div className="bar-left">
-            <span className="brand">
+            <div className="brand">
               mnemonic
-              <span className="tagline">| A visual context and orchestration graph</span>
-            </span>
+              <span className="header-divider">|</span>
+              <span className="save-status" data-state={saveState.label} role="status" title={saveState.error}>
+                <span className="save-status-label">{saveState.label}</span>
+              </span>
+            </div>
           </div>
 
           <div className="bar-right">
-            <div className="save-status" data-state={saveState.label} role="status" title={saveState.error}>
-              <span className="save-status-label">
-                <span className="save-status-dot" aria-hidden="true" />
-                {saveState.label}
-              </span>
-            </div>
-            <button className="tinted tint-err" onClick={runningAny ? stopRun : clearCanvas}>
-              <Icon name={runningAny ? "stop" : "trash"} /> {runningAny ? "Stop all" : "Clear canvas"}
-            </button>
             <button className="node-create create-step" onClick={addStep}>
-              <Icon name="page" /> Add Step
+              <Icon name="page" /> <span>Add Step</span>
             </button>
             <button className="node-create create-comment" onClick={addComment}>
               <Icon name="pencil" /> Comment
+            </button>
+            <button className="tinted tint-err" onClick={runningAny ? stopRun : clearCanvas}>
+              <Icon name={runningAny ? "stop" : "trash"} /> {runningAny ? "Stop all" : "Clear canvas"}
             </button>
             <button onClick={() => setPanel((p) => (p === "trace" ? null : "trace"))}>
               <Icon name="list" /> Trace Logs
