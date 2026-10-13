@@ -716,13 +716,14 @@ textarea.text { font-family: inherit; resize: both; }
 .react-flow__edge:hover .react-flow__edge-path { stroke: var(--text); }
 .react-flow__arrowhead { fill: var(--dim); }
 .react-flow__edge:hover .react-flow__arrowhead { fill: var(--text); }
-.react-flow__edge.selected .react-flow__edge-path { stroke: var(--accent); }
+.react-flow__edge.selected .react-flow__edge-path { stroke: var(--text); }
+.react-flow__edge.selected .react-flow__arrowhead { fill: var(--text); }
 .edge-control-hit { fill: transparent; pointer-events: all; touch-action: none; }
 .edge-control-hit.axis-x { cursor: ew-resize; }
 .edge-control-hit.axis-y { cursor: ns-resize; }
 .edge-control {
   fill: var(--panel);
-  stroke: var(--accent);
+  stroke: var(--text);
   stroke-width: 2;
   pointer-events: none;
 }

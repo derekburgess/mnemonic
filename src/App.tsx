@@ -78,6 +78,7 @@ function CanvasControlIcon({ kind }: { kind: "in" | "out" | "fit" }) {
 
 /** Edges are directed and that direction decides run order, so every edge shows an arrowhead. */
 const MARKER = { type: MarkerType.ArrowClosed, width: 18, height: 18, color: "#8b93a3" };
+const SELECTED_MARKER = { ...MARKER, color: "#e6e8ec" };
 const STORAGE_KEY = "mnemonic.graph.v1";
 const DEFAULT_MODEL = "gpt-5";
 export const MAX_OUTPUTS = 8;
@@ -804,7 +805,11 @@ function Canvas() {
 
   // Applied at render rather than on creation, so edges made anywhere - by hand, by a run, or
   // loaded from an older graph - all show direction, and the marker stays out of exported JSON.
-  const shownEdges = useMemo(() => edges.map((e) => ({ ...e, type: "adaptive", markerEnd: MARKER })), [edges]);
+  const shownEdges = useMemo(() => edges.map((e) => ({
+    ...e,
+    type: "adaptive",
+    markerEnd: e.selected ? SELECTED_MARKER : MARKER,
+  })), [edges]);
 
   /** The schedule: edges decide it, position only breaks ties between independent steps. */
   const runOrder = useMemo(() => topoOrder(nodes, edges).order, [nodes, edges]);

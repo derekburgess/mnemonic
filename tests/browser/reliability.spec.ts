@@ -493,7 +493,9 @@ test("edges use orthogonal routes and backward edges clear node bodies", async (
   expect(bounds.y + bounds.height).toBeGreaterThan(500 + nodeHeight + 40);
 
   const originalPath = await forward.getAttribute("d");
+  await expect(forward).toHaveCSS("stroke", "rgb(139, 147, 163)");
   await page.getByTestId("rf__edge-forward").locator(".react-flow__edge-interaction").click({ force: true });
+  await expect(forward).toHaveCSS("stroke", "rgb(230, 232, 236)");
   const controls = page.getByTestId("rf__edge-forward").locator(".edge-control-hit");
   await expect(controls).toHaveCount(1);
   await expect(controls.first()).toHaveClass(/axis-x/);

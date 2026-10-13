@@ -209,7 +209,7 @@ export function AdaptiveEdge({
       labelBgBorderRadius={labelBgBorderRadius}
       markerStart={markerStart}
       markerEnd={markerEnd}
-      style={style}
+      style={selected ? { ...style, stroke: "var(--text)" } : style}
       interactionWidth={interactionWidth}
       className={backward ? "adaptive-edge backward" : "adaptive-edge"}
     />
