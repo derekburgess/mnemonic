@@ -8,7 +8,7 @@ import type {
   OutputNode,
   ToolConfig,
 } from "./types";
-import { isComment, isInput, isOutput } from "./types";
+import { isComment, isContext, isInput, isOutput } from "./types";
 
 export const uid = () => crypto.randomUUID();
 
@@ -91,7 +91,9 @@ export function inputDependencies(nodes: GraphNode[], edges: GraphEdge[]): Map<s
       const source = map.get(sourceId);
       if (!source) return;
 
-      if (isInput(source)) {
+      if (isContext(source)) {
+        for (const upstreamId of incoming.get(source.id) ?? []) visit(upstreamId);
+      } else if (isInput(source)) {
         if (source.data.performInference === false) {
           for (const upstreamId of incoming.get(source.id) ?? []) visit(upstreamId);
         } else {
@@ -138,6 +140,8 @@ export type ContextBlock = { label: string; text: string };
 
 export type InheritedInput = {
   context: ContextBlock[];
+  roles?: string[];
+  instructions?: string[];
   attachments: Attachment[];
   files: InputFile[];
   links: { id: string; url: string }[];
@@ -169,10 +173,28 @@ export function resolveInheritedInput(inputId: string, nodes: GraphNode[], edges
       }
       return;
     }
-    if (source.data.performInference !== false) return;
+
+    if (isContext(source)) {
+      for (const upstreamId of incoming.get(source.id) ?? []) visit(upstreamId);
+      if (source.data.prompt.trim()) result.context.push({ label: source.data.label, text: source.data.prompt });
+      if (source.data.role?.trim()) (result.roles ??= []).push(source.data.role);
+      if (source.data.instructions?.trim()) (result.instructions ??= []).push(source.data.instructions);
+      result.attachments.push(...(source.data.attachments ?? []));
+      result.files.push(...(source.data.files ?? []));
+      result.links.push(...(source.data.links ?? []));
+      result.workspaces.push(...(source.data.workspaces ?? []));
+      return;
+    }
+
+    // Older in-memory fixtures and exports may still contain a context-only step. Persisted
+    // graphs are migrated to Context nodes before rendering, but retaining this traversal makes
+    // the graph engine tolerant of callers that have not passed through persistence.
+    if (!isInput(source) || source.data.performInference !== false) return;
 
     for (const upstreamId of incoming.get(source.id) ?? []) visit(upstreamId);
-    if (source.data.prompt.trim()) result.context.push({ label: source.data.label, text: source.data.prompt });
+    if (source.data.prompt?.trim()) result.context.push({ label: source.data.label, text: source.data.prompt });
+    if (source.data.role?.trim()) (result.roles ??= []).push(source.data.role);
+    if (source.data.instructions?.trim()) (result.instructions ??= []).push(source.data.instructions);
     result.attachments.push(...(source.data.attachments ?? []));
     result.files.push(...(source.data.files ?? []));
     result.links.push(...(source.data.links ?? []));
@@ -205,7 +227,7 @@ export function composePrompt(context: ContextBlock[], prompt: string): string {
   const blocks = context
     .map((c) => `<context from="${c.label}">\n${c.text}\n</context>`)
     .join("\n\n");
-  return `${blocks}\n\n${prompt}`;
+  return prompt.trim() ? `${blocks}\n\n${prompt}` : blocks;
 }
 
 /** The tools a step will offer the model on this run. */
@@ -215,17 +237,20 @@ export function resolveTools(step: InputNode): ToolConfig[] {
 
 /** The system prompt: the role, phrased as one, followed by the step's own instructions. */
 export function composeSystem(
-  role?: string,
-  instructions?: string,
+  role?: string | string[],
+  instructions?: string | string[],
   attachments?: Attachment[],
 ): string | undefined {
   const documents = (attachments ?? [])
     .filter((a) => a.text.trim())
     .map((a) => `<document name="${a.name}">\n${a.text.trim()}\n</document>`);
 
+  const roles = (Array.isArray(role) ? role : [role]).filter((value): value is string => !!value?.trim());
+  const instructionBlocks = (Array.isArray(instructions) ? instructions : [instructions])
+    .filter((value): value is string => !!value?.trim());
   const parts = [
-    role?.trim() ? `Your role is: ${role.trim()}` : "",
-    instructions?.trim() ?? "",
+    ...roles.map((value) => `Your role is: ${value.trim()}`),
+    ...instructionBlocks.map((value) => value.trim()),
     ...documents,
   ];
   const system = parts.filter(Boolean).join("\n\n");
@@ -284,7 +309,7 @@ export function commitRun(
   // gets that edge re-pointed at the new artifact.
   const prewired = edges.filter((e) => {
     const t = map.get(e.target);
-    return e.source === producer.id && !!t && isInput(t);
+    return e.source === producer.id && !!t && (isInput(t) || isContext(t));
   });
   const inherited = edges.filter((e) => activeOutputIds.has(e.source));
 

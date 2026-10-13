@@ -8,13 +8,13 @@ export type LoopOutputMode = "last" | "all";
 export type InputData = {
   /** Whether the node is shown as only its title and primary actions. */
   collapsed?: boolean;
-  /** When false, this node contributes context and resources downstream without invoking a model. */
+  /** Legacy graph field. Context-only steps are migrated to explicit Context nodes. */
   performInference?: boolean;
   provider?: import("./api").Provider;
   label: string;
   model: string;
   effort: Effort;
-  /** Folded into the system prompt ahead of the instructions. */
+  /** Legacy context fields retained only so older graph exports can be migrated. */
   role?: string;
   instructions?: string;
   /** Run this step inside an ephemeral container instead of in the proxy's own process. */
@@ -23,7 +23,7 @@ export type InputData = {
   sandboxConfig?: string;
   sandboxPanel?: { draft?: string; provider?: import("./api").Provider; model?: string; instructions?: string; recommendation?: string; error?: string };
   useGpu?: boolean;
-  /** Folders on this machine the step lends the model, reachable with the workspace tools. */
+  /** Legacy context resources retained only so older graph exports can be migrated. */
   workspaces?: Workspace[];
   /** Markdown documents appended to the system prompt, after the instructions. */
   attachments?: Attachment[];
@@ -31,7 +31,7 @@ export type InputData = {
   files?: InputFile[];
   /** URLs fetched at run time and sent with the input. */
   links?: { id: string; url: string }[];
-  prompt: string;
+  prompt?: string;
   /** Capabilities this step may call. */
   tools?: ToolConfig[];
   workspaceTools?: import("./toolSettings").WorkspaceToolSettings;
@@ -51,6 +51,23 @@ export type InputData = {
   lastExecution?: import("./executionStatus").NodeExecution;
   status: NodeStatus;
   error?: string;
+};
+
+export type ContextData = {
+  collapsed?: boolean;
+  label: string;
+  /** Folded into the system prompt ahead of the instructions. */
+  role?: string;
+  instructions?: string;
+  prompt: string;
+  /** Folders lent to every connected inference node. */
+  workspaces?: Workspace[];
+  /** Markdown documents appended to the system prompt. */
+  attachments?: Attachment[];
+  /** Files sent with the input alongside the composed text. */
+  files?: InputFile[];
+  /** URLs fetched when a connected inference runs. */
+  links?: { id: string; url: string }[];
 };
 
 /**
@@ -137,11 +154,26 @@ export type CommentData = {
 // "input", "output", "default" and "group" are React Flow's own built-in node types; using
 // those keys would apply its default node chrome (white box, fixed width) underneath ours.
 export type InputNode = Node<InputData, "step">;
+export type ContextNode = Node<ContextData, "context">;
 export type OutputNode = Node<OutputData, "artifact">;
 export type CommentNode = Node<CommentData, "comment">;
-export type GraphNode = InputNode | OutputNode | CommentNode;
-export type GraphEdge = Edge;
+export type GraphNode = InputNode | ContextNode | OutputNode | CommentNode;
+export type GraphEdgeData = {
+  /** Legacy midpoint retained for graphs saved before segment controls were introduced. */
+  control?: { x: number; y: number };
+  /** Editable coordinates for the orthogonal route's movable interior segments. */
+  route?: {
+    mode?: "dogleg";
+    centerX?: number;
+    centerY?: number;
+    sourceLaneX?: number;
+    targetLaneX?: number;
+    waypoints?: Array<{ x: number; y: number }>;
+  };
+};
+export type GraphEdge = Edge<GraphEdgeData>;
 
 export const isInput = (n: GraphNode): n is InputNode => n.type === "step";
+export const isContext = (n: GraphNode): n is ContextNode => n.type === "context";
 export const isOutput = (n: GraphNode): n is OutputNode => n.type === "artifact";
 export const isComment = (n: GraphNode): n is CommentNode => n.type === "comment";

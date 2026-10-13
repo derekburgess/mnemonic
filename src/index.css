@@ -30,6 +30,12 @@
   --input-line: #365b85;
   --input-text: #e2efff;
   --input-dim: #91a9c7;
+  --context-green: #5fd08a;
+  --context-panel: #12281d;
+  --context-field: #183426;
+  --context-line: #397a55;
+  --context-text: #dff7e8;
+  --context-dim: #8dbca0;
 
   --node-w: 300px;
   --node-pad: 10px;
@@ -98,6 +104,18 @@ body {
   border-color: var(--input-blue);
 }
 .toolbar .create-step:focus-visible { outline: 2px solid var(--input-blue); outline-offset: 2px; }
+
+.toolbar .create-context {
+  color: var(--context-green);
+  background: var(--context-field);
+  border-color: var(--context-line);
+}
+.toolbar .create-context:hover:not(:disabled) {
+  color: var(--context-text);
+  background: color-mix(in srgb, var(--context-green) 18%, var(--context-field));
+  border-color: var(--context-green);
+}
+.toolbar .create-context:focus-visible { outline: 2px solid var(--context-green); outline-offset: 2px; }
 
 .toolbar .create-comment {
   color: var(--sticky-yellow);
@@ -207,6 +225,8 @@ button.tinted:hover:not(:disabled) {
 .node.output.detached { border-style: dashed; }
 
 .node-head { display: flex; align-items: center; gap: 6px; }
+/* Keep trailing actions at the node's top-right even when header metadata spans multiple lines. */
+.node-head > :is(.collapse-toggle, .icon.tint-err) { align-self: flex-start; }
 .collapse-toggle { background: transparent; border-color: transparent; }
 .collapse-toggle .glyph { transition: transform 120ms ease; }
 .node.input:not(.collapsed) > .node-head > .collapse-toggle .glyph { transform: rotate(90deg); }
@@ -429,11 +449,12 @@ textarea.text { font-family: inherit; resize: both; }
 .node.input .label:hover { border-color: var(--input-line); }
 .node.input .label:focus { border-color: var(--input-blue); }
 .node.input .collapse-toggle {
+  color: var(--input-blue);
   transition: color 0.12s ease, background 0.12s ease;
 }
 .node.input .collapse-toggle:hover:not(:disabled) {
-  color: var(--sticky-yellow);
-  background: color-mix(in srgb, var(--sticky-yellow) 14%, transparent);
+  color: var(--input-blue);
+  background: color-mix(in srgb, var(--input-blue) 14%, transparent);
   border-color: transparent;
 }
 .node.input .node-head .label.unnamed,
@@ -512,6 +533,45 @@ textarea.text { font-family: inherit; resize: both; }
 .node.input.status-running { border-color: var(--input-blue); }
 .node.input.status-error { border-color: var(--err); }
 
+/* Explicit context nodes own prompts and resources shared with connected inferences. */
+.node.context {
+  background: var(--context-panel);
+  border-color: var(--context-line);
+  color: var(--context-text);
+}
+.node.context .label { color: var(--context-text); }
+.node.context .label:hover { border-color: var(--context-line); }
+.node.context .label:focus { border-color: var(--context-green); }
+.node.context .label.unnamed,
+.node.context .label::placeholder,
+.node.context .stack { color: var(--context-dim); }
+.node.context .collapse-toggle { color: var(--context-green); }
+.node.context:not(.collapsed) > .node-head > .collapse-toggle .glyph { transform: rotate(90deg); }
+.node.context .collapse-toggle:hover:not(:disabled) {
+  color: var(--context-text);
+  background: color-mix(in srgb, var(--context-green) 14%, transparent);
+  border-color: transparent;
+}
+.node.context textarea,
+.node.context .line,
+.node.context .attach,
+.node.context .attachment,
+.node.context .field .copy {
+  color: var(--context-text);
+  background: var(--context-field);
+  border-color: var(--context-line);
+}
+.node.context textarea:focus,
+.node.context .line:focus { border-color: var(--context-green); }
+.node.context .field .copy { color: var(--context-dim); }
+.node.context .field .copy:hover:not(:disabled) {
+  color: var(--context-green);
+  background: color-mix(in srgb, var(--context-green) 14%, var(--context-field));
+  border-color: var(--context-green);
+}
+.node.context .react-flow__handle::after { background: var(--context-green); }
+.react-flow__node.selected .node.context { border-color: var(--context-green); }
+
 /* Comments borrow the familiar Post-it yellow without sacrificing dark-theme contrast. */
 .node.comment {
   min-width: 240px;
@@ -543,6 +603,7 @@ textarea.text { font-family: inherit; resize: both; }
 }
 .comment-head { align-items: flex-start; width: 100%; contain: inline-size; }
 .comment-collapse-toggle[aria-expanded="true"] .glyph { transform: rotate(90deg); }
+.node.comment .comment-collapse-toggle { color: var(--sticky-yellow); }
 .node.comment .comment-collapse-toggle:hover:not(:disabled) {
   color: var(--sticky-yellow);
   background: color-mix(in srgb, var(--sticky-yellow) 14%, transparent);
@@ -586,6 +647,7 @@ textarea.text { font-family: inherit; resize: both; }
 .node.comment .field .copy {
   color: var(--sticky-dim);
   background: var(--sticky-field);
+  border-color: var(--sticky-line);
 }
 .node.comment .field .copy:hover:not(:disabled) { border-color: var(--sticky-yellow); }
 .node.comment .react-flow__handle::after { background: var(--sticky-yellow); }
@@ -606,12 +668,19 @@ textarea.text { font-family: inherit; resize: both; }
 
 .node.output:not(.comment) .dim,
 .node.output:not(.comment) .calls-toggle { color: var(--output-dim); }
-.node.output:not(.comment) .field .copy { background: var(--output-field); }
-.node.output:not(.comment) .field .copy:not(.edit-toggle) { color: var(--output-dim); }
-.node.output:not(.comment) .field .copy:not(.edit-toggle):hover:not(:disabled) { color: var(--output-purple); }
-.node.output:not(.comment) .field .copy:hover:not(:disabled) { border-color: var(--output-purple); }
+.node.output:not(.comment) .field .copy {
+  color: var(--output-dim);
+  background: var(--output-field);
+  border-color: var(--output-line);
+}
+.node.output:not(.comment) .field .copy:hover:not(:disabled) {
+  color: var(--output-purple);
+  background: color-mix(in srgb, var(--output-purple) 14%, var(--output-field));
+  border-color: var(--output-purple);
+}
 .node.output:not(.comment) .field .edit-toggle.editing { color: var(--output-purple); }
 .output-collapse-toggle[aria-expanded="true"] .glyph { transform: rotate(90deg); }
+.node.output:not(.comment) .output-collapse-toggle { color: var(--output-purple); }
 .node.output:not(.comment) .output-collapse-toggle:hover:not(:disabled) {
   color: var(--output-purple);
   background: color-mix(in srgb, var(--output-purple) 14%, transparent);
@@ -648,6 +717,15 @@ textarea.text { font-family: inherit; resize: both; }
 .react-flow__arrowhead { fill: var(--dim); }
 .react-flow__edge:hover .react-flow__arrowhead { fill: var(--text); }
 .react-flow__edge.selected .react-flow__edge-path { stroke: var(--accent); }
+.edge-control-hit { fill: transparent; pointer-events: all; touch-action: none; }
+.edge-control-hit.axis-x { cursor: ew-resize; }
+.edge-control-hit.axis-y { cursor: ns-resize; }
+.edge-control {
+  fill: var(--panel);
+  stroke: var(--accent);
+  stroke-width: 2;
+  pointer-events: none;
+}
 
 /* ---------- canvas panels ---------- */
 

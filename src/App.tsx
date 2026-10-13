@@ -45,15 +45,20 @@ import {
 } from "./graph";
 import { GraphActionsContext } from "./nodes/context";
 import { CommentNodeView } from "./nodes/CommentNodeView";
+import { ContextNodeView } from "./nodes/ContextNodeView";
 import { InputNodeView } from "./nodes/InputNodeView";
 import { OutputNodeView } from "./nodes/OutputNodeView";
 import {
   isComment,
+  isContext,
   isInput,
   isOutput,
   type CommentData,
   type CommentNode,
+  type ContextData,
+  type ContextNode,
   type GraphEdge,
+  type GraphEdgeData,
   type GraphNode,
   type InputData,
   type InputNode,
@@ -62,7 +67,7 @@ import {
   type ToolConfig,
 } from "./types";
 
-const nodeTypes = { step: InputNodeView, artifact: OutputNodeView, comment: CommentNodeView };
+const nodeTypes = { step: InputNodeView, context: ContextNodeView, artifact: OutputNodeView, comment: CommentNodeView };
 const edgeTypes = { adaptive: AdaptiveEdge };
 
 function CanvasControlIcon({ kind }: { kind: "in" | "out" | "fit" }) {
@@ -90,12 +95,8 @@ function newInput(model: string, position: { x: number; y: number }): InputNode 
     data: {
       collapsed: true,
       label: "Unnamed",
-      performInference: true,
       model,
       effort: "off",
-      role: "",
-      instructions: "",
-      prompt: "",
       outputs: 1,
       maxRounds: DEFAULT_ROUNDS,
       timeoutSec: DEFAULT_TIMEOUT_SEC,
@@ -104,6 +105,12 @@ function newInput(model: string, position: { x: number; y: number }): InputNode 
       status: "idle",
     },
   };
+}
+
+function newContext(position: { x: number; y: number }): ContextNode {
+  return { id: uid(), type: "context", position, data: {
+    label: "Unnamed", role: "", instructions: "", prompt: "", workspaces: [], attachments: [], files: [], links: [],
+  } };
 }
 
 function newComment(position: { x: number; y: number }): CommentNode {
@@ -159,13 +166,60 @@ function migrateToolNodes({ nodes, edges }: Snapshot): Snapshot {
   };
 }
 
+/** Split the prompt/resources formerly stored on a step into explicit Context nodes. */
+function migrateContextNodes(snapshot: Snapshot): Snapshot {
+  const nodes: GraphNode[] = [];
+  const edges = [...snapshot.edges];
+
+  for (const node of snapshot.nodes) {
+    if (!isInput(node)) {
+      nodes.push(node);
+      continue;
+    }
+
+    const { performInference, role, instructions, prompt, workspaces, attachments, files, links, ...inference } = node.data;
+    const contextData: ContextData = {
+      label: node.data.label || "Unnamed",
+      role: role ?? "",
+      instructions: instructions ?? "",
+      prompt: prompt ?? "",
+      workspaces: workspaces ?? [],
+      attachments: attachments ?? [],
+      files: files ?? [],
+      links: links ?? [],
+    };
+
+    if (performInference === false) {
+      nodes.push({ id: node.id, type: "context", position: node.position, data: contextData });
+      continue;
+    }
+
+    nodes.push({ ...node, data: inference });
+    const hasContext = !!(contextData.role?.trim() || contextData.instructions?.trim() || contextData.prompt.trim()
+      || contextData.workspaces?.length || contextData.attachments?.length || contextData.files?.length || contextData.links?.length);
+    if (!hasContext) continue;
+
+    const contextNode = newContext({ x: node.position.x - 360, y: node.position.y });
+    contextNode.data = contextData;
+    nodes.push(contextNode);
+    edges.push({ id: uid(), source: contextNode.id, target: node.id });
+  }
+
+  return { nodes, edges };
+}
+
+function migrateSnapshot(snapshot: Snapshot): Snapshot {
+  const renamed = { ...snapshot, nodes: snapshot.nodes.map(migrateNode) };
+  return migrateContextNodes(migrateToolNodes(renamed));
+}
+
 function loadSnapshot(): Snapshot | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed?.nodes) || !Array.isArray(parsed?.edges)) return null;
-    return migrateToolNodes({ ...parsed, nodes: parsed.nodes.map(migrateNode) } as Snapshot);
+    return migrateSnapshot(parsed as Snapshot);
   } catch {
     return null;
   }
@@ -194,6 +248,16 @@ function Canvas() {
   }, [setReactEdges]);
   const onNodesChange = useCallback((changes: NodeChange<GraphNode>[]) => setNodes((current) => applyNodeChanges(changes, current)), [setNodes]);
   const onEdgesChange = useCallback((changes: EdgeChange<GraphEdge>[]) => setEdges((current) => applyEdgeChanges(changes, current)), [setEdges]);
+  const updateEdgeRoute = useCallback((id: string, route?: Partial<NonNullable<GraphEdgeData["route"]>>) => {
+    setEdges((current) => current.map((edge) => edge.id === id ? {
+      ...edge,
+      data: {
+        ...(edge.data ?? {}),
+        control: undefined,
+        route: route ? { ...(edge.data?.route ?? {}), ...route } : undefined,
+      },
+    } : edge));
+  }, [setEdges]);
   const [providerSettings, setProviderSettings] = useState<PlatformSettings | null>(null);
   const [providerModels, setProviderModels] = useState<Partial<Record<Provider, string[]>>>({});
   const defaultProvider = providerSettings?.provider ?? "openai";
@@ -266,7 +330,7 @@ function Canvas() {
 
   const [saveState, setSaveState] = useState<SaveState>({ label: "Checking", ready: false });
   useEffect(() => {
-    const writer = new GraphSync(live.current, (snapshot) => publish(migrateToolNodes({ ...snapshot, nodes: snapshot.nodes.map(migrateNode) })), setSaveState);
+    const writer = new GraphSync(live.current, (snapshot) => publish(migrateSnapshot(snapshot)), setSaveState);
     sync.current = writer;
     void writer.start();
     return () => writer.stop();
@@ -287,6 +351,16 @@ function Canvas() {
             : n,
         ),
       );
+    },
+    [setNodes],
+  );
+
+  const updateContext = useCallback(
+    (id: string, patch: Partial<ContextData> | ((data: ContextData) => Partial<ContextData>)) => {
+      setNodes((current) => current.map((node) =>
+        node.id === id && isContext(node)
+          ? { ...node, data: { ...node.data, ...(typeof patch === "function" ? patch(node.data) : patch) } }
+          : node));
     },
     [setNodes],
   );
@@ -318,7 +392,7 @@ function Canvas() {
   useEffect(() => {
     for (const id of nodeRuns.current.keys()) {
       const node = nodes.find((node) => node.id === id);
-      if (!node || (isInput(node) && node.data.performInference === false)) stopNode(id);
+      if (!node) stopNode(id);
     }
   }, [nodes, stopNode]);
 
@@ -334,13 +408,7 @@ function Canvas() {
   const executeNode = useCallback(
     async (snap: Snapshot, id: string, trace?: { runId: string; kind: "run" | "next" | "step"; seq: number }, options: { signal?: AbortSignal; preserveRoutes?: boolean; loopOutputMode?: LoopOutputMode } = {}): Promise<Snapshot> => {
       const producer = snap.nodes.find((n) => n.id === id);
-      if (!producer || !isInput(producer) || producer.data.performInference === false) return snap;
-
-      if (!producer.data.prompt.trim()) {
-        const next = patchStatus(snap, id, { status: "error", error: "This step has no input text.", lastExecution: undefined });
-        publish(next);
-        return next;
-      }
+      if (!producer || !isInput(producer)) return snap;
 
       const count = Math.min(MAX_OUTPUTS, Math.max(1, producer.data.outputs ?? 1));
       const runTrace = trace ?? { runId: uid(), kind: "step" as const, seq: 0 };
@@ -352,12 +420,13 @@ function Canvas() {
 
       const inherited = resolveInheritedInput(id, working.nodes, working.edges);
       const context = inherited.context;
-      const input = composePrompt(context, producer.data.prompt);
-      const instructions = composeSystem(
-        producer.data.role,
-        producer.data.instructions,
-        [...inherited.attachments, ...(producer.data.attachments ?? [])],
-      );
+      const input = composePrompt(context, "");
+      if (!input.trim()) {
+        const next = patchStatus(working, id, { status: "error", error: "This inference has no connected input context.", lastExecution: undefined });
+        publish(next);
+        return next;
+      }
+      const instructions = composeSystem(inherited.roles, inherited.instructions, inherited.attachments);
       const tools = resolveTools(producer).map(toolSpec);
 
       const group = uid();
@@ -377,10 +446,10 @@ function Canvas() {
               tools,
               maxRounds: producer.data.maxRounds,
               timeoutSec: producer.data.timeoutSec,
-              files: [...inherited.files, ...(producer.data.files ?? [])].map(({ name, mime, dataUrl }) => ({ name, mime, dataUrl })),
-              links: [...inherited.links, ...(producer.data.links ?? [])].map((l) => l.url).filter((url) => url.trim()),
+              files: inherited.files.map(({ name, mime, dataUrl }) => ({ name, mime, dataUrl })),
+              links: inherited.links.map((l) => l.url).filter((url) => url.trim()),
               workspaceTools: producer.data.workspaceTools,
-              workspaces: [...inherited.workspaces, ...(producer.data.workspaces ?? [])].map((w) => w.path).filter((p) => p.trim()),
+              workspaces: inherited.workspaces.map((w) => w.path).filter((p) => p.trim()),
               sandbox: (producer.data.provider === "huggingface" && providerSettings?.providers?.find((p) => p.provider === "huggingface")?.runLocally) || producer.data.sandbox,
               sandboxConfig: producer.data.sandboxConfig,
               useGpu: producer.data.provider === "huggingface" && !!producer.data.useGpu,
@@ -536,7 +605,7 @@ function Canvas() {
     async (id: string, trace?: { runId: string; kind: "run" | "next" | "step"; seq: number }) => {
       if (nodeRuns.current.has(id) || pendingAtMount.current.some((entry) => entry.nodeId === id && !entry.cancelled)) return;
       const initial = live.current.nodes.find((node) => node.id === id);
-      if (!initial || !isInput(initial) || initial.data.performInference === false) return;
+      if (!initial || !isInput(initial)) return;
       const looping = !!initial.data.loop && trace?.kind !== "run";
       const controller = new AbortController();
       nodeRuns.current.set(id, controller);
@@ -622,18 +691,24 @@ function Canvas() {
     });
   }, [providerModels, providerSettings, defaultProvider, setNodes, viewportSpot]);
 
+  const addContext = useCallback(() => {
+    setNodes((current) => [...current, newContext(freeSpot(viewportSpot(), current.map(boxOf)))]);
+  }, [setNodes, viewportSpot]);
+
   const addComment = useCallback(() => {
     setNodes((current) => [...current, newComment(freeSpot(viewportSpot(), current.map(boxOf)))]);
   }, [setNodes, viewportSpot]);
 
-  /** Outputs feed inputs, inputs feed outputs. Output -> output would carry no context. */
+  /** Context-bearing nodes feed contexts/inferences; only inferences produce artifacts. */
   const isValidConnection = useCallback<IsValidConnection<GraphEdge>>(
     (conn) => {
       const source = nodes.find((n) => n.id === conn.source);
       const target = nodes.find((n) => n.id === conn.target);
       if (!source || !target || source.id === target.id) return false;
-      if (isComment(source)) return isInput(target);
+      if (isComment(source)) return isInput(target) || isContext(target);
       if (isComment(target)) return false;
+      if (isContext(source)) return isInput(target) || isContext(target);
+      if (isContext(target)) return true;
       return !(isOutput(source) && isOutput(target));
     },
     [nodes],
@@ -716,7 +791,7 @@ function Canvas() {
         try {
           const parsed = JSON.parse(text);
           if (!Array.isArray(parsed?.nodes) || !Array.isArray(parsed?.edges)) throw new Error("bad shape");
-          publish(migrateToolNodes({ nodes: parsed.nodes.map(migrateNode), edges: parsed.edges }));
+          publish(migrateSnapshot({ nodes: parsed.nodes, edges: parsed.edges }));
           setStepped([]);
           setNotice(null);
         } catch {
@@ -740,9 +815,14 @@ function Canvas() {
     [runOrder, stepped],
   );
 
+  const workspaceCounts = useMemo(() => Object.fromEntries(nodes.filter(isInput).map((node) => [
+    node.id,
+    resolveInheritedInput(node.id, nodes, edges).workspaces.filter((workspace) => workspace.path.trim()).length,
+  ])), [nodes, edges]);
+
   const actions = useMemo(
-    () => ({ activeNodeIds, stopNode, openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, updateComment, runOne, removeNode }),
-    [activeNodeIds, stopNode, openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, updateInput, updateOutput, updateComment, runOne, removeNode],
+    () => ({ activeNodeIds, stopNode, openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, workspaceCounts, updateInput, updateContext, updateOutput, updateComment, updateEdgeRoute, runOne, removeNode }),
+    [activeNodeIds, stopNode, openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, workspaceCounts, updateInput, updateContext, updateOutput, updateComment, updateEdgeRoute, runOne, removeNode],
   );
 
   return (
@@ -760,23 +840,27 @@ function Canvas() {
           </div>
 
           <div className="bar-right">
+            <button className="node-create create-context" onClick={addContext}>
+              <Icon name="page" /> <span>Context</span>
+            </button>
             <button className="node-create create-step" onClick={addStep}>
-              <Icon name="page" /> <span>Add Step</span>
+              <Icon name="graph" /> <span>Inference</span>
             </button>
             <button className="node-create create-comment" onClick={addComment}>
               <Icon name="pencil" /> Comment
             </button>
             <button className="tinted tint-err" onClick={runningAny ? stopRun : clearCanvas}>
-              <Icon name={runningAny ? "stop" : "trash"} /> {runningAny ? "Stop all" : "Clear canvas"}
+              <Icon name={runningAny ? "stop" : "trash"} /> {runningAny ? "STOP" : "Clear"}
             </button>
-            <button onClick={() => setPanel((p) => (p === "trace" ? null : "trace"))}>
-              <Icon name="list" /> Trace Logs
+            <button className="icon-only" aria-label="Trace Logs"
+              onClick={() => setPanel((p) => (p === "trace" ? null : "trace"))}>
+              <Icon name="list" />
             </button>
-            <button onClick={exportGraph}>
-              <Icon name="download" /> Export
+            <button className="icon-only" onClick={exportGraph} aria-label="Export">
+              <Icon name="download" />
             </button>
-            <label className="file">
-              <Icon name="upload" /> Import
+            <label className="file icon-only">
+              <Icon name="upload" />
               <input
                 type="file"
                 accept="application/json"
@@ -861,7 +945,7 @@ function Canvas() {
                 zoomable
                 bgColor="var(--panel)"
                 maskColor="rgba(15, 17, 21, 0.72)"
-                nodeColor={(n) => isInput(n as GraphNode) ? "#6ea8fe" : isComment(n as GraphNode) ? "#ffd100" : "#62417e"}
+                nodeColor={(n) => isInput(n as GraphNode) ? "#6ea8fe" : isContext(n as GraphNode) ? "#5fd08a" : isComment(n as GraphNode) ? "#ffd100" : "#62417e"}
                 nodeStrokeWidth={0}
               />
             </ReactFlow>

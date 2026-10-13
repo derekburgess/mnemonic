@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runStep } from "../src/api.ts";
-import { commitRun, composePrompt, splitThinking, resolveContext, resolveInheritedInput, topoOrder } from "../src/graph.ts";
-import type { CommentNode, InputNode } from "../src/types.ts";
+import { commitRun, composePrompt, composeSystem, splitThinking, resolveContext, resolveInheritedInput, topoOrder } from "../src/graph.ts";
+import type { CommentNode, ContextNode, InputNode } from "../src/types.ts";
 
 const args = { model: "test", effort: "off" as const, input: "test", timeoutSec: 1,
   trace: { runId: "run", execId: "exec", kind: "step" as const, seq: 0, nodeId: "step", label: "Step", context: [] } };
@@ -165,18 +165,17 @@ test("all-output loops retain every iteration route and provide ordered accumula
 });
 
 
-test("context-only inputs pass their prompt and resources through without being scheduled", () => {
+test("context nodes pass prompts, system fields, and resources through without being scheduled", () => {
   const upstream = { id: "upstream", type: "step", position: { x: 0, y: 0 }, data: {
     label: "Upstream", model: "test", effort: "off", prompt: "Run first", outputs: 1, status: "idle",
   } } as InputNode;
-  const context = { id: "context", type: "step", position: { x: 400, y: 0 }, data: {
-    label: "Research", performInference: false, model: "unused", effort: "off", prompt: "Use these details",
-    outputs: 1, status: "idle",
+  const context = { id: "context", type: "context", position: { x: 400, y: 0 }, data: {
+    label: "Research", role: "Analyst", instructions: "Cite the evidence.", prompt: "Use these details",
     attachments: [{ id: "skill", name: "guide.md", text: "Standing guidance" }],
     files: [{ id: "file", name: "source.txt", mime: "text/plain", dataUrl: "data:text/plain;base64,U291cmNl" }],
     links: [{ id: "link", url: "https://example.com" }],
     workspaces: [{ id: "workspace", path: "/tmp/project" }],
-  } } as InputNode;
+  } } as ContextNode;
   const consumer = { id: "consumer", type: "step", position: { x: 800, y: 0 }, data: {
     label: "Consumer", model: "test", effort: "off", prompt: "Answer", outputs: 1, status: "idle",
   } } as InputNode;
@@ -196,11 +195,16 @@ test("context-only inputs pass their prompt and resources through without being 
       { label: "Upstream", text: "Upstream answer" },
       { label: "Research", text: "Use these details" },
     ],
+    roles: ["Analyst"],
+    instructions: ["Cite the evidence."],
     attachments: context.data.attachments,
     files: context.data.files,
     links: context.data.links,
     workspaces: context.data.workspaces,
   });
+  const inherited = resolveInheritedInput(consumer.id, nodes, edges);
+  assert.equal(composeSystem(inherited.roles, inherited.instructions, inherited.attachments),
+    "Your role is: Analyst\n\nCite the evidence.\n\n<document name=\"guide.md\">\nStanding guidance\n</document>");
 });
 
 test("comments contribute attributed context without becoming scheduled steps", () => {

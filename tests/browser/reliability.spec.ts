@@ -57,7 +57,18 @@ async function setup(page: Page, outputs = 1) {
 }
 
 async function runStep(page: Page) {
-  await page.getByRole("button", { name: "Run step", exact: true }).click();
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+}
+
+async function addContextFor(page: Page, targetId: string, input: string) {
+  await page.getByRole("button", { name: "Context", exact: true }).click();
+  const context = page.locator(".react-flow__node-context").last();
+  await context.locator("textarea.prompt").fill(input);
+  await page.locator(".react-flow__controls-fitview").click();
+  await context.locator(".react-flow__handle.source").dragTo(
+    page.locator(`.react-flow__node[data-id="${targetId}"] .react-flow__handle.target`),
+  );
+  return context;
 }
 
 test("left drag separates node movement from canvas panning and handles have forgiving connection targets", async ({ page }) => {
@@ -80,7 +91,7 @@ test("left drag separates node movement from canvas panning and handles have for
   await page.mouse.up();
   expect(await page.locator(".react-flow__viewport").getAttribute("style")).not.toBe(viewportBefore);
 
-  await page.getByRole("button", { name: "Add Step", exact: true }).click();
+  await page.getByRole("button", { name: "Inference", exact: true }).click();
   const second = page.locator(".react-flow__node-step").last();
   const secondId = (await second.getAttribute("data-id"))!;
   const source = node.locator(".react-flow__handle.source");
@@ -101,7 +112,7 @@ test("canvas can zoom out beyond the React Flow default", async ({ page }) => {
   await expect(minimap.locator("title")).toHaveCount(0);
   await expect(minimap).toHaveAttribute("aria-label", "Mini Map");
   const zoomOut = page.locator(".react-flow__controls-zoomout");
-  for (let index = 0; index < 12 && await zoomOut.isEnabled(); index++) await zoomOut.click();
+  for (let index = 0; index < 30 && await zoomOut.isEnabled(); index++) await zoomOut.click();
   const transform = await page.locator(".react-flow__viewport").getAttribute("style");
   const scale = Number(transform?.match(/scale\(([^)]+)\)/)?.[1]);
   expect(scale).toBeLessThan(0.5);
@@ -119,10 +130,13 @@ test("header import uses a pointer cursor across the file input surface", async 
 test("input cards use the active-toggle blue palette", async ({ page }) => {
   await setup(page);
   const input = page.locator('.react-flow__node-step[data-id="step"]');
+  await input.getByRole("checkbox", { name: "Loop node", exact: true }).press("Space");
+  await expect(input.getByRole("checkbox", { name: "Loop node", exact: true })).toBeChecked();
+  await page.waitForTimeout(180);
   const appearance = await input.evaluate((node) => {
     const card = node.querySelector(".node")!;
-    const field = node.querySelector("textarea")!;
-    const track = node.querySelector('.skip.sandbox .track')!;
+    const field = node.querySelector("select")!;
+    const track = node.querySelector('.loop-controls .skip.sandbox .track')!;
     return {
       palette: getComputedStyle(card).getPropertyValue("--input-blue").trim(),
       card: getComputedStyle(card).backgroundColor,
@@ -138,6 +152,7 @@ test("input cards use the active-toggle blue palette", async ({ page }) => {
     toggleBorder: "rgb(110, 168, 254)",
     toggleKnob: "rgb(110, 168, 254)",
   });
+  await input.getByRole("checkbox", { name: "Loop node", exact: true }).press("Space");
   const blueControls = await input.evaluate((node) => {
     const styleOf = (selector: string) => {
       const style = getComputedStyle(node.querySelector(selector)!);
@@ -172,10 +187,11 @@ test("input cards use the active-toggle blue palette", async ({ page }) => {
   expect(blueControls.disabledLoopMode).toMatchObject({ opacity: "0.38", cursor: "not-allowed" });
   expect(blueControls.disabledLoopLimit).toEqual(blueControls.disabledLoopMode);
 
-  const prompt = input.getByRole("textbox", { name: "Input Copy input", exact: true });
-  const instructions = input.getByRole("textbox", { name: "Instructions (System Prompt + Role) Copy instructions", exact: true });
-  const copyInput = input.getByRole("button", { name: "Copy input", exact: true });
-  const copyInstructions = input.getByRole("button", { name: "Copy instructions", exact: true });
+  const context = page.locator(".react-flow__node-context").first();
+  const prompt = context.getByRole("textbox", { name: "Input Copy input", exact: true });
+  const instructions = context.getByRole("textbox", { name: "Instructions (System Prompt + Role) Copy instructions", exact: true });
+  const copyInput = context.getByRole("button", { name: "Copy input", exact: true });
+  const copyInstructions = context.getByRole("button", { name: "Copy instructions", exact: true });
   await expect(copyInstructions).toBeDisabled();
   await instructions.locator("..").hover();
   await expect(copyInstructions).toHaveCSS("opacity", "0.35");
@@ -188,22 +204,22 @@ test("input cards use the active-toggle blue palette", async ({ page }) => {
   await prompt.locator("..").hover();
   await expect(copyInput).toHaveCSS("opacity", "1");
   await copyInput.hover();
-  await expect(copyInput).toHaveCSS("border-color", "rgb(110, 168, 254)");
+  await expect(copyInput).toHaveCSS("border-color", "rgb(95, 208, 138)");
   await instructions.locator("..").hover();
   await expect(copyInstructions).toHaveCSS("opacity", "1");
   await copyInstructions.hover();
-  await expect(copyInstructions).toHaveCSS("border-color", "rgb(110, 168, 254)");
+  await expect(copyInstructions).toHaveCSS("border-color", "rgb(95, 208, 138)");
 
   const collapse = input.getByRole("button", { name: "Collapse step", exact: true });
   await collapse.hover();
-  await expect(collapse).toHaveCSS("color", "rgb(255, 209, 0)");
+  await expect(collapse).toHaveCSS("color", "rgb(110, 168, 254)");
   await expect(collapse).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
 
   const greenStyle = async (locator: ReturnType<Page["locator"]>) => locator.evaluate((element) => {
     const style = getComputedStyle(element);
     return { color: style.color, background: style.backgroundColor, border: style.borderColor };
   });
-  const runStyle = await greenStyle(input.getByRole("button", { name: "Run step", exact: true }));
+  const runStyle = await greenStyle(input.getByRole("button", { name: "Run", exact: true }));
   await input.getByRole("button", { name: "Sandbox configuration", exact: true }).click();
   const saveStyle = await greenStyle(page.getByRole("complementary", { name: "Sandbox Configuration" })
     .getByRole("button", { name: "Save", exact: true }));
@@ -219,24 +235,30 @@ test("node creation buttons match their node palettes", async ({ page }) => {
   await expect(page.locator(".brand")).toHaveText(/mnemonic\s*\|\s*Saved/);
   await expect(page.locator(".brand .tagline, .save-status-dot")).toHaveCount(0);
   const primaryActions = page.locator(".bar-right > button");
-  await expect(primaryActions.nth(0)).toHaveText("Add Step");
-  await expect(primaryActions.nth(1)).toHaveText("Comment");
-  await expect(primaryActions.nth(2)).toHaveText("Clear canvas");
-  const styles = async (name: "Add Step" | "Comment") => page.getByRole("button", { name, exact: true }).evaluate((button) => {
+  await expect(primaryActions.nth(0)).toHaveText("Context");
+  await expect(primaryActions.nth(1)).toHaveText("Inference");
+  await expect(primaryActions.nth(2)).toHaveText("Comment");
+  await expect(primaryActions.nth(3)).toHaveText("Clear canvas");
+  const styles = async (name: "Inference" | "Context" | "Comment") => page.getByRole("button", { name, exact: true }).evaluate((button) => {
     const style = getComputedStyle(button);
     return { color: style.color, background: style.backgroundColor, border: style.borderColor };
   });
-  expect(await styles("Add Step")).toEqual({
+  expect(await styles("Inference")).toEqual({
     color: "rgb(110, 168, 254)",
     background: "rgb(26, 42, 64)",
     border: "rgb(54, 91, 133)",
+  });
+  expect(await styles("Context")).toEqual({
+    color: "rgb(95, 208, 138)",
+    background: "rgb(24, 52, 38)",
+    border: "rgb(57, 122, 85)",
   });
   expect(await styles("Comment")).toEqual({
     color: "rgb(255, 209, 0)",
     background: "rgb(51, 47, 18)",
     border: "rgb(143, 121, 16)",
   });
-  await page.getByRole("button", { name: "Add Step", exact: true }).click();
+  await page.getByRole("button", { name: "Inference", exact: true }).click();
   const added = page.locator(".react-flow__node-step").last();
   await expect(added.locator(".node")).toHaveClass(/collapsed/);
   await expect(added.getByRole("button", { name: "Expand step", exact: true })).toBeVisible();
@@ -254,7 +276,8 @@ test("the idle Stop all slot confirms before clearing every node and edge", asyn
   await comment.locator(".react-flow__handle.source").dragTo(
     page.locator('.react-flow__node-step[data-id="step"] .react-flow__handle.target'),
   );
-  await expect.poll(() => state.graph.edges.length).toBe(1);
+  const commentId = (await comment.getAttribute("data-id"))!;
+  await expect.poll(() => state.graph.edges.some((edge: any) => edge.source === commentId && edge.target === "step")).toBe(true);
 
   page.once("dialog", async (dialog) => {
     expect(dialog.type()).toBe("confirm");
@@ -262,8 +285,8 @@ test("the idle Stop all slot confirms before clearing every node and edge", asyn
     await dialog.dismiss();
   });
   await page.getByRole("button", { name: "Clear canvas", exact: true }).click();
-  await expect(page.locator(".react-flow__node")).toHaveCount(2);
-  await expect(page.locator(".react-flow__edge")).toHaveCount(1);
+  await expect(page.locator(".react-flow__node")).toHaveCount(3);
+  await expect(page.locator(".react-flow__edge")).toHaveCount(2);
 
   page.once("dialog", async (dialog) => {
     expect(dialog.message()).toBe("Are you sure you want to clear the entire canvas?");
@@ -342,6 +365,7 @@ test("comments provide named Markdown context and are traced with the next step"
   expect(state.executions[0].trace.context).toEqual([
     { label: "Ada", text: "Check the **assumptions**." },
     { label: "Grace", text: "I checked the **edge cases**." },
+    { label: "Step 1", text: "Make an output" },
   ]);
   expect(state.executions[0].input).toContain('<context from="Ada">\nCheck the **assumptions**.\n</context>');
   expect(state.executions[0].input).toContain('<context from="Grace">\nI checked the **edge cases**.\n</context>');
@@ -420,11 +444,10 @@ test("input nodes collapse to their name and primary actions and persist", async
   await node.getByRole("button", { name: "Collapse step", exact: true }).click();
   await expect(node.getByRole("button", { name: "Expand step", exact: true })).toHaveAttribute("aria-expanded", "false");
   await expect(node.getByRole("textbox", { name: "Step name", exact: true })).toBeVisible();
-  await expect(node.getByRole("button", { name: "Run step", exact: true })).toBeVisible();
+  await expect(node.getByRole("button", { name: "Run", exact: true })).toBeVisible();
   await expect(node.getByRole("checkbox", { name: "Node active — turn off to skip" })).toHaveCount(0);
   await expect(node.getByRole("button", { name: "Delete step", exact: true })).not.toHaveAttribute("title");
   await expect(node.getByRole("button", { name: "Delete step", exact: true })).toBeVisible();
-  await expect(node.getByText("Perform inference", { exact: true })).toBeVisible();
   await expect(node.getByRole("combobox", { name: "Provider", exact: true })).toBeVisible();
   await expect(node.getByRole("combobox", { name: "Model", exact: true })).toBeVisible();
   await expect(node.getByRole("combobox", { name: "Thinking", exact: true })).toHaveCount(0);
@@ -434,7 +457,7 @@ test("input nodes collapse to their name and primary actions and persist", async
   await page.reload();
   await expect(node.getByRole("button", { name: "Expand step", exact: true })).toBeVisible();
   await node.getByRole("button", { name: "Expand step", exact: true }).click();
-  await expect(node.getByText("Perform inference", { exact: true })).toBeVisible();
+  await expect(node.getByRole("combobox", { name: "Thinking", exact: true })).toBeVisible();
 });
 
 test("edges use orthogonal routes and backward edges clear node bodies", async ({ page }) => {
@@ -442,7 +465,7 @@ test("edges use orthogonal routes and backward edges clear node bodies", async (
   const graph = seed() as any;
   graph.nodes[0].id = "left";
   graph.nodes[0].position = { x: 0, y: 300 };
-  graph.nodes.push({ ...structuredClone(graph.nodes[0]), id: "right", position: { x: 700, y: 300 } });
+  graph.nodes.push({ ...structuredClone(graph.nodes[0]), id: "right", position: { x: 700, y: 500 } });
   graph.edges = [
     { id: "forward", source: "left", target: "right" },
     { id: "backward", source: "right", target: "left" },
@@ -467,7 +490,31 @@ test("edges use orthogonal routes and backward edges clear node bodies", async (
     const box = (path as SVGGraphicsElement).getBBox();
     return { y: box.y, height: box.height };
   });
-  expect(bounds.y + bounds.height).toBeGreaterThan(300 + nodeHeight + 40);
+  expect(bounds.y + bounds.height).toBeGreaterThan(500 + nodeHeight + 40);
+
+  const originalPath = await forward.getAttribute("d");
+  await page.getByTestId("rf__edge-forward").locator(".react-flow__edge-interaction").click({ force: true });
+  const controls = page.getByTestId("rf__edge-forward").locator(".edge-control-hit");
+  await expect(controls).toHaveCount(1);
+  await expect(controls.first()).toHaveClass(/axis-x/);
+  const control = controls.first();
+  const controlBox = (await control.boundingBox())!;
+  await page.mouse.move(controlBox.x + controlBox.width / 2, controlBox.y + controlBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(controlBox.x + controlBox.width / 2 + 80, controlBox.y + controlBox.height / 2 - 100, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(() => state.graph.edges.find((edge: any) => edge.id === "forward")?.data?.route).toBeTruthy();
+  await expect.poll(() => forward.getAttribute("d")).not.toBe(originalPath);
+  await expect.poll(async () => (await forward.getAttribute("d"))?.includes("L")).toBe(true);
+
+  await page.getByTestId("rf__edge-forward").locator(".edge-control-hit").first().dblclick({ force: true });
+  await expect.poll(() => state.graph.edges.find((edge: any) => edge.id === "forward")?.data?.route ?? null).toBeNull();
+  await expect.poll(() => forward.getAttribute("d")).toBe(originalPath);
+
+  await page.getByTestId("rf__edge-backward").locator(".react-flow__edge-interaction").click({ force: true });
+  const backwardControls = page.getByTestId("rf__edge-backward").locator(".edge-control-hit");
+  await expect(backwardControls).toHaveCount(3);
+  await expect(page.getByTestId("rf__edge-backward").locator(".edge-control-hit.axis-y")).toHaveCount(1);
 });
 
 test("refresh recovers pending output exactly once", async ({ page }) => {
@@ -490,7 +537,7 @@ test("cancellation stops the server execution and creates no output", async ({ p
   await page.getByRole("button", { name: "Stop all", exact: true }).click();
   await expect.poll(() => state.cancelled.size).toBe(1);
   state.complete = true;
-  await expect(page.getByRole("button", { name: "Run step", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Run", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Clear canvas", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Run all", exact: true })).toHaveCount(0);
   await expect(page.locator(".react-flow__node-artifact")).toHaveCount(0);
@@ -606,7 +653,7 @@ test("local models force container switches on and unlock them when disabled", a
   const requiredSandbox = page.locator(".sandbox-main-control").first();
   await expect(requiredSandbox).toContainText("Run in a sandbox (Required)");
   await expect(requiredSandbox).not.toHaveAttribute("title");
-  await page.getByRole("button", { name: "Add Step", exact: true }).click();
+  await page.getByRole("button", { name: "Inference", exact: true }).click();
   await page.getByRole("button", { name: "Expand step", exact: true }).last().click();
   await expect(switches).toHaveCount(2);
   await expect(switches.nth(1)).toBeChecked();
@@ -713,14 +760,15 @@ test("node provider selection filters models, persists, and routes execution", a
   await expect(page.locator(".save-status")).toHaveText("Saved");
   await page.reload();
   await expect(provider).toHaveValue("compatible");
-  await page.getByRole("button", { name: "Add Step", exact: true }).click();
+  await page.getByRole("button", { name: "Inference", exact: true }).click();
   const second = page.locator(".react-flow__node-step").nth(1);
   await second.getByRole("button", { name: "Expand step", exact: true }).click();
   await expect(second.getByRole("combobox", { name: "Provider", exact: true })).toHaveValue("openai");
-  await second.locator("textarea.prompt").fill("Another provider");
+  const secondId = (await second.getAttribute("data-id"))!;
+  await addContextFor(page, secondId, "Another provider");
   state.complete = true;
-  await node.getByRole("button", { name: "Run step", exact: true }).click();
-  await second.getByRole("button", { name: "Run step", exact: true }).click();
+  await node.getByRole("button", { name: "Run", exact: true }).click();
+  await second.getByRole("button", { name: "Run", exact: true }).click();
   await expect.poll(() => state.executions.length).toBe(2);
   expect(state.executions.map((e) => [e.provider, e.model])).toEqual([
     ["compatible", "local-model"], ["openai", "test"],
@@ -759,7 +807,7 @@ test("sandbox status uses trace events, matches the toggle, and preserves comple
   expect(styles.block).toEqual(styles.toggle);
   expect(styles.cursor).toBe("default");
   expect(styles.afterToggle && styles.afterTools).toBe(true);
-  await node.getByRole("button", { name: "Run step" }).click();
+  await node.getByRole("button", { name: "Run" }).click();
   await expect.poll(() => state.executions.length).toBe(1);
   const emit = (kind: string, detail = {}) => events.push({ kind, detail, id: String(events.length),
     order: events.length + 1, at: Date.now(), execId: state.executions[0].trace.execId, source: "proxy" });
@@ -810,7 +858,7 @@ test("sandbox status uses trace events, matches the toggle, and preserves comple
   await expect(status).toHaveText("Completed");
   state.complete = false;
   finishedMs = null;
-  await node.getByRole("button", { name: "Run step" }).click();
+  await node.getByRole("button", { name: "Run" }).click();
   await expect.poll(() => state.executions.length).toBe(2);
   // The new execution's identity resets the line, even when old trace events are replayed.
   await expect(status).toHaveText("Starting execution");
@@ -879,7 +927,7 @@ test("sandbox recommendations finish into their original node after switching pa
   await panel.getByRole("button", { name: "Generate an AI recommendation", exact: true }).click();
   await expect.poll(() => !!finish).toBe(true);
   await panel.getByRole("button", { name: "Close", exact: true }).click();
-  await page.getByRole("button", { name: "Add Step", exact: true }).click();
+  await page.getByRole("button", { name: "Inference", exact: true }).click();
   await page.getByRole("button", { name: "Expand step", exact: true }).last().click();
   await page.getByRole("button", { name: "Sandbox configuration", exact: true }).nth(1).click();
   finish!();
@@ -1096,9 +1144,9 @@ test("loop limit stops after the configured iterations and switches looping off"
   await expect(outputMode).toBeDisabled();
   const loopBounds = await outputMode.locator("..").boundingBox();
   const modeBounds = await outputMode.boundingBox();
-  const workspaceBounds = await loop.getByRole("button", { name: "Add workspace", exact: true }).boundingBox();
+  const toolsBounds = await loop.locator(".tools").boundingBox();
   expect(loopBounds!.height).toBeGreaterThan(28);
-  expect(modeBounds!.y + modeBounds!.height).toBeLessThanOrEqual(workspaceBounds!.y);
+  expect(modeBounds!.y + modeBounds!.height).toBeLessThanOrEqual(toolsBounds!.y);
   await toggle.press("Space");
   await expect(limit).toBeEnabled();
   await expect(outputMode).toBeEnabled();
@@ -1108,7 +1156,7 @@ test("loop limit stops after the configured iterations and switches looping off"
   await expect(toggle).not.toBeChecked();
   await expect(limit).toBeDisabled();
   await expect(outputMode).toBeDisabled();
-  await expect(loop.getByRole("button", { name: "Run step", exact: true })).toBeVisible();
+  await expect(loop.getByRole("button", { name: "Run", exact: true })).toBeVisible();
   await expect(page.locator(".react-flow__node-artifact")).toHaveCount(2);
   await page.waitForTimeout(400);
   expect(state.executions).toHaveLength(2);
@@ -1146,12 +1194,12 @@ test("all-output loops preserve outputs, context, and trace routing while anothe
   completed.set(state.executions[0].trace.execId, "first loop output");
   await expect(page.locator(".react-flow__node-artifact")).toHaveCount(1);
   await expect.poll(() => state.executions.length).toBe(2);
-  await page.getByRole("button", { name: "Add Step", exact: true }).click();
+  await page.getByRole("button", { name: "Inference", exact: true }).click();
   const transform = page.locator(".react-flow__node-step").last();
   await transform.getByRole("button", { name: "Expand step", exact: true }).click();
   await transform.getByRole("textbox", { name: "Step name", exact: true }).fill("Transform");
-  await transform.locator("textarea.prompt").fill("transform this");
   const transformId = (await transform.getAttribute("data-id"))!;
+  await addContextFor(page, transformId, "transform this");
 
   async function connect(sourceId: string, targetId: string) {
     await page.locator(".react-flow__controls-fitview").click();
@@ -1162,7 +1210,7 @@ test("all-output loops preserve outputs, context, and trace routing while anothe
   }
   const firstId = (await page.locator(".react-flow__node-artifact").first().getAttribute("data-id"))!;
   await connect(firstId, transformId);
-  await transform.getByRole("button", { name: "Run step", exact: true }).click();
+  await transform.getByRole("button", { name: "Run", exact: true }).click();
   await expect.poll(() => state.executions.length).toBe(3);
   expect(state.executions[2].input).toContain("first loop output");
   completed.set(state.executions[2].trace.execId, "transformed feedback");
@@ -1174,10 +1222,14 @@ test("all-output loops preserve outputs, context, and trace routing while anothe
   await expect.poll(() => state.executions.length).toBe(4);
   expect(state.executions[3].input).toContain("transformed feedback");
   expect(state.executions[1].trace.loopOutputMode).toBe("all");
-  expect(state.executions[3].trace.context).toEqual([{ label: "Transform", text: "transformed feedback" }]);
+  expect(state.executions[3].trace.context).toEqual([
+    { label: "Transform", text: "transformed feedback" },
+    { label: "Step 1", text: "Make an output" },
+  ]);
   await expect(page.locator(".react-flow__node-artifact")).toHaveCount(3);
   const secondLoopId = (await page.locator(".react-flow__node-artifact").filter({ hasText: "second loop output" }).getAttribute("data-id"))!;
-  await expect.poll(() => state.graph.edges.filter((e: any) => e.target === transformId).map((e: any) => e.source)).toEqual([firstId, secondLoopId]);
+  await expect.poll(() => state.graph.edges.filter((edge: any) => edge.target === transformId
+    && state.graph.nodes.some((node: any) => node.id === edge.source && node.type === "artifact")).map((edge: any) => edge.source)).toEqual([firstId, secondLoopId]);
   await loop.getByRole("button", { name: "Stop loop", exact: true }).click();
   await expect(loop.getByRole("button", { name: "Start loop", exact: true })).toBeVisible();
   expect(state.cancelled.has(state.executions[3].trace.execId)).toBe(true);
@@ -1190,22 +1242,19 @@ test("all-output loops preserve outputs, context, and trace routing while anothe
 });
 
 
-test("context-only nodes hide inference controls and feed downstream runs", async ({ page }) => {
+test("context nodes own prompt resources and feed connected inferences", async ({ page }) => {
   const state = await setup(page);
   const graph = seed() as any;
   graph.nodes[0].id = "inference";
   graph.nodes[0].position = { x: 600, y: 0 };
+  delete graph.nodes[0].data.prompt;
   graph.nodes.unshift({
-    id: "sources", type: "step", position: { x: 0, y: 0 }, data: {
-      label: "Sources", performInference: false, model: "unused", effort: "high",
-      role: "hidden role", instructions: "hidden instructions", prompt: "Research brief",
-      outputs: 3, maxRounds: 20, timeoutSec: 900, loop: true, sandbox: true,
-      tools: [{ id: "hidden-tool", label: "Hidden", kind: "web_search" }],
+    id: "sources", type: "context", position: { x: 0, y: 0 }, data: {
+      label: "Sources", role: "researcher", instructions: "Use the supplied sources.", prompt: "Research brief",
       attachments: [{ id: "guide", name: "guide.md", text: "Standing guidance" }],
       files: [{ id: "file", name: "source.txt", mime: "text/plain", dataUrl: "data:text/plain;base64,U291cmNl" }],
       links: [{ id: "link", url: "https://example.com/source" }],
       workspaces: [{ id: "workspace", path: "/tmp/project" }],
-      status: "idle",
     },
   });
   graph.edges = [{ id: "context-edge", source: "sources", target: "inference" }];
@@ -1216,20 +1265,26 @@ test("context-only nodes hide inference controls and feed downstream runs", asyn
   }, graph);
   await page.reload();
 
-  const source = page.locator('.react-flow__node-step:has(input[aria-label="Step name"][value="Sources"])');
-  await expect(source.getByRole("checkbox", { name: "Perform inference" })).not.toBeChecked();
+  const source = page.locator('.react-flow__node-context:has(input[aria-label="Context name"][value="Sources"])');
   await expect(source.getByRole("combobox", { name: "Provider", exact: true })).toHaveCount(0);
-  await expect(source.getByText("Role", { exact: true })).toHaveCount(0);
+  await expect(source.getByText("Role", { exact: true })).toBeVisible();
   await expect(source.getByText(/Tools \(/)).toHaveCount(0);
-  await expect(source.getByRole("button", { name: "Run step", exact: true })).toHaveCount(0);
+  await expect(source.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
   await expect(source.locator("textarea.prompt")).toHaveValue("Research brief");
   await expect(source.getByRole("button", { name: "Add workspace", exact: true })).toBeVisible();
   await expect(source.getByRole("button", { name: "Add links", exact: true })).toBeVisible();
 
+  await source.getByRole("button", { name: "Collapse context", exact: true }).click();
+  await expect(source.locator("textarea.prompt")).toHaveValue("Research brief");
+  await expect(source.getByText("Role", { exact: true })).toHaveCount(0);
+  await expect(source.getByRole("button", { name: "Add workspace", exact: true })).toHaveCount(0);
+  await expect(source.getByRole("button", { name: "Add links", exact: true })).toHaveCount(0);
+
   state.complete = true;
   await runStep(page);
   await expect.poll(() => state.executions.length).toBe(1);
-  expect(state.executions[0].input).toBe('<context from="Sources">\nResearch brief\n</context>\n\nMake an output');
+  expect(state.executions[0].input).toBe('<context from="Sources">\nResearch brief\n</context>');
+  expect(state.executions[0].instructions).toContain("Your role is: researcher\n\nUse the supplied sources.");
   expect(state.executions[0].instructions).toContain('<document name="guide.md">\nStanding guidance\n</document>');
   expect(state.executions[0].files).toEqual([{ name: "source.txt", mime: "text/plain", dataUrl: "data:text/plain;base64,U291cmNl" }]);
   expect(state.executions[0].links).toEqual(["https://example.com/source"]);
