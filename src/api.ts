@@ -129,6 +129,17 @@ export async function checkPath(path: string): Promise<PathCheck> {
   return { exists: !!body.exists, dir: !!body.dir, suggestions: body.suggestions ?? [] };
 }
 
+export type WorkspaceFilePreview = { name: string; path: string; text: string; bytes: number };
+
+export async function readWorkspaceFile(href: string, workspaces: string[], workspaceChanges?: string): Promise<WorkspaceFilePreview> {
+  const res = await fetch("/api/fs/read", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ href, workspaces, workspaceChanges }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `could not read workspace file (${res.status})`);
+  return body;
+}
+
 export type StoredGraph = { canvasId: string; nodes: unknown[]; edges: unknown[]; updatedMs: number } | null;
 
 export async function fetchGraph(): Promise<StoredGraph> {

@@ -8,7 +8,7 @@ import type {
   OutputNode,
   ToolConfig,
 } from "./types";
-import { isComment, isContext, isInput, isOutput } from "./types";
+import { isComment, isContext, isInput, isOutput, isWorkspaceFile } from "./types";
 
 export const uid = () => crypto.randomUUID();
 
@@ -138,7 +138,7 @@ export function topoOrder(nodes: GraphNode[], edges: GraphEdge[]): { order: stri
 
 export type ContextSource = {
   nodeId: string;
-  kind: "output" | "thinking" | "comment" | "reply" | "context";
+  kind: "output" | "thinking" | "comment" | "reply" | "context" | "file";
   createdAt?: number;
   producerNodeId?: string;
   execId?: string;
@@ -146,6 +146,7 @@ export type ContextSource = {
   outputSetId?: string;
   edited?: boolean;
   replyId?: string;
+  path?: string;
 };
 
 export type ContextBlock = { label: string; text: string; source?: ContextSource };
@@ -200,6 +201,11 @@ export function resolveInheritedInput(inputId: string, nodes: GraphNode[], edges
       }
       return;
     }
+    if (isWorkspaceFile(source)) {
+      result.context.push({ label: source.data.name, text: source.data.text,
+        source: { nodeId: source.id, kind: "file", path: source.data.path, edited: !!source.data.edited } });
+      return;
+    }
 
     if (isContext(source)) {
       for (const upstreamId of incoming.get(source.id) ?? []) visit(upstreamId);
@@ -233,7 +239,7 @@ export function resolveInheritedInput(inputId: string, nodes: GraphNode[], edges
   const direct = incoming.get(inputId) ?? [];
   const contextIds = direct.filter((id) => {
     const node = map.get(id);
-    return node && (isOutput(node) || isComment(node));
+    return node && (isOutput(node) || isComment(node) || isWorkspaceFile(node));
   }).sort((a, b) => {
     const left = map.get(a);
     const right = map.get(b);

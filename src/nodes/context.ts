@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { CommentData, ContextData, GraphEdgeData, InputData, OutputData } from "../types";
+import type { CommentData, ContextData, GraphEdgeData, InputData, OutputData, WorkspaceFileData } from "../types";
 
 export type GraphActions = {
   openWorkspaceChanges: (id: string) => void;
@@ -26,6 +26,8 @@ export type GraphActions = {
     id: string,
     patch: Partial<CommentData> | ((data: CommentData) => Partial<CommentData>),
   ) => void;
+  updateWorkspaceFile: (id: string, patch: Partial<WorkspaceFileData>) => void;
+  openWorkspaceFile: (outputId: string, href: string) => void;
   updateEdgeRoute: (id: string, route?: Partial<NonNullable<GraphEdgeData["route"]>>) => void;
   runOne: (id: string) => void;
   stopNode: (id: string) => void;

@@ -27,7 +27,7 @@ import {
   type IsValidConnection,
 } from "@xyflow/react";
 
-import { clearCanvasTraces, exportCanvasTraces, fetchSettings, fetchModels, importCanvasTraces, runStep, toolSpec, waitForExecution, cancelExecution, type TraceArchive, type TraceStep, type Provider, type PlatformSettings } from "./api";
+import { clearCanvasTraces, exportCanvasTraces, fetchSettings, fetchModels, importCanvasTraces, readWorkspaceFile, runStep, toolSpec, waitForExecution, cancelExecution, type TraceArchive, type TraceStep, type Provider, type PlatformSettings } from "./api";
 import { LEGACY_CANVAS_ID, newCanvasId, validCanvasId } from "./canvasIdentity";
 import { Icon } from "./icons";
 import { DEFAULT_LOOP_LIMIT, normalizeLoopLimit } from "./loop";
@@ -49,11 +49,13 @@ import { CommentNodeView } from "./nodes/CommentNodeView";
 import { ContextNodeView } from "./nodes/ContextNodeView";
 import { InputNodeView } from "./nodes/InputNodeView";
 import { OutputNodeView } from "./nodes/OutputNodeView";
+import { WorkspaceFileNodeView } from "./nodes/WorkspaceFileNodeView";
 import {
   isComment,
   isContext,
   isInput,
   isOutput,
+  isWorkspaceFile,
   type CommentData,
   type CommentNode,
   type ContextData,
@@ -66,9 +68,12 @@ import {
   type LoopOutputMode,
   type OutputData,
   type ToolConfig,
+  type WorkspaceFileData,
+  type WorkspaceFileNode,
 } from "./types";
 
-const nodeTypes = { step: InputNodeView, context: ContextNodeView, artifact: OutputNodeView, comment: CommentNodeView };
+const nodeTypes = { step: InputNodeView, context: ContextNodeView, artifact: OutputNodeView, comment: CommentNodeView,
+  "workspace-file": WorkspaceFileNodeView };
 const edgeTypes = { adaptive: AdaptiveEdge };
 
 function CanvasControlIcon({ kind }: { kind: "in" | "out" | "fit" }) {
@@ -390,6 +395,12 @@ function Canvas() {
     [setNodes],
   );
 
+  const updateWorkspaceFile = useCallback((id: string, patch: Partial<WorkspaceFileData>) => {
+    setNodes((current) => current.map((node) => node.id === id && isWorkspaceFile(node)
+      ? { ...node, data: { ...node.data, ...patch } }
+      : node));
+  }, [setNodes]);
+
   const stopNode = useCallback((id: string) => {
     nodeRuns.current.get(id)?.abort();
     cancelPending(id).forEach((entry) => void cancelExecution(entry));
@@ -514,6 +525,7 @@ function Canvas() {
               usage: result.usage,
               toolCalls: result.toolCalls,
               workspaceChanges: result.workspaceChanges,
+              workspaces: inherited.workspaces,
             })),
             options.loopOutputMode
               ? { append: true, moveRoutes: options.loopOutputMode === "last" }
@@ -554,9 +566,10 @@ function Canvas() {
     if (live.current.nodes.some((n) => isOutput(n) && n.data.execId === step.execId)) return;
     const producer = live.current.nodes.find((n) => n.id === step.nodeId && isInput(n)) as InputNode | undefined;
     if (!producer) throw new Error("The source step is no longer on this graph.");
+    const workspaces = resolveInheritedInput(producer.id, live.current.nodes, live.current.edges).workspaces;
     const committed = commitRun(live.current.nodes, live.current.edges, producer, [{ execId: step.execId, runId: step.runId,
       model: step.servedModel ?? step.requestedModel, effort: step.effort as InputData["effort"], text: step.outputText ?? "",
-      workspaceChanges: step.params?.workspaceChanges, usage: step.usage ?? undefined, toolCalls: step.toolCalls ?? undefined }], { append: true });
+      workspaceChanges: step.params?.workspaceChanges, workspaces, usage: step.usage ?? undefined, toolCalls: step.toolCalls ?? undefined }], { append: true });
     publish({ ...live.current, nodes: committed.nodes, edges: committed.edges });
     localStorage.setItem(STORAGE_KEY, JSON.stringify(live.current));
     forgetExecutions([step.execId]);
@@ -587,9 +600,11 @@ function Canvas() {
         forgetExecutions(entries.filter((_, i) => settled[i].status === "rejected" && (settled[i] as PromiseRejectedResult).reason?.terminal).map((e) => e.execId));
         const producer = live.current.nodes.find((n) => n.id === entries[0].nodeId && isInput(n)) as InputNode | undefined;
         if (producer && results.length && !controller.signal.aborted) {
+          const workspaces = resolveInheritedInput(producer.id, live.current.nodes, live.current.edges).workspaces;
           const loopOutputMode = entries.find((entry) => entry.loopOutputMode)?.loopOutputMode;
           const moveRoutes = loopOutputMode ? loopOutputMode === "last" : entries.some((entry) => entry.moveRoutes);
-          const committed = commitRun(live.current.nodes, live.current.edges, producer, results, {
+          const committed = commitRun(live.current.nodes, live.current.edges, producer,
+            results.map((result) => ({ ...result, workspaces })), {
             append: true,
             moveRoutes,
             preserveRoutes: !loopOutputMode && !moveRoutes && entries.some((entry) => entry.preserveRoutes),
@@ -717,16 +732,41 @@ function Canvas() {
     setNodes((current) => [...current, newComment(freeSpot(viewportSpot(), current.map(boxOf)))]);
   }, [setNodes, viewportSpot]);
 
+  const openWorkspaceFile = useCallback(async (outputId: string, href: string) => {
+    try {
+      const output = live.current.nodes.find((node) => node.id === outputId && isOutput(node));
+      if (!output || !isOutput(output)) throw new Error("The source output is no longer on this canvas.");
+      const inherited = output.data.workspaces?.length
+        ? output.data.workspaces
+        : resolveInheritedInput(output.data.sourceId, live.current.nodes, live.current.edges).workspaces;
+      const preview = await readWorkspaceFile(href, inherited.map((workspace) => workspace.path).filter(Boolean), output.data.workspaceChanges);
+      setNodes((current) => {
+        const source = current.find((node) => node.id === outputId);
+        const desired = source
+          ? { x: source.position.x + boxOf(source).w + 80, y: source.position.y }
+          : viewportSpot();
+        const node: WorkspaceFileNode = {
+          id: uid(),
+          type: "workspace-file",
+          position: freeSpot(desired, current.map(boxOf)),
+          data: { name: preview.name, path: preview.path, text: preview.text },
+        };
+        return [...current, node];
+      });
+      setNotice(null);
+    } catch (err) {
+      setNotice(`Could not open workspace file: ${(err as Error).message}`);
+    }
+  }, [setNodes, viewportSpot]);
+
   /** Context-bearing nodes feed contexts/inferences; only inferences produce artifacts. */
   const isValidConnection = useCallback<IsValidConnection<GraphEdge>>(
     (conn) => {
       const source = nodes.find((n) => n.id === conn.source);
       const target = nodes.find((n) => n.id === conn.target);
       if (!source || !target || source.id === target.id) return false;
-      if (isComment(source)) return isInput(target) || isContext(target);
-      if (isComment(target)) return false;
-      if (isContext(source)) return isInput(target) || isContext(target);
-      if (isContext(target)) return true;
+      if (isContext(target) || isComment(target) || isWorkspaceFile(target)) return false;
+      if (isComment(source) || isWorkspaceFile(source) || isContext(source)) return isInput(target);
       return !(isOutput(source) && isOutput(target));
     },
     [nodes],
@@ -855,8 +895,8 @@ function Canvas() {
   ])), [nodes, edges]);
 
   const actions = useMemo(
-    () => ({ activeNodeIds, stopNode, openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, workspaceCounts, updateInput, updateContext, updateOutput, updateComment, updateEdgeRoute, runOne, removeNode }),
-    [activeNodeIds, stopNode, openWorkspaceChanges, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, workspaceCounts, updateInput, updateContext, updateOutput, updateComment, updateEdgeRoute, runOne, removeNode],
+    () => ({ activeNodeIds, stopNode, openWorkspaceChanges, openWorkspaceFile, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, workspaceCounts, updateInput, updateContext, updateOutput, updateComment, updateWorkspaceFile, updateEdgeRoute, runOne, removeNode }),
+    [activeNodeIds, stopNode, openWorkspaceChanges, openWorkspaceFile, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, workspaceCounts, updateInput, updateContext, updateOutput, updateComment, updateWorkspaceFile, updateEdgeRoute, runOne, removeNode],
   );
 
   return (
@@ -979,7 +1019,7 @@ function Canvas() {
                 zoomable
                 bgColor="var(--panel)"
                 maskColor="rgba(15, 17, 21, 0.72)"
-                nodeColor={(n) => isInput(n as GraphNode) ? "#6ea8fe" : isContext(n as GraphNode) ? "#5fd08a" : isComment(n as GraphNode) ? "#ffd100" : "#62417e"}
+                nodeColor={(n) => isInput(n as GraphNode) ? "#6ea8fe" : isContext(n as GraphNode) ? "#5fd08a" : isComment(n as GraphNode) ? "#ffd100" : isWorkspaceFile(n as GraphNode) ? "#8b93a3" : "#62417e"}
                 nodeStrokeWidth={0}
               />
             </ReactFlow>

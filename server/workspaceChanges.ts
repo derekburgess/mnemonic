@@ -196,6 +196,38 @@ export async function reviewWorkspaceChanges(id: string) {
     conflict: c.accepted ? undefined : await conflict(c), before: preview(c.before), after: preview(c.after) }))) };
 }
 
+/** Read the exact text produced inside a sandbox before it is accepted into the host workspace. */
+export async function readWorkspaceChangeFile(id: string, href: string) {
+  const proposal = await load(id);
+  let asked = href.trim();
+  if (/^sandbox:/i.test(asked)) {
+    asked = asked.replace(/^sandbox:\/*/i, "/");
+  } else if (/^file:/i.test(asked)) {
+    try { asked = new URL(asked).pathname; }
+    catch { throw failure("That file link is not valid.", 400); }
+  } else {
+    asked = asked.split(/[?#]/, 1)[0];
+  }
+  try { asked = decodeURIComponent(asked); }
+  catch { throw failure("That file link is not valid.", 400); }
+  const slashed = asked.replace(/\\/g, "/");
+  const normalized = slashed.replace(/^\/workspaces\//, "").replace(/^\.\//, "");
+  const change = proposal.changes.find((candidate) => {
+    const named = `${candidate.workspace}/${candidate.path.replace(/\\/g, "/")}`;
+    const absolute = path.resolve(candidate.root, candidate.path).replace(/\\/g, "/");
+    return normalized === named || slashed === absolute;
+  });
+  if (!change) return null;
+  if (!change.after) throw failure(`"${normalized}" was deleted by this run.`, 404);
+  const bytes = Buffer.from(change.after.data, "base64");
+  if (bytes.length > 256 * 1024) throw failure(`"${normalized}" is past the 262144-byte preview limit.`, 413);
+  const text = bytes.toString("utf8");
+  if (bytes.includes(0) || !Buffer.from(text).equals(bytes)) {
+    throw failure(`"${normalized}" looks like a binary file and cannot be previewed as text.`, 415);
+  }
+  return { name: path.basename(change.path), path: `${change.workspace}/${change.path}`, text, bytes: bytes.length };
+}
+
 let accepting = false;
 export async function acceptWorkspaceChanges(id: string, selected: string[]) {
   if (accepting) throw failure("Another acceptance is in progress. Try again.");

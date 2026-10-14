@@ -1,4 +1,4 @@
-import { reviewWorkspaceChanges, acceptWorkspaceChanges, workspaceChangesSummary } from "./workspaceChanges.js";
+import { reviewWorkspaceChanges, acceptWorkspaceChanges, readWorkspaceChangeFile, workspaceChangesSummary } from "./workspaceChanges.js";
 import { sandboxAdvice } from "./sandboxAdvice.js";
 import { event, sanitize, sanitizeJsonText, sanitizeTraceContext, redactText, errorDetail, type EmitEvent } from "./events.js";
 import express from "express";
@@ -14,7 +14,7 @@ import { deleteRun, exportCanvasTraces, getRun, getStepResult, importCanvasTrace
 import { readSettings, publicSettings, PROVIDERS, resolveCredentials, writeSettings, sandboxModelUrl, type Provider } from "./settings.js";
 import { loadGraph, saveGraph, graphDb } from "./graphstore.js";
 import { TIMEOUT_MESSAGE, runChat, runResponses } from "./providers.js";
-import { check, describeWorkspaces, findFolder, nativePick } from "./workspace.js";
+import { check, describeWorkspaces, findFolder, nativePick, readWorkspaceFile } from "./workspace.js";
 import { mountsFor, runInSandbox, sandboxStatus, sweepOrphans, type Mount } from "./sandbox.js";
 import type { Job } from "./runner.js";
 import type { ContainerTrace } from "./containerTrace.js";
@@ -232,6 +232,21 @@ app.get("/api/fs/check", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
+});
+
+/** Resolve an output's local Markdown link within the workspaces that produced that output. */
+app.post("/api/fs/read", async (req, res) => {
+  const { href, workspaces, workspaceChanges } = req.body ?? {};
+  if (typeof href !== "string" || !Array.isArray(workspaces) ||
+      workspaces.some((workspace: unknown) => typeof workspace !== "string") ||
+      (workspaceChanges !== undefined && typeof workspaceChanges !== "string")) {
+    return res.status(400).json({ error: "href and workspaces are required" });
+  }
+  try {
+    const proposed = workspaceChanges ? await readWorkspaceChangeFile(workspaceChanges, href) : null;
+    res.json(proposed ?? await readWorkspaceFile(workspaces, href));
+  }
+  catch (err) { res.status((err as { status?: number }).status ?? 500).json({ error: (err as Error).message }); }
 });
 
 /**

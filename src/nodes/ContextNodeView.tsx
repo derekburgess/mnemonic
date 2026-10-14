@@ -79,7 +79,6 @@ export function ContextNodeView({ id, data }: NodeProps<ContextNode>) {
 
   return (
     <div className={`node context nopan${collapsed ? " collapsed" : ""}`}>
-      <Handle type="target" position={Position.Left} />
       <header className="node-head">
         <input className={`label nodrag${data.label === "Unnamed" ? " unnamed" : ""}`}
           placeholder="Unnamed" value={data.label} aria-label="Context name"

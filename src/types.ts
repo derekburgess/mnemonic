@@ -116,6 +116,8 @@ export type OutputData = {
   /** Stable macro-cluster position among the source step's historical result sets. */
   outputSetIndex?: number;
   workspaceChanges?: string;
+  /** Workspace roots available to the execution, retained so local links resolve unambiguously. */
+  workspaces?: Workspace[];
   execId?: string;
   runId?: string;
   /** Which input node produced this artifact. Outputs are immutable records of one run. */
@@ -151,13 +153,24 @@ export type CommentData = {
   replies?: CommentReply[];
 };
 
+export type WorkspaceFileData = {
+  /** Immutable file identity as it appeared when opened from an output. */
+  name: string;
+  path: string;
+  /** An editable canvas snapshot; editing never writes back to the workspace. */
+  text: string;
+  edited?: boolean;
+  collapsed?: boolean;
+};
+
 // "input", "output", "default" and "group" are React Flow's own built-in node types; using
 // those keys would apply its default node chrome (white box, fixed width) underneath ours.
 export type InputNode = Node<InputData, "step">;
 export type ContextNode = Node<ContextData, "context">;
 export type OutputNode = Node<OutputData, "artifact">;
 export type CommentNode = Node<CommentData, "comment">;
-export type GraphNode = InputNode | ContextNode | OutputNode | CommentNode;
+export type WorkspaceFileNode = Node<WorkspaceFileData, "workspace-file">;
+export type GraphNode = InputNode | ContextNode | OutputNode | CommentNode | WorkspaceFileNode;
 export type GraphEdgeData = {
   /** Legacy midpoint retained for graphs saved before segment controls were introduced. */
   control?: { x: number; y: number };
@@ -177,3 +190,4 @@ export const isInput = (n: GraphNode): n is InputNode => n.type === "step";
 export const isContext = (n: GraphNode): n is ContextNode => n.type === "context";
 export const isOutput = (n: GraphNode): n is OutputNode => n.type === "artifact";
 export const isComment = (n: GraphNode): n is CommentNode => n.type === "comment";
+export const isWorkspaceFile = (n: GraphNode): n is WorkspaceFileNode => n.type === "workspace-file";

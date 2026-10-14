@@ -45,6 +45,7 @@ function provenance(source?: ContextSource) {
   const parts = [source.kind, `node ${source.nodeId}`];
   if (source.producerNodeId) parts.push(`producer ${source.producerNodeId}`);
   if (source.replyId) parts.push(`reply ${source.replyId}`);
+  if (source.path) parts.push(source.path);
   if (source.runId) parts.push(`run ${source.runId}`);
   if (source.execId) parts.push(`execution ${source.execId}`);
   if (source.outputSetId) parts.push(`set ${source.outputSetId}`);

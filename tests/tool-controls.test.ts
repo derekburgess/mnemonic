@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { buildTools } from "../server/tools.js";
-import { describeWorkspaces } from "../server/workspace.js";
+import { describeWorkspaces, readWorkspaceFile } from "../server/workspace.js";
 import { toolSpec } from "../src/api.js";
 
 test("disabled tools are neither advertised nor dispatched, and MCP is never contacted", async () => {
@@ -42,4 +42,19 @@ test("workspace controls block writes while preserving reads and legacy defaults
   const disabled = { workspace_write: false, workspace_read: false, workspace_list: false };
   assert.equal((await buildTools([], [root], undefined, undefined, disabled)).tools.length, 0);
   assert.equal(describeWorkspaces([root], disabled), undefined);
+});
+
+test("workspace file previews resolve named, container, and encoded links but stay contained", async (t) => {
+  const parent = await fs.mkdtemp(path.join(os.tmpdir(), "mnemonic-preview-"));
+  t.after(() => fs.rm(parent, { recursive: true, force: true }));
+  const root = path.join(parent, "project");
+  await fs.mkdir(path.join(root, "notes"), { recursive: true });
+  await fs.writeFile(path.join(root, "notes", "hello world.md"), "# Hello\n");
+  const named = `${path.basename(root)}/notes/hello%20world.md`;
+
+  assert.deepEqual(await readWorkspaceFile([root], named), {
+    name: "hello world.md", path: `${path.basename(root)}/notes/hello world.md`, text: "# Hello\n", bytes: 8,
+  });
+  assert.equal((await readWorkspaceFile([root], `sandbox:/workspaces/${named}`)).text, "# Hello\n");
+  await assert.rejects(readWorkspaceFile([root], "../outside.txt"), /outside every workspace/);
 });

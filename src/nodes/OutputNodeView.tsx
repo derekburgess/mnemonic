@@ -1,7 +1,7 @@
 import { usePendingWorkspaceChanges } from "../workspaceChangeStatus";
 import { useState } from "react";
 import { Handle, Position, useStore, type NodeProps } from "@xyflow/react";
-import Markdown from "react-markdown";
+import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type { OutputNode } from "../types";
@@ -16,7 +16,7 @@ const NAME_COLUMN = 150;
 const ROW_GAP = 6;
 
 export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
-  const { openWorkspaceChanges, removeNode: onDelete, updateOutput } = useGraphActions();
+  const { openWorkspaceChanges, openWorkspaceFile, removeNode: onDelete, updateOutput } = useGraphActions();
   const collapsed = !!data.collapsed;
   const pendingChanges = usePendingWorkspaceChanges(data.workspaceChanges);
 
@@ -103,7 +103,15 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
               <div style={{ whiteSpace: "pre-wrap" }}>{data.text}</div>
             ) : data.text ? (
               // GFM for tables and strikethrough; breaks so single newlines survive as written.
-              <Markdown remarkPlugins={[remarkGfm, remarkBreaks]}>{data.text}</Markdown>
+              <Markdown remarkPlugins={[remarkGfm, remarkBreaks]}
+                urlTransform={(url) => /^(?:file|sandbox):/i.test(url) ? url : defaultUrlTransform(url)} components={{
+                a: ({ href, children, ...props }) => {
+                  const local = !!href && (/^(?:file|sandbox):/i.test(href) || /^[a-z]:[/\\]/i.test(href) || !/^[a-z][a-z0-9+.-]*:/i.test(href)) && !href.startsWith("#");
+                  return <a {...props} href={href} {...(local
+                    ? { onClick: (event) => { event.preventDefault(); openWorkspaceFile(id, href!); } }
+                    : { target: "_blank", rel: "noreferrer noopener" })}>{children}</a>;
+                },
+              }}>{data.text}</Markdown>
             ) : (
               <em className="dim">empty response</em>
             )}

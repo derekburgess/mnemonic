@@ -24,6 +24,12 @@
   --output-line: #62417e;
   --output-text: #efe4ff;
   --output-dim: #aa96c2;
+  --file-gray: #b5bbc5;
+  --file-panel: #20242b;
+  --file-field: #292e37;
+  --file-line: #555d69;
+  --file-text: #edf0f4;
+  --file-dim: #9ca4af;
   --input-blue: #6ea8fe;
   --input-panel: #142033;
   --input-field: #1a2a40;
@@ -688,6 +694,64 @@ textarea.text { font-family: inherit; resize: both; }
 }
 .node.output:not(.comment) .react-flow__handle::after { background: var(--output-purple); }
 .react-flow__node.selected .node.output:not(.comment) { border-color: var(--output-purple); }
+
+/* Opened workspace files are editable canvas snapshots, visually neutral beside generated output. */
+.node.output.workspace-file {
+  background: var(--file-panel);
+  border-color: var(--file-line);
+  color: var(--file-text);
+}
+.workspace-file-head {
+  align-items: flex-start;
+  width: 100%;
+  min-width: 0;
+  /* The content field, not a long path, determines the node's initial output-sized width. */
+  contain: inline-size;
+}
+.workspace-file-path {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.node.output.workspace-file .text {
+  background: var(--file-field);
+  border-color: var(--file-line);
+}
+.node.output.workspace-file .dim { color: var(--file-dim); }
+.node.output.workspace-file .field .copy {
+  color: var(--file-dim);
+  background: var(--file-field);
+  border-color: var(--file-line);
+}
+.node.output.workspace-file .field .copy:hover:not(:disabled),
+.node.output.workspace-file .field .edit-toggle.editing {
+  color: var(--file-gray);
+  background: color-mix(in srgb, var(--file-gray) 14%, var(--file-field));
+  border-color: var(--file-gray);
+}
+.node.output.workspace-file .output-collapse-toggle {
+  color: var(--file-dim);
+}
+.node.output.workspace-file .output-collapse-toggle:hover:not(:disabled) {
+  color: var(--file-gray);
+  background: color-mix(in srgb, var(--file-gray) 14%, transparent);
+}
+.workspace-file-close {
+  align-self: flex-start;
+  color: var(--file-dim);
+  background: var(--file-field);
+  border-color: var(--file-line);
+}
+.workspace-file-close:hover:not(:disabled) {
+  color: var(--file-text);
+  border-color: var(--file-gray);
+}
+.workspace-file-footer { align-self: flex-end; }
+.node.output.workspace-file .react-flow__handle::after { background: var(--file-gray); }
+.react-flow__node.selected .node.output.workspace-file { border-color: var(--file-gray); }
 
 /* Handles ride the node's own border rather than a wrapper box around it. */
 .react-flow__handle {

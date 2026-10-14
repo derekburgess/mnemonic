@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runStep } from "../src/api.ts";
 import { commitRun, composePrompt, composeSystem, splitThinking, resolveContext, resolveInheritedInput, topoOrder } from "../src/graph.ts";
-import type { CommentNode, ContextNode, InputNode } from "../src/types.ts";
+import type { CommentNode, ContextNode, InputNode, WorkspaceFileNode } from "../src/types.ts";
 
 const args = { model: "test", effort: "off" as const, input: "test", timeoutSec: 1,
   trace: { runId: "run", execId: "exec", kind: "step" as const, seq: 0, nodeId: "step", label: "Step", context: [] } };
@@ -244,4 +244,23 @@ test("comments contribute attributed context without becoming scheduled steps", 
   assert.equal(composePrompt(resolveContext(consumer.id, nodes, edges), consumer.data.prompt),
     '<context from="Ada">\nCheck the **assumptions**.\n</context>\n\n' +
     '<context from="Grace">\nI checked the edge cases.\n</context>\n\nRevise');
+});
+
+test("workspace file snapshots contribute traced context without becoming scheduled steps", () => {
+  const file = { id: "file-preview", type: "workspace-file", position: { x: 0, y: 0 }, data: {
+    name: "report.md", path: "research/report.md", text: "# Findings", edited: true,
+  } } as WorkspaceFileNode;
+  const consumer = { id: "consumer", type: "step", position: { x: 500, y: 0 }, data: {
+    label: "Consumer", model: "test", effort: "off", outputs: 1, status: "idle",
+  } } as InputNode;
+  const nodes = [file, consumer];
+  const edges = [{ id: "context", source: file.id, target: consumer.id }];
+
+  assert.deepEqual(topoOrder(nodes, edges), { order: [consumer.id], cycle: [] });
+  const context = resolveContext(consumer.id, nodes, edges);
+  assert.deepEqual(context, [{
+    label: "report.md",
+    text: "# Findings",
+    source: { nodeId: "file-preview", kind: "file", path: "research/report.md", edited: true },
+  }]);
 });

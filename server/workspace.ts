@@ -1,9 +1,11 @@
 import type { WorkspaceToolSettings } from "../src/toolSettings.js";
 import { execFile } from "node:child_process";
+import { constants } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 
 /**
  * A workspace is a folder on this machine that a step lends to the model, held as an absolute
@@ -500,6 +502,56 @@ const display = (roots: Root[], target: string) => {
   const rel = path.relative(home.dir, target);
   return rel ? path.join(home.name, rel) : home.name;
 };
+
+export type WorkspaceFilePreview = { name: string; path: string; text: string; bytes: number };
+
+/** Read a Markdown link only when it resolves inside one of the supplied workspace roots. */
+export async function readWorkspaceFile(dirs: string[], href: string): Promise<WorkspaceFilePreview> {
+  const roots = workspaceNames(dirs);
+  if (!roots.length) throw Object.assign(new Error("This output has no attached workspace."), { status: 400 });
+
+  let asked = href.trim();
+  if (/^sandbox:/i.test(asked)) {
+    asked = asked.replace(/^sandbox:\/*/i, "/").split(/[?#]/, 1)[0];
+    try { asked = decodeURIComponent(asked); }
+    catch { throw Object.assign(new Error("That file link is not valid."), { status: 400 }); }
+  } else if (/^file:/i.test(asked)) {
+    try { asked = fileURLToPath(new URL(asked)); }
+    catch { throw Object.assign(new Error("That file link is not valid."), { status: 400 }); }
+  } else {
+    // Fragments address a position inside a document, not a different file. Query strings have
+    // no meaning for a local file and would otherwise become part of its name.
+    asked = asked.split(/[?#]/, 1)[0];
+    try { asked = decodeURIComponent(asked); }
+    catch { throw Object.assign(new Error("That file link is not valid."), { status: 400 }); }
+  }
+  // Contained tools see the same named roots below /workspaces; map that display path back to
+  // the named-root form understood by the host-side resolver.
+  asked = asked.replace(/^[/\\]workspaces[/\\]/, "");
+
+  let target: string;
+  try { target = await resolveInRoots(roots, asked); }
+  catch (err) { throw Object.assign(err as Error, { status: 403 }); }
+  const handle = await fs.open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch((err) => {
+    throw Object.assign(new Error(`Could not read "${asked}": ${(err as Error).message}`), { status: 404 });
+  });
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) throw Object.assign(new Error(`"${asked}" is not a file.`), { status: 400 });
+    if (stat.size > MAX_READ_BYTES) {
+      throw Object.assign(new Error(`"${asked}" is ${stat.size} bytes, past the ${MAX_READ_BYTES}-byte preview limit.`), { status: 413 });
+    }
+    const buffer = await handle.readFile();
+    if (buffer.length > MAX_READ_BYTES) {
+      throw Object.assign(new Error(`"${asked}" grew past the ${MAX_READ_BYTES}-byte preview limit.`), { status: 413 });
+    }
+    const text = buffer.toString("utf8");
+    if (buffer.subarray(0, 8000).includes(0) || !Buffer.from(text).equals(buffer)) {
+      throw Object.assign(new Error(`"${asked}" looks like a binary file and cannot be previewed as text.`), { status: 415 });
+    }
+    return { name: path.basename(target), path: display(roots, target), text, bytes: buffer.length };
+  } finally { await handle.close(); }
+}
 
 export type WorkspaceTool = {
   definition: Record<string, unknown>;
