@@ -1,6 +1,7 @@
 import type { TraceEvent } from "../server/events";
 
 export type NodeExecution = {
+  canvasId?: string;
   runId: string;
   execIds: string[];
   startedMs: number;

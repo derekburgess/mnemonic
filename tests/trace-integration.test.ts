@@ -53,7 +53,10 @@ test("async admission is idempotent and result delivery is independent of the re
   const controller = new AbortController();
   const request = fetch(`${base}/api/run`, { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model: "test", input: "test", timeoutSec: 5,
-      trace: { runId: "run", execId: "exec", nodeId: "step", clientSentMs: Date.now(), loopOutputMode: "all",
+      files: [{ name: "test-secret-brief.txt", mime: "text/plain", dataUrl: "data:text/plain;base64,aGVsbG8=" }],
+      workspaces: ["/tmp/test-secret-workspace"],
+      sandboxConfig: JSON.stringify({ password: "configuration-secret", memory: "1g" }),
+      trace: { runId: "run", execId: "exec", nodeId: "step", clientSentMs: Date.now(), loopOutputMode: "all", generationIndex: 2, generationCount: 3,
         context: [{ label: "Loop", text: "first" }, { label: "Loop", text: "second" }] } }), signal: controller.signal });
   const accepted = await request;
   assert.equal(accepted.status, 202);
@@ -91,11 +94,25 @@ test("async admission is idempotent and result delivery is independent of the re
   const { steps } = await (await fetch(`${base}/api/trace/runs/run`)).json();
   assert.equal(steps[0].status, "ok");
   assert.equal(steps[0].params.loopOutputMode, "all");
-  assert.deepEqual(steps[0].context, [{ label: "Loop", text: "first" }, { label: "Loop", text: "second" }]);
+  assert.equal(steps[0].params.generationIndex, 2);
+  assert.equal(steps[0].params.generationCount, 3);
+  assert.deepEqual(steps[0].context, {
+    version: 1,
+    blocks: [{ label: "Loop", text: "first" }, { label: "Loop", text: "second" }],
+    totalBlocks: 2,
+    omittedBlocks: 0,
+    truncatedBlocks: 0,
+    originalTextCharacters: 11,
+    storedTextCharacters: 11,
+  });
+  assert.deepEqual(JSON.parse(steps[0].params.sandboxConfig), { password: "[redacted]", memory: "1g" });
+  assert.equal(steps[0].files[0].name, "[redacted]-brief.txt");
+  assert.ok(!steps[0].systemPrompt.includes("/tmp/test-secret-workspace"));
   assert.equal(steps[0].delivery, "added to graph");
   assert.equal(steps[0].events.filter((e: { kind: string }) => e.kind === "graph.committed").length, 1);
   assert.ok(steps[0].events.some((e: { kind: string }) => e.kind === "response.sent"));
   assert.ok(!JSON.stringify(steps).includes("test-secret"));
+  assert.ok(!JSON.stringify(steps).includes("configuration-secret"));
 
   // A short node budget cancels a hanging model and persists the timeout, even when the SDK
   // surfaces its own abort exception. It must not get lost by mutating DOMException.message.

@@ -27,7 +27,8 @@ import {
   type IsValidConnection,
 } from "@xyflow/react";
 
-import { fetchSettings, fetchModels, runStep, toolSpec, waitForExecution, cancelExecution, type TraceStep, type Provider, type PlatformSettings } from "./api";
+import { clearCanvasTraces, exportCanvasTraces, fetchSettings, fetchModels, importCanvasTraces, runStep, toolSpec, waitForExecution, cancelExecution, type TraceArchive, type TraceStep, type Provider, type PlatformSettings } from "./api";
+import { LEGACY_CANVAS_ID, newCanvasId, validCanvasId } from "./canvasIdentity";
 import { Icon } from "./icons";
 import { DEFAULT_LOOP_LIMIT, normalizeLoopLimit } from "./loop";
 import { SettingsPanel } from "./SettingsPanel";
@@ -86,7 +87,7 @@ export const MAX_OUTPUTS = 8;
 export const DEFAULT_ROUNDS = 12;
 export const DEFAULT_TIMEOUT_SEC = 300;
 
-type Snapshot = { nodes: GraphNode[]; edges: GraphEdge[] };
+type Snapshot = { canvasId: string; nodes: GraphNode[]; edges: GraphEdge[] };
 
 function newInput(model: string, position: { x: number; y: number }): InputNode {
   return {
@@ -135,9 +136,10 @@ function migrateNode(n: GraphNode): GraphNode {
  * Tools used to be nodes wired to a step. Fold each one into the steps it was attached to and
  * drop it, so an existing graph keeps its configured tools rather than losing them.
  */
-function migrateToolNodes({ nodes, edges }: Snapshot): Snapshot {
+function migrateToolNodes(snapshot: Snapshot): Snapshot {
+  const { nodes, edges } = snapshot;
   const toolNodes = nodes.filter((n) => (n.type as string) === "tool");
-  if (!toolNodes.length) return { nodes, edges };
+  if (!toolNodes.length) return snapshot;
 
   const toolIds = new Set(toolNodes.map((n) => n.id));
   const attachedTo = (toolId: string) =>
@@ -155,6 +157,7 @@ function migrateToolNodes({ nodes, edges }: Snapshot): Snapshot {
   }
 
   return {
+    canvasId: snapshot.canvasId,
     nodes: nodes
       .filter((n) => !toolIds.has(n.id))
       .map((n) =>
@@ -206,7 +209,7 @@ function migrateContextNodes(snapshot: Snapshot): Snapshot {
     edges.push({ id: uid(), source: contextNode.id, target: node.id });
   }
 
-  return { nodes, edges };
+  return { ...snapshot, nodes, edges };
 }
 
 function migrateSnapshot(snapshot: Snapshot): Snapshot {
@@ -220,13 +223,14 @@ function loadSnapshot(): Snapshot | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed?.nodes) || !Array.isArray(parsed?.edges)) return null;
-    return migrateSnapshot(parsed as Snapshot);
+    return migrateSnapshot({ canvasId: validCanvasId(parsed.canvasId) ? parsed.canvasId : LEGACY_CANVAS_ID, nodes: parsed.nodes, edges: parsed.edges });
   } catch {
     return null;
   }
 }
 
 const seed = loadSnapshot() ?? {
+  canvasId: newCanvasId(),
   nodes: [newInput(DEFAULT_MODEL, { x: 260, y: 80 })],
   edges: [],
 };
@@ -236,7 +240,7 @@ function Canvas() {
   const [edges, setReactEdges] = useEdgesState<GraphEdge>(seed.edges);
   // Every graph edit updates the live snapshot synchronously so concurrent completions cannot
   // overwrite edits queued for a later React render.
-  const live = useRef<Snapshot>({ nodes, edges });
+  const live = useRef<Snapshot>({ canvasId: seed.canvasId, nodes, edges });
   const setNodes = useCallback((value: GraphNode[] | ((nodes: GraphNode[]) => GraphNode[])) => {
     const next = typeof value === "function" ? value(live.current.nodes) : value;
     live.current = { ...live.current, nodes: next };
@@ -285,6 +289,7 @@ function Canvas() {
   const [notice, setNotice] = useState<string | null>(null);
   // One side panel at a time; the canvas keeps the rest of the width.
   const [panel, setPanel] = useState<"trace" | "settings" | "sandbox" | "changes" | null>(null);
+  const [traceRevision, setTraceRevision] = useState(0);
   const { screenToFlowPosition, zoomIn, zoomOut, fitView: fitCanvas } = useReactFlow();
   const minZoomReached = useStore((state) => state.transform[2] <= state.minZoom);
   const maxZoomReached = useStore((state) => state.transform[2] >= state.maxZoom);
@@ -336,7 +341,7 @@ function Canvas() {
     void writer.start();
     return () => writer.stop();
   }, [publish]);
-  useEffect(() => { sync.current?.update({ nodes, edges }); }, [nodes, edges]);
+  useEffect(() => { sync.current?.update({ canvasId: live.current.canvasId, nodes, edges }); }, [nodes, edges]);
 
   const patchStatus = (snap: Snapshot, id: string, patch: Partial<InputData>): Snapshot => ({
     ...snap,
@@ -413,8 +418,14 @@ function Canvas() {
 
       const count = Math.min(MAX_OUTPUTS, Math.max(1, producer.data.outputs ?? 1));
       const runTrace = trace ?? { runId: uid(), kind: "step" as const, seq: 0 };
-      const executions = Array.from({ length: count }, () => ({ ...runTrace, execId: uid() }));
-      const lastExecution = { runId: executions[0].runId, execIds: executions.map((e) => e.execId),
+      const executions = Array.from({ length: count }, (_, index) => ({
+        ...runTrace,
+        canvasId: snap.canvasId,
+        execId: uid(),
+        generationIndex: index + 1,
+        generationCount: count,
+      }));
+      const lastExecution = { canvasId: snap.canvasId, runId: executions[0].runId, execIds: executions.map((e) => e.execId),
         startedMs: Date.now(), timeoutSec: producer.data.timeoutSec || 300 };
       let working = patchStatus(snap, id, { status: "running", error: undefined, lastExecution });
       publish(working);
@@ -509,7 +520,7 @@ function Canvas() {
               : options.preserveRoutes ? { append: true, preserveRoutes: true } : {},
           );
           committedIds = committed.outputIds;
-          working = patchStatus({ nodes: committed.nodes, edges: committed.edges }, id, {
+          working = patchStatus({ ...working, nodes: committed.nodes, edges: committed.edges }, id, {
             status: "done",
             // A partial fan-out still commits what succeeded, but says what did not.
             error: !cancelled && failed.length
@@ -546,15 +557,15 @@ function Canvas() {
     const committed = commitRun(live.current.nodes, live.current.edges, producer, [{ execId: step.execId, runId: step.runId,
       model: step.servedModel ?? step.requestedModel, effort: step.effort as InputData["effort"], text: step.outputText ?? "",
       workspaceChanges: step.params?.workspaceChanges, usage: step.usage ?? undefined, toolCalls: step.toolCalls ?? undefined }], { append: true });
-    publish({ nodes: committed.nodes, edges: committed.edges });
+    publish({ ...live.current, nodes: committed.nodes, edges: committed.edges });
     localStorage.setItem(STORAGE_KEY, JSON.stringify(live.current));
     forgetExecutions([step.execId]);
-    reportTraceEvent(step, "graph.committed", { outputId: committed.outputIds[0], recovered: true });
+    reportTraceEvent({ canvasId: live.current.canvasId, ...step }, "graph.committed", { outputId: committed.outputIds[0], recovered: true });
   }, [publish]);
 
   useEffect(() => {
     if (!saveState.ready || saveState.label === "Conflict") return;
-    const pending = pendingAtMount.current.filter((entry) => !entry.cancelled);
+    const pending = pendingAtMount.current.filter((entry) => !entry.cancelled && (entry.canvasId ?? LEGACY_CANVAS_ID) === live.current.canvasId);
     if (!pending.length) return;
     let stopped = false;
     const controller = new AbortController();
@@ -583,7 +594,7 @@ function Canvas() {
             moveRoutes,
             preserveRoutes: !loopOutputMode && !moveRoutes && entries.some((entry) => entry.preserveRoutes),
           });
-          publish(patchStatus({ nodes: committed.nodes, edges: committed.edges }, producer.id, { status: "done",
+          publish(patchStatus({ ...live.current, nodes: committed.nodes, edges: committed.edges }, producer.id, { status: "done",
             error: failures.length ? `${failures.length} executions failed; inspect Trace Logs.` : undefined }));
           localStorage.setItem(STORAGE_KEY, JSON.stringify(live.current));
           results.forEach((result, i) => reportTraceEvent(result, "graph.committed", { outputId: committed.outputIds[i], recovered: true }));
@@ -661,15 +672,21 @@ function Canvas() {
     setNotice(null);
   }, []);
 
-  const clearCanvas = useCallback(() => {
+  const clearCanvas = useCallback(async () => {
     if (!window.confirm("Are you sure you want to clear the entire canvas?")) return;
-    publish({ nodes: [], edges: [] });
-    steppedRef.current = [];
-    setStepped([]);
-    setNotice(null);
-    setChangesId(null);
-    setSandboxNodeId(null);
-    setPanel((current) => current === "changes" || current === "sandbox" ? null : current);
+    try {
+      await clearCanvasTraces(live.current.canvasId);
+      setTraceRevision((revision) => revision + 1);
+      publish({ ...live.current, nodes: [], edges: [] });
+      steppedRef.current = [];
+      setStepped([]);
+      setNotice(null);
+      setChangesId(null);
+      setSandboxNodeId(null);
+      setPanel((current) => current === "changes" || current === "sandbox" ? null : current);
+    } catch (err) {
+      setNotice(`Could not clear this canvas: ${(err as Error).message}`);
+    }
   }, [publish]);
 
   /** Centre of what the user is currently looking at, in canvas coordinates. */
@@ -776,27 +793,39 @@ function Canvas() {
     [setEdges],
   );
 
-  const exportGraph = useCallback(() => {
-    const blob = new Blob([JSON.stringify(live.current, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `mnemonic-graph-${new Date().toISOString().slice(0, 19)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const exportGraph = useCallback(async () => {
+    try {
+      const traces = await exportCanvasTraces(live.current.canvasId);
+      const blob = new Blob([JSON.stringify({ version: 2, ...live.current, traces }, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `mnemonic-graph-${new Date().toISOString().slice(0, 19)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) { setNotice(`Could not export this canvas: ${(err as Error).message}`); }
   }, []);
 
   const importGraph = useCallback(
     (file: File) => {
-      file.text().then((text) => {
+      file.text().then(async (text) => {
         try {
           const parsed = JSON.parse(text);
           if (!Array.isArray(parsed?.nodes) || !Array.isArray(parsed?.edges)) throw new Error("bad shape");
-          publish(migrateSnapshot({ nodes: parsed.nodes, edges: parsed.edges }));
+          const canvasId = validCanvasId(parsed.canvasId) ? parsed.canvasId : newCanvasId();
+          if (parsed.traces) await importCanvasTraces(canvasId, parsed.traces as TraceArchive);
+          const imported = migrateSnapshot({ canvasId, nodes: parsed.nodes, edges: parsed.edges });
+          publish(imported);
+          // Persist before reloading so the fresh React Flow mount can centre this canvas and
+          // Trace Logs can remount against its restored canvas identity immediately.
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(imported));
           setStepped([]);
           setNotice(null);
-        } catch {
-          setNotice("That file is not a mnemonic graph export.");
+          window.location.reload();
+        } catch (err) {
+          setNotice((err as Error).message === "bad shape"
+            ? "That file is not a mnemonic graph export."
+            : `Could not import this canvas: ${(err as Error).message}`);
         }
       });
     },
@@ -956,7 +985,7 @@ function Canvas() {
             </ReactFlow>
           </div>
 
-          {panel === "trace" && <TracePanel onClose={() => setPanel(null)} onRecover={addSavedOutput} outputExecIds={nodes.filter(isOutput).map((n) => n.data.execId).filter((id): id is string => !!id)} />}
+          {panel === "trace" && <TracePanel key={`${live.current.canvasId}:${traceRevision}`} canvasId={live.current.canvasId} onClose={() => setPanel(null)} onRecover={addSavedOutput} outputExecIds={nodes.filter(isOutput).map((n) => n.data.execId).filter((id): id is string => !!id)} />}
           {panel === "changes" && changesId && <WorkspaceChangesPanel key={changesId} id={changesId} onClose={() => setPanel(null)} />}
           {panel === "sandbox" && sandboxNode && <SandboxConfigPanel key={sandboxNode.id} node={sandboxNode} onClose={() => setPanel(null)} />}
           {panel === "settings" && <SettingsPanel onClose={() => setPanel(null)} onSaved={() => { void fetchSettings().then(refreshProviders); }} />}

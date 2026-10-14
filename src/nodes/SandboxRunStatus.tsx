@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { fetchTraceProgress } from "../api";
 import type { InputData } from "../types";
 import { applyExecutionProgress, initialExecutionStates, statusDuration, summarizeExecution, type NodeExecution } from "../executionStatus";
+import { LEGACY_CANVAS_ID } from "../canvasIdentity";
 
 /** Its key changes for each run, so a late reply from the previous run cannot replace this one. */
 export function SandboxRunStatus({ data }: { data: InputData }) {
@@ -28,7 +29,7 @@ function LiveStatus({ data, execution }: { data: InputData; execution: NodeExecu
     const poll = async () => {
       let finished = false;
       try {
-        const progress = await fetchTraceProgress(runId, cursor, controller.signal);
+        const progress = await fetchTraceProgress(execution.canvasId ?? LEGACY_CANVAS_ID, runId, cursor, controller.signal);
         if (controller.signal.aborted) return;
         cursor = progress.cursor;
         current = applyExecutionProgress(current, progress);

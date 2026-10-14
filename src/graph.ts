@@ -136,7 +136,19 @@ export function topoOrder(nodes: GraphNode[], edges: GraphEdge[]): { order: stri
   return { order, cycle: [...remaining.keys()] };
 }
 
-export type ContextBlock = { label: string; text: string };
+export type ContextSource = {
+  nodeId: string;
+  kind: "output" | "thinking" | "comment" | "reply" | "context";
+  createdAt?: number;
+  producerNodeId?: string;
+  execId?: string;
+  runId?: string;
+  outputSetId?: string;
+  edited?: boolean;
+  replyId?: string;
+};
+
+export type ContextBlock = { label: string; text: string; source?: ContextSource };
 
 export type InheritedInput = {
   context: ContextBlock[];
@@ -163,20 +175,36 @@ export function resolveInheritedInput(inputId: string, nodes: GraphNode[], edges
     if (!source) return;
 
     if (isOutput(source)) {
-      result.context.push({ label: source.data.sourceLabel, text: source.data.text });
+      result.context.push({
+        label: source.data.sourceLabel,
+        text: source.data.text,
+        source: {
+          nodeId: source.id,
+          kind: source.data.kind === "thinking" ? "thinking" : "output",
+          createdAt: source.data.createdAt,
+          producerNodeId: source.data.sourceId,
+          execId: source.data.execId,
+          runId: source.data.runId,
+          outputSetId: source.data.outputSetId,
+          edited: !!source.data.edited,
+        },
+      });
       return;
     }
     if (isComment(source)) {
-      result.context.push({ label: source.data.author.trim() || "Anonymous", text: source.data.text });
+      result.context.push({ label: source.data.author.trim() || "Anonymous", text: source.data.text,
+        source: { nodeId: source.id, kind: "comment", createdAt: source.data.createdAt } });
       for (const reply of source.data.replies ?? []) {
-        if (reply.text.trim()) result.context.push({ label: reply.author.trim() || "Anonymous", text: reply.text });
+        if (reply.text.trim()) result.context.push({ label: reply.author.trim() || "Anonymous", text: reply.text,
+          source: { nodeId: source.id, kind: "reply", replyId: reply.id, createdAt: reply.createdAt } });
       }
       return;
     }
 
     if (isContext(source)) {
       for (const upstreamId of incoming.get(source.id) ?? []) visit(upstreamId);
-      if (source.data.prompt.trim()) result.context.push({ label: source.data.label, text: source.data.prompt });
+      if (source.data.prompt.trim()) result.context.push({ label: source.data.label, text: source.data.prompt,
+        source: { nodeId: source.id, kind: "context" } });
       if (source.data.role?.trim()) (result.roles ??= []).push(source.data.role);
       if (source.data.instructions?.trim()) (result.instructions ??= []).push(source.data.instructions);
       result.attachments.push(...(source.data.attachments ?? []));
@@ -192,7 +220,8 @@ export function resolveInheritedInput(inputId: string, nodes: GraphNode[], edges
     if (!isInput(source) || source.data.performInference !== false) return;
 
     for (const upstreamId of incoming.get(source.id) ?? []) visit(upstreamId);
-    if (source.data.prompt?.trim()) result.context.push({ label: source.data.label, text: source.data.prompt });
+    if (source.data.prompt?.trim()) result.context.push({ label: source.data.label, text: source.data.prompt,
+      source: { nodeId: source.id, kind: "context" } });
     if (source.data.role?.trim()) (result.roles ??= []).push(source.data.role);
     if (source.data.instructions?.trim()) (result.instructions ??= []).push(source.data.instructions);
     result.attachments.push(...(source.data.attachments ?? []));

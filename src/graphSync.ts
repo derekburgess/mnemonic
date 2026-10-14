@@ -1,6 +1,6 @@
 import { fetchGraph, pushGraph } from "./api";
 import type { GraphNode, GraphEdge } from "./types";
-export type Snapshot = { nodes: GraphNode[]; edges: GraphEdge[] };
+export type Snapshot = { canvasId: string; nodes: GraphNode[]; edges: GraphEdge[] };
 export const GRAPH_KEY = "mnemonic.graph.v1";
 const META_KEY = "mnemonic.graph.sync.v1";
 export type SaveState = { label: "Checking" | "Saved" | "Saving" | "Cached locally" | "Conflict" | "Not saved"; error?: string; ready: boolean };
@@ -48,13 +48,14 @@ export class GraphSync {
     try {
       const remote = await fetchGraph();
       if (this.stopped) return;
-      const same = remote && JSON.stringify({ nodes: remote.nodes, edges: remote.edges }) === JSON.stringify(this.snapshot);
+      const remoteCanvasId = remote?.canvasId || this.snapshot.canvasId;
+      const same = remote && JSON.stringify({ canvasId: remoteCanvasId, nodes: remote.nodes, edges: remote.edges }) === JSON.stringify(this.snapshot);
       if (remote && this.dirty && !same && this.revision !== remote.updatedMs) {
         this.ready = true; this.conflict = true; this.cache();
         this.status("Conflict", "Local edits and the saved graph differ. Choose which version to keep."); return;
       }
       if (remote && !this.dirty && generation === this.generation) {
-        this.snapshot = { nodes: remote.nodes as GraphNode[], edges: remote.edges as GraphEdge[] };
+        this.snapshot = { canvasId: remoteCanvasId, nodes: remote.nodes as GraphNode[], edges: remote.edges as GraphEdge[] };
         this.publish(this.snapshot);
       }
       this.revision = remote?.updatedMs ?? null;
@@ -79,7 +80,7 @@ export class GraphSync {
     const generation = this.generation;
     const snapshot = this.snapshot;
     try {
-      this.revision = await pushGraph(snapshot.nodes, snapshot.edges, this.revision);
+      this.revision = await pushGraph(snapshot.canvasId, snapshot.nodes, snapshot.edges, this.revision);
       if (this.stopped) return;
       this.dirty = generation !== this.generation; this.cache();
       if (this.dirty) this.schedule(0); else this.status("Saved");
@@ -97,7 +98,7 @@ export class GraphSync {
       if (keep === "remote") {
         // Keep a recoverable copy of the local branch before replacing it.
         localStorage.setItem(`${GRAPH_KEY}.conflict-backup`, JSON.stringify(this.snapshot));
-        this.snapshot = remote ? { nodes: remote.nodes as GraphNode[], edges: remote.edges as GraphEdge[] } : { nodes: [], edges: [] };
+        this.snapshot = remote ? { canvasId: remote.canvasId || this.snapshot.canvasId, nodes: remote.nodes as GraphNode[], edges: remote.edges as GraphEdge[] } : this.snapshot;
         this.publish(this.snapshot); this.dirty = false;
       } else this.dirty = true;
       this.revision = remote?.updatedMs ?? null; this.conflict = false; this.ready = true; this.cache();

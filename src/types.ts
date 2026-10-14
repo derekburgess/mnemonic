@@ -126,7 +126,7 @@ export type OutputData = {
   text: string;
   createdAt: number;
   usage?: { input?: number; output?: number };
-  /** Hide the main output text while retaining metadata and trace controls. */
+  /** Hide the main output text and tool-call details while retaining compact metadata. */
   collapsed?: boolean;
   toolCalls?: ToolCallRecord[];
   /** Set once the text has been changed by hand, so the node stops claiming to be verbatim. */

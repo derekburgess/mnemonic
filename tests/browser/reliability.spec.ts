@@ -362,11 +362,12 @@ test("comments provide named Markdown context and are traced with the next step"
   await expect.poll(() => state.graph.edges.some((edge: any) => edge.source === commentId && edge.target === "step")).toBe(true);
   await runStep(page);
   await expect.poll(() => state.executions.length).toBe(1);
-  expect(state.executions[0].trace.context).toEqual([
+  expect(state.executions[0].trace.context.map(({ label, text }: any) => ({ label, text }))).toEqual([
     { label: "Ada", text: "Check the **assumptions**." },
     { label: "Grace", text: "I checked the **edge cases**." },
     { label: "Step 1", text: "Make an output" },
   ]);
+  expect(state.executions[0].trace.context.map((block: any) => block.source.kind)).toEqual(["comment", "reply", "context"]);
   expect(state.executions[0].input).toContain('<context from="Ada">\nCheck the **assumptions**.\n</context>');
   expect(state.executions[0].input).toContain('<context from="Grace">\nI checked the **edge cases**.\n</context>');
 
@@ -560,6 +561,8 @@ test("a completed output survives refresh before graph autosave succeeds", async
 test("partial fan-out keeps the successful output", async ({ page }) => {
   const state = await setup(page, 2); state.complete = true; state.partial = true;
   await runStep(page);
+  expect(state.executions.map((execution: any) => [execution.trace.generationIndex, execution.trace.generationCount]))
+    .toEqual([[1, 2], [2, 2]]);
   const output = page.locator(".react-flow__node-artifact");
   await expect(output).toHaveCount(1);
   await expect(page.getByText(/1 of 2 generations failed/)).toBeVisible();
@@ -1224,10 +1227,11 @@ test("all-output loops preserve outputs, context, and trace routing while anothe
   await expect.poll(() => state.executions.length).toBe(4);
   expect(state.executions[3].input).toContain("transformed feedback");
   expect(state.executions[1].trace.loopOutputMode).toBe("all");
-  expect(state.executions[3].trace.context).toEqual([
+  expect(state.executions[3].trace.context.map(({ label, text }: any) => ({ label, text }))).toEqual([
     { label: "Transform", text: "transformed feedback" },
     { label: "Step 1", text: "Make an output" },
   ]);
+  expect(state.executions[3].trace.context.map((block: any) => block.source.kind)).toEqual(["output", "context"]);
   await expect(page.locator(".react-flow__node-artifact")).toHaveCount(3);
   const secondLoopId = (await page.locator(".react-flow__node-artifact").filter({ hasText: "second loop output" }).getAttribute("data-id"))!;
   await expect.poll(() => state.graph.edges.filter((edge: any) => edge.target === transformId

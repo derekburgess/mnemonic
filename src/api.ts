@@ -1,5 +1,6 @@
 import { reportTraceEvent } from "./traceEvents";
-import type { TraceEvent } from "../server/events";
+import type { TraceContextSnapshot, TraceEvent } from "../server/events";
+import type { ContextBlock } from "./graph";
 import type { Effort, LoopOutputMode, ToolCallRecord, ToolConfig } from "./types";
 import type { ContainerTrace } from "../server/containerTrace";
 
@@ -128,7 +129,7 @@ export async function checkPath(path: string): Promise<PathCheck> {
   return { exists: !!body.exists, dir: !!body.dir, suggestions: body.suggestions ?? [] };
 }
 
-export type StoredGraph = { nodes: unknown[]; edges: unknown[]; updatedMs: number } | null;
+export type StoredGraph = { canvasId: string; nodes: unknown[]; edges: unknown[]; updatedMs: number } | null;
 
 export async function fetchGraph(): Promise<StoredGraph> {
   const res = await fetch("/api/graph", { signal: AbortSignal.timeout(10_000) });
@@ -136,11 +137,11 @@ export async function fetchGraph(): Promise<StoredGraph> {
   return res.json();
 }
 
-export async function pushGraph(nodes: unknown[], edges: unknown[], expectedRevision: number | null): Promise<number> {
+export async function pushGraph(canvasId: string, nodes: unknown[], edges: unknown[], expectedRevision: number | null): Promise<number> {
   const res = await fetch("/api/graph", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ nodes, edges, expectedRevision }),
+    body: JSON.stringify({ canvasId, nodes, edges, expectedRevision }),
     signal: AbortSignal.timeout(10_000),
   });
   const body = await res.json();
@@ -183,6 +184,7 @@ export async function saveSettings(patch: {
 }
 
 export type TraceMeta = {
+  canvasId: string;
   clientSentMs?: number;
   runId: string;
   execId: string;
@@ -190,8 +192,10 @@ export type TraceMeta = {
   seq: number;
   nodeId: string;
   label: string;
-  context: { label: string; text: string }[];
+  context: ContextBlock[];
   loopOutputMode?: LoopOutputMode;
+  generationIndex?: number;
+  generationCount?: number;
 };
 
 export type TraceRun = {
@@ -223,13 +227,13 @@ export type TraceStep = {
   error: string | null;
   systemPrompt: string | null;
   inputPrompt: string;
-  context: { label: string; text: string }[] | null;
+  context: TraceContextSnapshot | ContextBlock[] | null;
   tools: Record<string, unknown>[] | null;
   rounds: { request: Record<string, unknown>; response: Record<string, unknown>; ms: number }[] | null;
   toolCalls: ToolCallRecord[] | null;
   outputText: string | null;
   usage: { input?: number; output?: number } | null;
-  params: { workspaceChanges?: string; sandboxConfig?: string | null; maxRounds: number | null; timeoutSec: number | null; deliveryTimeoutSec?: number; loopOutputMode?: LoopOutputMode | null } | null;
+  params: { workspaceChanges?: string; sandboxConfig?: string | null; maxRounds: number | null; timeoutSec: number | null; deliveryTimeoutSec?: number; loopOutputMode?: LoopOutputMode | null; generationIndex?: number | null; generationCount?: number | null } | null;
   files: { name: string; mime: string; bytes: number }[] | null;
   links: { url: string; kind: string; note?: string }[] | null;
 };
@@ -254,20 +258,20 @@ export async function fetchStepResult(runId: string, execId: string, signal?: Ab
   return res.json();
 }
 
-export async function fetchTraceRuns(): Promise<TraceRun[]> {
-  const res = await fetch("/api/trace/runs");
+export async function fetchTraceRuns(canvasId: string): Promise<TraceRun[]> {
+  const res = await fetch(`/api/trace/runs?canvasId=${encodeURIComponent(canvasId)}`);
   if (!res.ok) throw new Error(`could not load runs (${res.status})`);
   return (await res.json()).runs ?? [];
 }
 
-export async function fetchTraceRun(runId: string): Promise<TraceStep[]> {
-  const res = await fetch(`/api/trace/runs/${encodeURIComponent(runId)}`);
+export async function fetchTraceRun(canvasId: string, runId: string): Promise<TraceStep[]> {
+  const res = await fetch(`/api/trace/runs/${encodeURIComponent(runId)}?canvasId=${encodeURIComponent(canvasId)}`);
   if (!res.ok) throw new Error(`could not load run (${res.status})`);
   return (await res.json()).steps ?? [];
 }
 
-export async function deleteTraceRun(runId: string): Promise<void> {
-  const res = await fetch(`/api/trace/runs/${encodeURIComponent(runId)}`, { method: "DELETE" });
+export async function deleteTraceRun(canvasId: string, runId: string): Promise<void> {
+  const res = await fetch(`/api/trace/runs/${encodeURIComponent(runId)}?canvasId=${encodeURIComponent(canvasId)}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`could not delete run (${res.status})`);
 }
 
@@ -295,7 +299,7 @@ export async function runStep(
   },
   signal?: AbortSignal,
 ): Promise<RunResponse> {
-  const trace = args.trace ?? { runId: crypto.randomUUID(), execId: crypto.randomUUID(), kind: "step" as const,
+  const trace = args.trace ?? { canvasId: "legacy-current", runId: crypto.randomUUID(), execId: crypto.randomUUID(), kind: "step" as const,
     seq: 0, nodeId: "", label: "", context: [] };
   const budget = args.timeoutSec && args.timeoutSec > 0 ? args.timeoutSec : DEFAULT_STEP_TIMEOUT_SEC;
   const deadline = Date.now() + (budget + (args.sandbox ? 720 : 60)) * 1000;
@@ -375,9 +379,29 @@ function pause(ms: number, signal?: AbortSignal) {
   });
 }
 
-export async function fetchTraceProgress(runId: string, after: number, signal?: AbortSignal) {
-  const res = await fetch(`/api/trace/runs/${encodeURIComponent(runId)}/progress?after=${after}`, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000) });
+export async function fetchTraceProgress(canvasId: string, runId: string, after: number, signal?: AbortSignal) {
+  const res = await fetch(`/api/trace/runs/${encodeURIComponent(runId)}/progress?after=${after}&canvasId=${encodeURIComponent(canvasId)}`, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`could not load live trace (${res.status})`);
   return res.json() as Promise<{ cursor: number; events: (TraceEvent & { execId: string })[];
     steps: { execId: string; status: string; error: string | null; finishedMs: number | null }[] }>;
+}
+
+export type TraceArchive = { version: 1; runs: Array<{ run: TraceRun; steps: TraceStep[] }> };
+
+export async function exportCanvasTraces(canvasId: string): Promise<TraceArchive> {
+  const res = await fetch(`/api/trace/export?canvasId=${encodeURIComponent(canvasId)}`);
+  if (!res.ok) throw new Error(`could not export trace logs (${res.status})`);
+  return res.json();
+}
+
+export async function importCanvasTraces(canvasId: string, traces: TraceArchive): Promise<void> {
+  const res = await fetch(`/api/trace/import?canvasId=${encodeURIComponent(canvasId)}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(traces),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `could not import trace logs (${res.status})`);
+}
+
+export async function clearCanvasTraces(canvasId: string): Promise<void> {
+  await importCanvasTraces(canvasId, { version: 1, runs: [] });
 }

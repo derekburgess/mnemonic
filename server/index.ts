@@ -1,6 +1,6 @@
 import { reviewWorkspaceChanges, acceptWorkspaceChanges, workspaceChangesSummary } from "./workspaceChanges.js";
 import { sandboxAdvice } from "./sandboxAdvice.js";
-import { event, sanitize, redactText, errorDetail, type EmitEvent } from "./events.js";
+import { event, sanitize, sanitizeJsonText, sanitizeTraceContext, redactText, errorDetail, type EmitEvent } from "./events.js";
 import express from "express";
 import { listLibrary, startDownload, cancelDownload, deleteDownload, modelDownloaded } from "./modelLibrary.js";
 import { sweepLocalModels } from "./localModelContainer.js";
@@ -10,7 +10,7 @@ import dotenv from "dotenv";
 import OpenAI from "openai";
 import { ExecutionBudget, executionClient } from "./execution.js";
 import { buildTools, listMcpTools, type ToolSpec } from "./tools.js";
-import { deleteRun, getRun, getStepResult, listRuns, recordStep, recordEvent, markInterrupted, getRunProgress } from "./trace.js";
+import { deleteRun, exportCanvasTraces, getRun, getStepResult, importCanvasTraces, listRuns, recordStep, recordEvent, markInterrupted, getRunProgress } from "./trace.js";
 import { readSettings, publicSettings, PROVIDERS, resolveCredentials, writeSettings, sandboxModelUrl, type Provider } from "./settings.js";
 import { loadGraph, saveGraph, graphDb } from "./graphstore.js";
 import { TIMEOUT_MESSAGE, runChat, runResponses } from "./providers.js";
@@ -18,13 +18,14 @@ import { check, describeWorkspaces, findFolder, nativePick } from "./workspace.j
 import { mountsFor, runInSandbox, sandboxStatus, sweepOrphans, type Mount } from "./sandbox.js";
 import type { Job } from "./runner.js";
 import type { ContainerTrace } from "./containerTrace.js";
+import { LEGACY_CANVAS_ID, validCanvasId } from "../src/canvasIdentity.js";
 
 dotenv.config();
 
 const PORT = Number(process.env.PORT ?? 8787);
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "4mb" }));
+app.use(express.json({ limit: "32mb" }));
 // The listener starts only after startup recovery and cleanup finish.
 app.get("/api/health", (_req, res) => res.json({ service: "mnemonic", status: "ready" }));
 
@@ -303,8 +304,8 @@ app.post("/api/run", async (req, res) => {
   if (sandboxConfig !== undefined && typeof sandboxConfig !== "string") return res.status(400).json({ error: "sandboxConfig must be JSON text" });
   if (useGpu !== undefined && typeof useGpu !== "boolean") return res.status(400).json({ error: "useGpu must be a boolean" });
 
-  const trace = { ...suppliedTrace, runId: suppliedTrace?.runId ?? crypto.randomUUID(), execId: suppliedTrace?.execId ?? crypto.randomUUID() };
-  if (typeof trace.runId !== "string" || trace.runId.length > 200 || typeof trace.execId !== "string" || trace.execId.length > 200) {
+  const trace = { ...suppliedTrace, canvasId: suppliedTrace?.canvasId ?? LEGACY_CANVAS_ID, runId: suppliedTrace?.runId ?? crypto.randomUUID(), execId: suppliedTrace?.execId ?? crypto.randomUUID() };
+  if (!validCanvasId(trace.canvasId) || typeof trace.runId !== "string" || trace.runId.length > 200 || typeof trace.execId !== "string" || trace.execId.length > 200) {
     return res.status(400).json({ error: "Invalid execution identity" });
   }
   const roots: string[] = Array.isArray(workspaces)
@@ -334,7 +335,7 @@ app.post("/api/run", async (req, res) => {
   const rounds: unknown[] = [];
   let container: ContainerTrace | null = null;
 
-  const secrets = [credentials.apiKey, ...(toolSpecs ?? []).flatMap((t: ToolSpec) =>
+  const secrets = [credentials.apiKey, ...roots, ...(toolSpecs ?? []).flatMap((t: ToolSpec) =>
     t.kind === "mcp" && t.authorization ? [t.authorization, t.authorization.replace(/^Bearer\s+/i, "")] : [])];
   const execId = trace?.execId ?? `${trace?.runId}-${trace?.seq ?? 0}`;
   let writes = Promise.resolve();
@@ -343,7 +344,7 @@ app.post("/api/run", async (req, res) => {
     if (!trace?.runId) return;
     if (++eventCount > 2000 && !/^(execution\.|result\.|container\.(exited|cleanup)|workspace\.|response\.|local\.(error|ready|unloading|unloaded|worker_exited))/.test(entry.kind)) return;
     const safe = { ...entry, detail: sanitize(entry.detail, secrets) };
-    writes = writes.then(() => recordEvent(trace.runId, execId, safe))
+    writes = writes.then(() => recordEvent(trace.runId, execId, safe, trace.canvasId))
       .catch((err) => console.error("[mnemonic] trace event write failed:", (err as Error).message));
   };
   let workspaceChanges: string | undefined;
@@ -351,6 +352,7 @@ app.post("/api/run", async (req, res) => {
     if (!trace?.runId) return false;
     try {
       await recordStep({
+        canvasId: trace.canvasId,
         execId,
         runId: trace.runId,
         kind: trace.kind ?? "run",
@@ -364,35 +366,38 @@ app.post("/api/run", async (req, res) => {
         status,
         systemPrompt: sanitize(system || null, secrets, 65_536) as string | null,
         inputPrompt: sanitize(input, secrets, 65_536) as string,
-        context: Array.isArray(trace.context) ? trace.context.slice(0, 100).map((x: unknown) => sanitize(x, secrets)) : null,
+        context: sanitizeTraceContext(trace.context, secrets),
         // Workspace tools are derived rather than configured, so they are recorded as one
         // synthetic entry instead of being invisible in the trace.
         tools: [
           ...(toolSpecs ?? []).slice(0, 100).map((x: unknown) => sanitize(x, secrets)),
-          ...(roots.length ? [{ kind: "workspace", roots, enabled: workspaceTools ?? {} }] : []),
+          ...(roots.length ? [{ kind: "workspace", count: roots.length, enabled: sanitize(workspaceTools ?? {}, secrets) }] : []),
           ...(contained
-            ? [{ kind: "sandbox", mounts: mounts.map((m) => `${m.host} (disposable copy) -> ${m.container}`) }]
+            ? [{ kind: "sandbox", workspaceMounts: mounts.length }]
             : []),
         ],
         rounds: rounds.slice(-100).map((x) => sanitize(x, secrets, 32_768)),
         container,
         params: {
           workspaceChanges,
-          sandboxConfig: sandboxConfig ?? null,
+          sandboxConfig: sanitizeJsonText(sandboxConfig, secrets),
           maxRounds: typeof maxRounds === "number" ? maxRounds : null,
           timeoutSec: typeof timeoutSec === "number" ? timeoutSec : null,
           loopOutputMode: trace.loopOutputMode === "last" || trace.loopOutputMode === "all" ? trace.loopOutputMode : null,
+          generationIndex: Number.isInteger(trace.generationIndex) ? trace.generationIndex : null,
+          generationCount: Number.isInteger(trace.generationCount) ? trace.generationCount : null,
           deliveryTimeoutSec: typeof timeoutSec === "number" && timeoutSec > 0 ? timeoutSec + (contained ? 720 : 60) : 300 + (contained ? 720 : 60),
         },
         // Sizes rather than payloads: the bytes are already elided from the rounds.
         files: Array.isArray(files)
           ? files.map((f: { name?: string; mime?: string; dataUrl?: string }) => ({
-              name: f.name,
-              mime: f.mime,
+              name: sanitize(typeof f.name === "string" ? f.name : "", secrets, 1_024),
+              mime: sanitize(typeof f.mime === "string" ? f.mime : "", secrets, 256),
               bytes: Math.round(((f.dataUrl?.length ?? 0) - (f.dataUrl?.indexOf(",") ?? 0) - 1) * 0.75),
             }))
           : [],
-        links: Array.isArray(links) ? links.map((url: string) => ({ url, kind: "pending" })) : [],
+        links: Array.isArray(links) ? links.filter((url: unknown): url is string => typeof url === "string")
+          .map((url) => ({ url: sanitize(url, secrets, 4_096), kind: "pending" })) : [],
         servedModel: null,
         error: null,
         toolCalls: null,
@@ -580,13 +585,13 @@ app.get("/api/graph", async (_req, res) => {
 });
 
 app.put("/api/graph", async (req, res) => {
-  const { nodes, edges, expectedRevision } = req.body ?? {};
-  if (!Array.isArray(nodes) || !Array.isArray(edges)) {
-    return res.status(400).json({ error: "nodes and edges arrays are required" });
+  const { canvasId, nodes, edges, expectedRevision } = req.body ?? {};
+  if (!validCanvasId(canvasId) || !Array.isArray(nodes) || !Array.isArray(edges)) {
+    return res.status(400).json({ error: "canvasId and nodes and edges arrays are required" });
   }
   if (expectedRevision !== null && typeof expectedRevision !== "number") return res.status(428).json({ error: "Graph revision is required; refresh the app." });
   try {
-    res.json({ updatedMs: await saveGraph(nodes, edges, expectedRevision) });
+    res.json({ updatedMs: await saveGraph(canvasId, nodes, edges, expectedRevision) });
   } catch (err) {
     res.status((err as {status?: number}).status ?? 500).json({ error: (err as Error).message });
   }
@@ -597,14 +602,15 @@ const browserKinds = new Set(["delivery.recovering", "delivery.poll", "delivery.
   "graph.committed", "graph.failed"]);
 app.post("/api/trace/events", async (req, res) => {
   const { runId, execId, events } = req.body ?? {};
-  if (typeof runId !== "string" || runId.length > 200 || typeof execId !== "string" || execId.length > 200 ||
+  const canvasId = req.body?.canvasId ?? LEGACY_CANVAS_ID;
+  if (!validCanvasId(canvasId) || typeof runId !== "string" || runId.length > 200 || typeof execId !== "string" || execId.length > 200 ||
       !Array.isArray(events) || events.length > 100 || events.some((e) => !e ||
       typeof e.id !== "string" || e.id.length > 100 || !Number.isFinite(e.at) || !browserKinds.has(e.kind))) {
     return res.status(400).json({ error: "Invalid trace events" });
   }
   try {
     for (const entry of events) await recordEvent(runId, execId, { ...entry, source: "browser",
-      detail: sanitize(entry.detail, PROVIDERS.map((provider) => resolveCredentials(provider).apiKey)) });
+      detail: sanitize(entry.detail, PROVIDERS.map((provider) => resolveCredentials(provider).apiKey)) }, canvasId);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -613,7 +619,9 @@ app.post("/api/trace/events", async (req, res) => {
 
 app.get("/api/trace/runs", async (req, res) => {
   try {
-    res.json({ runs: await listRuns(Number(req.query.limit) || 100) });
+    const canvasId = typeof req.query.canvasId === "string" ? req.query.canvasId : LEGACY_CANVAS_ID;
+    if (!validCanvasId(canvasId)) return res.status(400).json({ error: "Invalid canvas identity" });
+    res.json({ runs: await listRuns(canvasId, Number(req.query.limit) || 100) });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -633,13 +641,13 @@ app.get("/api/trace/result/:runId/:execId", async (req, res) => {
 });
 
 app.get("/api/trace/runs/:runId/progress", async (req, res) => {
-  try { res.json(await getRunProgress(req.params.runId, Number(req.query.after) || 0)); }
+  try { res.json(await getRunProgress(req.params.runId, Number(req.query.after) || 0, typeof req.query.canvasId === "string" ? req.query.canvasId : LEGACY_CANVAS_ID)); }
   catch (err) { res.status(500).json({ error: (err as Error).message }); }
 });
 
 app.get("/api/trace/runs/:runId", async (req, res) => {
   try {
-    res.json({ steps: await getRun(req.params.runId) });
+    res.json({ steps: await getRun(req.params.runId, typeof req.query.canvasId === "string" ? req.query.canvasId : LEGACY_CANVAS_ID) });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -647,11 +655,25 @@ app.get("/api/trace/runs/:runId", async (req, res) => {
 
 app.delete("/api/trace/runs/:runId", async (req, res) => {
   try {
-    await deleteRun(req.params.runId);
+    await deleteRun(req.params.runId, typeof req.query.canvasId === "string" ? req.query.canvasId : LEGACY_CANVAS_ID);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
+});
+
+app.get("/api/trace/export", async (req, res) => {
+  const canvasId = typeof req.query.canvasId === "string" ? req.query.canvasId : "";
+  if (!validCanvasId(canvasId)) return res.status(400).json({ error: "Invalid canvas identity" });
+  try { res.json(await exportCanvasTraces(canvasId)); }
+  catch (err) { res.status(500).json({ error: (err as Error).message }); }
+});
+
+app.put("/api/trace/import", async (req, res) => {
+  const canvasId = typeof req.query.canvasId === "string" ? req.query.canvasId : "";
+  if (!validCanvasId(canvasId)) return res.status(400).json({ error: "Invalid canvas identity" });
+  try { await importCanvasTraces(canvasId, req.body); res.json({ ok: true }); }
+  catch (err) { res.status((err as { status?: number }).status ?? 500).json({ error: (err as Error).message }); }
 });
 
 await graphDb().catch((err) => console.error("[mnemonic] graph initialization failed:", err.message));

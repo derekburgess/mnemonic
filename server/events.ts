@@ -42,6 +42,79 @@ export function sanitize(value: unknown, secrets: string[] = [], limit = 16_384)
   return safe;
 }
 
+export type TraceContextSnapshot = {
+  version: 1;
+  blocks: Array<{
+    label: string;
+    text: string;
+    source?: unknown;
+    textTruncated?: boolean;
+    originalTextCharacters?: number;
+  }>;
+  totalBlocks: number;
+  omittedBlocks: number;
+  truncatedBlocks: number;
+  originalTextCharacters: number;
+  storedTextCharacters: number;
+};
+
+const CONTEXT_BLOCK_LIMIT = 100;
+const CONTEXT_TEXT_BUDGET = 65_536;
+const CONTEXT_BLOCK_TEXT_LIMIT = 16_384;
+const TRUNCATED = "…[truncated]";
+
+/** Preserve context structure and provenance within one explicit aggregate storage budget. */
+export function sanitizeTraceContext(value: unknown, secrets: string[] = []): TraceContextSnapshot {
+  const input = Array.isArray(value) ? value : [];
+  const selected = input.slice(0, CONTEXT_BLOCK_LIMIT);
+  let remaining = CONTEXT_TEXT_BUDGET;
+  let truncatedBlocks = 0;
+  const originalTextCharacters = input.reduce((total, entry) => {
+    const block = entry && typeof entry === "object" ? entry as Record<string, unknown> : {};
+    return total + (typeof block.text === "string" ? block.text.length : 0);
+  }, 0);
+  let storedTextCharacters = 0;
+  const blocks = selected.map((entry, index) => {
+    const block = entry && typeof entry === "object" ? entry as Record<string, unknown> : {};
+    const original = typeof block.text === "string" ? block.text : "";
+    const clean = redactText(original, secrets);
+    // Reserve an equal share for every later block; unused space naturally rolls forward.
+    const allowance = Math.min(CONTEXT_BLOCK_TEXT_LIMIT, Math.floor(remaining / (selected.length - index)));
+    const textTruncated = clean.length > allowance;
+    const text = textTruncated
+      ? allowance > TRUNCATED.length ? clean.slice(0, allowance - TRUNCATED.length) + TRUNCATED : ""
+      : clean;
+    if (textTruncated) truncatedBlocks++;
+    remaining -= text.length;
+    storedTextCharacters += text.length;
+    return {
+      label: sanitize(typeof block.label === "string" ? block.label : "", secrets, 1_024) as string,
+      text,
+      ...(block.source && typeof block.source === "object" ? { source: sanitize(block.source, secrets, 4_096) } : {}),
+      ...(textTruncated ? { textTruncated: true, originalTextCharacters: original.length } : {}),
+    };
+  });
+  return {
+    version: 1,
+    blocks,
+    totalBlocks: input.length,
+    omittedBlocks: Math.max(0, input.length - blocks.length),
+    truncatedBlocks,
+    originalTextCharacters,
+    storedTextCharacters,
+  };
+}
+
+/** Parse JSON-shaped settings before redaction so secret-bearing keys are not stored verbatim. */
+export function sanitizeJsonText(value: unknown, secrets: string[] = [], limit = 16_384): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    return JSON.stringify(sanitize(JSON.parse(value), secrets, limit));
+  } catch {
+    return sanitize(value, secrets, limit) as string;
+  }
+}
+
 export function deliveryState(events: TraceEvent[]): string {
   // A delayed/retried event must never undo a graph acknowledgement.
   if (events.some((e) => e.kind === "graph.committed")) return "added to graph";

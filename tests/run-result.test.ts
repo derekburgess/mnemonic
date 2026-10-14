@@ -117,7 +117,15 @@ test("thinking chains preserve recovery, fan-out and downstream connections on r
   assert.equal(thought.data.text, "<think>Reason</think>");
   assert.ok(first.edges.some((e) => e.source === "step" && e.target === thought.id));
   assert.ok(first.edges.some((e) => e.source === thought.id && e.target === first.outputIds[0]));
-  assert.deepEqual(resolveContext("next", first.nodes, first.edges), [{ label: "Step", text: "Answer" }]);
+  const firstContext = resolveContext("next", first.nodes, first.edges);
+  assert.deepEqual(firstContext.map(({ label, text }) => ({ label, text })), [{ label: "Step", text: "Answer" }]);
+  assert.equal(firstContext[0].source?.kind, "output");
+  assert.equal(firstContext[0].source?.nodeId, first.outputIds[0]);
+  assert.equal(firstContext[0].source?.execId, "exec");
+  assert.ok(firstContext[0].source?.outputSetId);
+  const editedNodes = first.nodes.map((node) => node.id === first.outputIds[0]
+    ? { ...node, data: { ...node.data, edited: true } } : node) as typeof first.nodes;
+  assert.equal(resolveContext("next", editedNodes, first.edges)[0].source?.edited, true);
   assert.deepEqual(topoOrder(first.nodes, first.edges).order, ["step", "next"]);
   const recovered = commitRun(first.nodes, first.edges, producer, [result]);
   assert.equal(recovered.nodes.length, first.nodes.length);
@@ -190,7 +198,8 @@ test("context nodes pass prompts, system fields, and resources through without b
   ];
 
   assert.deepEqual(topoOrder(nodes, edges).order, ["upstream", "consumer"]);
-  assert.deepEqual(resolveInheritedInput(consumer.id, nodes, edges), {
+  const inherited = resolveInheritedInput(consumer.id, nodes, edges);
+  assert.deepEqual({ ...inherited, context: inherited.context.map(({ label, text }) => ({ label, text })) }, {
     context: [
       { label: "Upstream", text: "Upstream answer" },
       { label: "Research", text: "Use these details" },
@@ -202,7 +211,8 @@ test("context nodes pass prompts, system fields, and resources through without b
     links: context.data.links,
     workspaces: context.data.workspaces,
   });
-  const inherited = resolveInheritedInput(consumer.id, nodes, edges);
+  assert.deepEqual(inherited.context.map((block) => block.source?.kind), ["output", "context"]);
+  assert.deepEqual(inherited.context.map((block) => block.source?.nodeId), ["output", "context"]);
   assert.equal(composeSystem(inherited.roles, inherited.instructions, inherited.attachments),
     "Your role is: Analyst\n\nCite the evidence.\n\n<document name=\"guide.md\">\nStanding guidance\n</document>");
 });
@@ -222,9 +232,14 @@ test("comments contribute attributed context without becoming scheduled steps", 
   const edges = [{ id: "context", source: comment.id, target: consumer.id }];
 
   assert.deepEqual(topoOrder(nodes, edges), { order: [consumer.id], cycle: [] });
-  assert.deepEqual(resolveContext(consumer.id, nodes, edges), [
+  const context = resolveContext(consumer.id, nodes, edges);
+  assert.deepEqual(context.map(({ label, text }) => ({ label, text })), [
     { label: "Ada", text: "Check the **assumptions**." },
     { label: "Grace", text: "I checked the edge cases." },
+  ]);
+  assert.deepEqual(context.map((block) => block.source), [
+    { nodeId: "comment", kind: "comment", createdAt: 1 },
+    { nodeId: "comment", kind: "reply", replyId: "reply", createdAt: 2 },
   ]);
   assert.equal(composePrompt(resolveContext(consumer.id, nodes, edges), consumer.data.prompt),
     '<context from="Ada">\nCheck the **assumptions**.\n</context>\n\n' +

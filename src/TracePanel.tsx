@@ -11,10 +11,47 @@ import {
 } from "./api";
 import { Icon } from "./icons";
 import { CopyButton } from "./nodes/CopyButton";
+import type { ContextBlock, ContextSource } from "./graph";
 
 const time = (ms: number | null) => (ms ? new Date(ms).toLocaleString() : "—");
 const duration = (a: number | null, b: number | null) =>
   a ? `${(((b ?? Date.now()) - a) / 1000).toFixed(1)}s` : "—";
+
+type StoredContextBlock = ContextBlock & {
+  preview?: string;
+  textTruncated?: boolean;
+  originalTextCharacters?: number;
+};
+
+function traceContext(value: TraceStep["context"]): {
+  blocks: StoredContextBlock[];
+  totalBlocks: number;
+  omittedBlocks: number;
+  truncatedBlocks: number;
+  originalTextCharacters?: number;
+  storedTextCharacters?: number;
+} {
+  if (Array.isArray(value)) {
+    const blocks = value as StoredContextBlock[];
+    return { blocks, totalBlocks: blocks.length, omittedBlocks: 0,
+      truncatedBlocks: blocks.filter((block) => block.textTruncated || (!block.text && block.preview)).length };
+  }
+  if (!value) return { blocks: [], totalBlocks: 0, omittedBlocks: 0, truncatedBlocks: 0 };
+  return { ...value, blocks: value.blocks as StoredContextBlock[] };
+}
+
+function provenance(source?: ContextSource) {
+  if (!source) return "";
+  const parts = [source.kind, `node ${source.nodeId}`];
+  if (source.producerNodeId) parts.push(`producer ${source.producerNodeId}`);
+  if (source.replyId) parts.push(`reply ${source.replyId}`);
+  if (source.runId) parts.push(`run ${source.runId}`);
+  if (source.execId) parts.push(`execution ${source.execId}`);
+  if (source.outputSetId) parts.push(`set ${source.outputSetId}`);
+  if (source.createdAt) parts.push(`created ${time(source.createdAt)}`);
+  if (source.edited) parts.push("edited");
+  return parts.join(" · ");
+}
 
 /** A collapsible block of preformatted detail. */
 function Section({ title, children, open }: { title: string; children: React.ReactNode; open?: boolean }) {
@@ -59,6 +96,10 @@ function StepDetail({ step, onRecover, outputExecIds }: { step: TraceStep; onRec
       .flatMap((item) => (item.summary ?? []).map((sum) => ({ round: i + 1, text: sum.text ?? "" })))
       .filter((entry) => entry.text),
   );
+  const context = traceContext(step.context);
+  const generation = step.params?.generationIndex && step.params?.generationCount
+    ? `${step.params.generationIndex} of ${step.params.generationCount}`
+    : null;
 
   return (
     <div className="trace-step-body">
@@ -66,6 +107,7 @@ function StepDetail({ step, onRecover, outputExecIds }: { step: TraceStep; onRec
         <div><dt>Execution</dt><dd>{step.status === "ok" ? "Completed" : step.status}</dd></div>
         <div><dt>Delivery</dt><dd>{outputExecIds.includes(step.execId) ? "Added to graph" : step.delivery}</dd></div>
         <div><dt>Duration</dt><dd>{duration(step.startedMs, step.finishedMs)}</dd></div>
+        {generation && <div><dt>Generation</dt><dd>{generation}</dd></div>}
         <div><dt>Last event</dt><dd>{(step.events ?? []).filter((e) => !/delivery\.poll|model\.http|container\.log/.test(e.kind)).at(-1)?.kind.replaceAll(".", " ").replaceAll("_", " ") ?? "No events"}</dd></div>
       </dl>
       <Section title="Execution details">
@@ -77,6 +119,7 @@ function StepDetail({ step, onRecover, outputExecIds }: { step: TraceStep; onRec
         <div><dt>Model asked</dt><dd>{step.requestedModel}</dd></div>
         <div><dt>Model served</dt><dd>{step.servedModel ?? "—"}</dd></div>
         <div><dt>Thinking</dt><dd>{step.effort}</dd></div>
+        {generation && <div><dt>Generation</dt><dd>{generation}</dd></div>}
         <div><dt>Tokens</dt><dd>{step.usage ? `${step.usage.input ?? "?"} in / ${step.usage.output ?? "?"} out` : "—"}</dd></div>
         <div><dt>Max rounds</dt><dd>{step.params?.maxRounds ?? "default"}</dd></div>
         <div><dt>Timeout</dt><dd>{step.params?.timeoutSec ? `${step.params.timeoutSec}s` : "default"}</dd></div>
@@ -131,12 +174,20 @@ function StepDetail({ step, onRecover, outputExecIds }: { step: TraceStep; onRec
         <Pre value={step.systemPrompt ?? "(none sent)"} />
       </Section>
 
-      <Section title={`Context in (${step.context?.length ?? 0})`}>
-        {step.context?.length ? (
-          step.context.map((c, i) => (
+      <Section title={`Context in (${context.totalBlocks})`}>
+        {(context.omittedBlocks > 0 || context.truncatedBlocks > 0) && <p className="dim">
+          Trace storage retained {context.blocks.length} of {context.totalBlocks} blocks.
+          {context.omittedBlocks > 0 && ` ${context.omittedBlocks} omitted.`}
+          {context.truncatedBlocks > 0 && ` ${context.truncatedBlocks} shortened.`}
+          {context.originalTextCharacters !== undefined && context.storedTextCharacters !== undefined
+            && ` ${context.storedTextCharacters.toLocaleString()} of ${context.originalTextCharacters.toLocaleString()} text characters retained.`}
+        </p>}
+        {context.blocks.length ? (
+          context.blocks.map((c, i) => (
             <div key={i}>
-              <span className="dim">from {c.label}</span>
-              <Pre value={c.text} />
+              <span className="dim">from {c.label}{c.source ? ` · ${provenance(c.source)}` : ""}</span>
+              {c.textTruncated && <span className="dim"> · shortened from {c.originalTextCharacters ?? "?"} characters</span>}
+              <Pre value={c.text ?? c.preview ?? "(empty)"} />
             </div>
           ))
         ) : (
@@ -203,7 +254,7 @@ function StepDetail({ step, onRecover, outputExecIds }: { step: TraceStep; onRec
   );
 }
 
-function RunRow({ run, onDelete, onRecover, outputExecIds }: { run: TraceRun; onDelete: (id: string) => void; onRecover: (step: TraceStep) => Promise<void>; outputExecIds: string[] }) {
+function RunRow({ canvasId, run, onDelete, onRecover, outputExecIds }: { canvasId: string; run: TraceRun; onDelete: (id: string) => void; onRecover: (step: TraceStep) => Promise<void>; outputExecIds: string[] }) {
   const [open, setOpen] = useState(false);
   const [steps, setSteps] = useState<TraceStep[] | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
@@ -217,11 +268,11 @@ function RunRow({ run, onDelete, onRecover, outputExecIds }: { run: TraceRun; on
     let timer: ReturnType<typeof setTimeout>;
     const refresh = async () => {
       try {
-        if (!current.length) current = await fetchTraceRun(run.runId);
-        const progress = await fetchTraceProgress(run.runId, cursor);
+        if (!current.length) current = await fetchTraceRun(canvasId, run.runId);
+        const progress = await fetchTraceProgress(canvasId, run.runId, cursor);
         if (progress.steps.some((s) => !current.some((old) => old.execId === s.execId) ||
           current.some((old) => old.execId === s.execId && old.status !== s.status))) {
-          current = await fetchTraceRun(run.runId);
+          current = await fetchTraceRun(canvasId, run.runId);
         }
         current = current.map((step) => {
           const events = [...new Map([...(step.events ?? []), ...progress.events.filter((e) => e.execId === step.execId)]
@@ -238,7 +289,7 @@ function RunRow({ run, onDelete, onRecover, outputExecIds }: { run: TraceRun; on
     };
     void refresh();
     return () => { stopped = true; clearTimeout(timer); };
-  }, [open, run.runId]);
+  }, [canvasId, open, run.runId]);
 
   return (
     <div className="trace-run">
@@ -278,7 +329,8 @@ function RunRow({ run, onDelete, onRecover, outputExecIds }: { run: TraceRun; on
                 <span className="place">{(step.seq ?? 0) + 1}</span>
                 <strong>{step.label || step.nodeId}</strong>
                 <span className="dim">
-                  {step.requestedModel} · {step.effort} ·{" "}
+                  {step.requestedModel} · {step.effort}
+                  {step.params?.generationIndex && step.params?.generationCount ? ` · generation ${step.params.generationIndex}/${step.params.generationCount}` : ""} ·{" "}
                   {duration(step.startedMs, step.finishedMs)}
                 </span>
                 {<span className={step.status === "error" || step.status === "interrupted" ? "trace-errors" : "dim"}>{step.status === "ok" ? "completed" : step.status} · {step.events?.length ? step.delivery : "delivery not recorded"}</span>}
@@ -292,27 +344,28 @@ function RunRow({ run, onDelete, onRecover, outputExecIds }: { run: TraceRun; on
   );
 }
 
-export function TracePanel({ onClose, onRecover, outputExecIds }: { onClose: () => void; onRecover: (step: TraceStep) => Promise<void>; outputExecIds: string[] }) {
+export function TracePanel({ canvasId, onClose, onRecover, outputExecIds }: { canvasId: string; onClose: () => void; onRecover: (step: TraceStep) => Promise<void>; outputExecIds: string[] }) {
   const [runs, setRuns] = useState<TraceRun[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const noLogs = runs?.length === 0 || (!!error && !runs?.length);
 
   const load = useCallback(() => {
-    fetchTraceRuns()
+    fetchTraceRuns(canvasId)
       .then((r) => {
         setRuns(r);
         setError(null);
       })
       .catch((err) => setError((err as Error).message));
-  }, []);
+  }, [canvasId]);
 
   useEffect(() => { load(); const timer = setInterval(load, 5000); return () => clearInterval(timer); }, [load]);
 
   const remove = useCallback(
     async (runId: string) => {
-      await deleteTraceRun(runId).catch((err) => setError((err as Error).message));
+      await deleteTraceRun(canvasId, runId).catch((err) => setError((err as Error).message));
       load();
     },
-    [load],
+    [canvasId, load],
   );
 
   return (
@@ -333,12 +386,12 @@ export function TracePanel({ onClose, onRecover, outputExecIds }: { onClose: () 
         </button>
       </header>
 
-      {error && <p className="error">{error}</p>}
-
       <div className="trace-list">
         {!runs && !error && <p className="dim">Loading…</p>}
+        {noLogs && <div className="trace-empty-warning" role="status">No trace logs</div>}
+        {error && !!runs?.length && <p className="error">{error}</p>}
         {runs?.map((run) => (
-          <RunRow key={run.runId} run={run} onDelete={remove} onRecover={onRecover} outputExecIds={outputExecIds} />
+          <RunRow key={run.runId} canvasId={canvasId} run={run} onDelete={remove} onRecover={onRecover} outputExecIds={outputExecIds} />
         ))}
       </div>
     </ResizablePanel>

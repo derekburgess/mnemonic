@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import OpenAI from "openai";
-import { event, deliveryState, sanitize, tracedFetch, type TraceEvent } from "../server/events.ts";
+import { event, deliveryState, sanitize, sanitizeJsonText, sanitizeTraceContext, tracedFetch, type TraceEvent } from "../server/events.ts";
 import { runChat } from "../server/providers.ts";
 import { buildTools } from "../server/tools.ts";
 
@@ -33,6 +33,30 @@ test("redaction and size limits preserve tool correlation metadata", () => {
   assert.ok(!JSON.stringify(value).includes("secret-key"));
   assert.ok(!JSON.stringify(value).includes("private"));
   assert.equal(typeof sanitize("x".repeat(100_000)), "string");
+});
+
+test("trace contexts retain provenance within an explicit aggregate budget", () => {
+  const input = Array.from({ length: 105 }, (_, index) => ({ label: `Block ${index}`, text: index < 5
+    ? "secret-key" + "x".repeat(20_000) : "small", source: { nodeId: `node-${index}`, kind: "output", token: "private" } }));
+  const context = sanitizeTraceContext(input, ["secret-key"]);
+  assert.equal(context.totalBlocks, 105);
+  assert.equal(context.blocks.length, 100);
+  assert.equal(context.omittedBlocks, 5);
+  assert.equal(context.truncatedBlocks, 5);
+  assert.ok(context.storedTextCharacters <= 65_536);
+  assert.ok(context.blocks[0].text.startsWith("[redacted]"));
+  assert.equal((context.blocks[0].source as { token: string }).token, "[redacted]");
+  assert.equal(context.blocks[0].textTruncated, true);
+  assert.equal(context.blocks[0].originalTextCharacters, 20_010);
+  assert.ok(!JSON.stringify(context).includes("secret-key"));
+  assert.ok(!JSON.stringify(context).includes("private"));
+});
+
+test("JSON metadata is redacted by key before trace persistence", () => {
+  const value = sanitizeJsonText(JSON.stringify({ image: "safe", password: "private", nested: { api_key: "secret" } }));
+  assert.deepEqual(JSON.parse(value!), { image: "safe", password: "[redacted]", nested: { api_key: "[redacted]" } });
+  assert.equal(sanitize("https://example.com/data?token=private&view=full"),
+    "https://example.com/data?token=[redacted]&view=full");
 });
 
 test("late delivery events cannot undo a graph acknowledgement", () => {

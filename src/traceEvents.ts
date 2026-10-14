@@ -1,6 +1,6 @@
 import { event, sanitize, type TraceEvent } from "../server/events";
 
-export type TraceIdentity = { runId: string; execId: string };
+export type TraceIdentity = { canvasId?: string; runId: string; execId: string };
 type Batch = TraceIdentity & { events: TraceEvent[]; attempts: number };
 const pending = new Map<string, Batch>();
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -8,7 +8,7 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 /** Telemetry never blocks result delivery. Stable event IDs make retries idempotent. */
 export function reportTraceEvent(trace: TraceIdentity | undefined, kind: string, detail?: unknown) {
   if (!trace) return;
-  const key = `${trace.runId}/${trace.execId}`;
+  const key = `${trace.canvasId ?? "legacy-current"}/${trace.runId}/${trace.execId}`;
   const batch = pending.get(key) ?? { ...trace, events: [], attempts: 0 };
   if (batch.events.length < 100) batch.events.push(event("browser", kind, sanitize(detail)));
   pending.set(key, batch);

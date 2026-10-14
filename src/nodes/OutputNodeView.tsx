@@ -120,14 +120,14 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
       </div>}
       {data.workspaceChanges && data.kind !== "thinking" && <button className="nodrag"
         onClick={() => openWorkspaceChanges(data.workspaceChanges!)}>{pendingChanges === 0 ? "View changes" : `Review changes${pendingChanges === undefined ? "" : ` (${pendingChanges})`}`}</button>}
-      {callRows.length > 0 && (
+      {!collapsed && callRows.length > 0 && (
         <button className="calls-toggle nodrag" onClick={() => setCallsOpen((v) => !v)}>
           <span className={`caret${callsOpen ? " open" : ""}`}>›</span>
           Tools ({callRows.length})
         </button>
       )}
 
-      {callsOpen &&
+      {!collapsed && callsOpen &&
         callRows.map((row, i) => (
           <div className="call" key={i} style={min ? { minWidth: min } : undefined}>
             <span className="call-name" title={row.name}>

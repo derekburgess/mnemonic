@@ -3,12 +3,14 @@ import path from "node:path";
 import { type DuckDBConnection } from "@duckdb/node-api";
 import { sanitize, deliveryState, type TraceEvent } from "./events.js";
 import type { ContainerTrace } from "./containerTrace.js";
+import { LEGACY_CANVAS_ID } from "../src/canvasIdentity.js";
 
 const DB_DIR = path.resolve(process.cwd(), "data");
 const DB_PATH = path.join(DB_DIR, "mnemonic.duckdb");
 
 /** One execution of one step, captured in full. */
 export type StepTrace = {
+  canvasId?: string;
   execId: string;
   runId: string;
   kind: string;
@@ -52,16 +54,25 @@ async function openDb(): Promise<DuckDBConnection> {
   const database = await openDatabase(DB_PATH);
   const { conn } = database;
   try {
-    await migrateDatabase(conn, DB_PATH, 1, async () => {
+    await migrateDatabase(conn, DB_PATH, 3, async () => {
+      // Legacy traces are intentionally discarded. Rebuilding their tables avoids asking
+      // DuckDB to bulk-delete rows through indexes created by older schema revisions.
+      await conn.run(`DROP TABLE IF EXISTS trace_events`);
+      await conn.run(`DROP TABLE IF EXISTS step_runs`);
+      await conn.run(`DROP TABLE IF EXISTS runs`);
+      await conn.run(`DROP SEQUENCE IF EXISTS trace_event_order`);
+
       await conn.run(`
-        CREATE TABLE IF NOT EXISTS runs (
+        CREATE TABLE runs (
           run_id TEXT PRIMARY KEY,
           kind TEXT,
           started_ms BIGINT,
-          finished_ms BIGINT
+          finished_ms BIGINT,
+          canvas_id TEXT
         )`);
+      await conn.run(`CREATE INDEX runs_canvas ON runs(canvas_id, started_ms)`);
       await conn.run(`
-        CREATE TABLE IF NOT EXISTS step_runs (
+        CREATE TABLE step_runs (
           exec_id TEXT PRIMARY KEY,
           run_id TEXT,
           seq INTEGER,
@@ -84,21 +95,14 @@ async function openDb(): Promise<DuckDBConnection> {
           usage_json TEXT,
           params_json TEXT,
           files_json TEXT,
-          links_json TEXT
+          links_json TEXT,
+          container_json TEXT
         )`);
-
-      // Databases created before these columns existed are brought up to date in place.
-      for (const column of ["params_json", "files_json", "links_json", "container_json"]) {
-        await conn.run(`ALTER TABLE step_runs ADD COLUMN IF NOT EXISTS ${column} TEXT`);
-      }
-
-      await conn.run(`CREATE TABLE IF NOT EXISTS trace_events (
+      await conn.run(`CREATE TABLE trace_events (
         id TEXT PRIMARY KEY, run_id TEXT, exec_id TEXT, at_ms BIGINT, received_ms BIGINT,
-        source TEXT, kind TEXT, detail_json TEXT)`);
-      await conn.run(`CREATE SEQUENCE IF NOT EXISTS trace_event_order START 1`);
-      await conn.run(`ALTER TABLE trace_events ADD COLUMN IF NOT EXISTS event_order BIGINT`);
-      await conn.run(`UPDATE trace_events SET event_order=nextval('trace_event_order') WHERE event_order IS NULL`);
-      await conn.run(`CREATE INDEX IF NOT EXISTS trace_events_step ON trace_events(run_id, exec_id)`);
+        source TEXT, kind TEXT, detail_json TEXT, event_order BIGINT)`);
+      await conn.run(`CREATE SEQUENCE trace_event_order START 1`);
+      await conn.run(`CREATE INDEX trace_events_step ON trace_events(run_id, exec_id)`);
 
     });
 
@@ -117,11 +121,12 @@ export async function recordStep(t: StepTrace): Promise<void> {
 
   // The run row is created by whichever step arrives first, then extended as more land.
   await conn.run(
-    `INSERT INTO runs (run_id, kind, started_ms, finished_ms) VALUES ($1, $2, $3, $4)
+    `INSERT INTO runs (run_id, kind, started_ms, finished_ms, canvas_id) VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (run_id) DO UPDATE SET
        finished_ms = greatest(runs.finished_ms, excluded.finished_ms),
-       started_ms = least(runs.started_ms, excluded.started_ms)`,
-    [t.runId, t.kind, BigInt(t.startedMs), t.finishedMs === null ? null : BigInt(t.finishedMs)],
+       started_ms = least(runs.started_ms, excluded.started_ms),
+       canvas_id = excluded.canvas_id`,
+    [t.runId, t.kind, BigInt(t.startedMs), t.finishedMs === null ? null : BigInt(t.finishedMs), t.canvasId ?? LEGACY_CANVAS_ID],
   );
 
   // Named columns rather than positional, so adding one later cannot silently shift the rest.
@@ -158,7 +163,7 @@ const parse = (v: unknown) => {
   }
 };
 
-export async function listRuns(limit = 100) {
+export async function listRuns(canvasId = LEGACY_CANVAS_ID, limit = 100) {
   const conn = await db();
   const reader = await conn.runAndReadAll(
     `SELECT r.run_id, r.kind, r.started_ms, r.finished_ms,
@@ -167,8 +172,9 @@ export async function listRuns(limit = 100) {
             sum(CASE WHEN s.status IN ('error', 'interrupted') THEN 1 ELSE 0 END) AS errors,
             string_agg(DISTINCT s.requested_model, ', ') AS models
      FROM runs r LEFT JOIN step_runs s USING (run_id)
-     GROUP BY ALL ORDER BY r.started_ms DESC LIMIT $1`,
-    [limit],
+     WHERE r.canvas_id=$1
+     GROUP BY ALL ORDER BY r.started_ms DESC LIMIT $2`,
+    [canvasId, limit],
   );
   return reader.getRowObjects().map((r) => ({
     runId: r.run_id as string,
@@ -210,11 +216,12 @@ export async function getStepResult(runId: string, execId: string) {
   };
 }
 
-export async function getRun(runId: string) {
+export async function getRun(runId: string, canvasId = LEGACY_CANVAS_ID) {
   const conn = await db();
   const reader = await conn.runAndReadAll(
-    `SELECT * FROM step_runs WHERE run_id = $1 ORDER BY seq, started_ms`,
-    [runId],
+    `SELECT s.* FROM step_runs s JOIN runs r USING (run_id)
+     WHERE s.run_id = $1 AND r.canvas_id = $2 ORDER BY s.seq, s.started_ms`,
+    [runId, canvasId],
   );
   const events = await getEvents(runId);
   return reader.getRowObjects().map((r) => ({
@@ -247,21 +254,23 @@ export async function getRun(runId: string) {
   }));
 }
 
-export async function deleteRun(runId: string): Promise<void> {
+export async function deleteRun(runId: string, canvasId = LEGACY_CANVAS_ID): Promise<void> {
   const conn = await db();
-  await conn.run(`DELETE FROM trace_events WHERE run_id = $1`, [runId]);
-  await conn.run(`DELETE FROM step_runs WHERE run_id = $1`, [runId]);
-  await conn.run(`DELETE FROM runs WHERE run_id = $1`, [runId]);
+  const owned = `(SELECT run_id FROM runs WHERE run_id=$1 AND canvas_id=$2)`;
+  await conn.run(`DELETE FROM trace_events WHERE run_id IN ${owned}`, [runId, canvasId]);
+  await conn.run(`DELETE FROM step_runs WHERE run_id IN ${owned}`, [runId, canvasId]);
+  await conn.run(`DELETE FROM runs WHERE run_id = $1 AND canvas_id=$2`, [runId, canvasId]);
 }
 
 /** Events are independent writes, so progress survives a lost final response or proxy crash. */
-export async function recordEvent(runId: string, execId: string, e: TraceEvent): Promise<void> {
+export async function recordEvent(runId: string, execId: string, e: TraceEvent, canvasId?: string): Promise<void> {
   const conn = await db();
   await conn.run(`INSERT INTO trace_events (id,run_id,exec_id,at_ms,received_ms,source,kind,detail_json,event_order)
     SELECT $1,$2,$3,$4,$5,$6,$7,$8,nextval('trace_event_order')
-    WHERE (SELECT count(*) FROM trace_events WHERE run_id=$2 AND exec_id=$3) < CASE WHEN $7 IN ('graph.committed','graph.failed','execution.completed','execution.failed','result.saved','delivery.received','delivery.recovered') THEN 2500 ELSE 2400 END
+    WHERE ($9 IS NULL OR EXISTS (SELECT 1 FROM runs WHERE run_id=$2 AND canvas_id=$9))
+      AND (SELECT count(*) FROM trace_events WHERE run_id=$2 AND exec_id=$3) < CASE WHEN $7 IN ('graph.committed','graph.failed','execution.completed','execution.failed','result.saved','delivery.received','delivery.recovered') THEN 2500 ELSE 2400 END
     ON CONFLICT DO NOTHING`, [e.id, runId, execId, BigInt(Math.round(e.at)), BigInt(Date.now()), e.source, e.kind,
-    JSON.stringify(sanitize(e.detail)) ?? null]);
+    JSON.stringify(sanitize(e.detail)) ?? null, canvasId ?? null]);
 }
 
 export async function getEvents(runId: string, after = 0) {
@@ -279,11 +288,62 @@ export async function markInterrupted(): Promise<void> {
   await conn.run(`UPDATE runs SET finished_ms=(SELECT max(finished_ms) FROM step_runs WHERE step_runs.run_id=runs.run_id)`);
 }
 
-export async function getRunProgress(runId: string, after = 0) {
+export async function getRunProgress(runId: string, after = 0, canvasId = LEGACY_CANVAS_ID) {
   const conn = await db();
-  const rows = await conn.runAndReadAll(`SELECT exec_id,status,error,finished_ms FROM step_runs WHERE run_id=$1`, [runId]);
+  const rows = await conn.runAndReadAll(`SELECT s.exec_id,s.status,s.error,s.finished_ms FROM step_runs s JOIN runs r USING(run_id) WHERE s.run_id=$1 AND r.canvas_id=$2`, [runId, canvasId]);
+  if (!rows.getRowObjects().length) return { cursor: after, events: [], steps: [] };
   const events = await getEvents(runId, after);
   const cursor = Math.max(after, ...events.map((entry) => entry.order));
   return { cursor, events, steps: rows.getRowObjects().map((r) => ({ execId: String(r.exec_id),
     status: String(r.status), error: r.error as string | null, finishedMs: num(r.finished_ms) })) };
+}
+
+export type TraceArchive = { version: 1; runs: Array<{ run: Awaited<ReturnType<typeof listRuns>>[number]; steps: Awaited<ReturnType<typeof getRun>> }> };
+
+export async function exportCanvasTraces(canvasId: string): Promise<TraceArchive> {
+  const runs = await listRuns(canvasId, 10_000);
+  return { version: 1, runs: await Promise.all(runs.map(async (run) => ({ run, steps: await getRun(run.runId, canvasId) }))) };
+}
+
+export async function importCanvasTraces(canvasId: string, archive: TraceArchive): Promise<void> {
+  if (archive?.version !== 1 || !Array.isArray(archive.runs) || archive.runs.length > 10_000) {
+    throw Object.assign(new Error("Invalid trace archive"), { status: 400 });
+  }
+  const steps = archive.runs.reduce((sum, item) => sum + (Array.isArray(item?.steps) ? item.steps.length : 100_001), 0);
+  if (steps > 100_000) throw Object.assign(new Error("Trace archive is too large"), { status: 413 });
+
+  const runIds = new Set<string>();
+  for (const item of archive.runs) {
+    if (!item?.run || typeof item.run.runId !== "string" || item.run.runId.length > 200 || runIds.has(item.run.runId) || !Array.isArray(item.steps)) {
+      throw Object.assign(new Error("Invalid trace archive"), { status: 400 });
+    }
+    runIds.add(item.run.runId);
+    for (const step of item.steps) {
+      if (!step || typeof step.execId !== "string" || step.execId.length > 200 || typeof step.runId !== "string" || step.runId !== item.run.runId) {
+        throw Object.assign(new Error("Invalid trace archive"), { status: 400 });
+      }
+    }
+  }
+
+  const conn = await db();
+  for (const runId of runIds) {
+    const owner = (await conn.runAndReadAll(`SELECT canvas_id FROM runs WHERE run_id=$1`, [runId])).getRowObjects()[0];
+    if (owner && owner.canvas_id !== canvasId) throw Object.assign(new Error("Trace archive conflicts with another canvas"), { status: 409 });
+  }
+
+  await conn.run("BEGIN TRANSACTION");
+  try {
+    const oldRuns = (await conn.runAndReadAll(`SELECT run_id FROM runs WHERE canvas_id=$1`, [canvasId])).getRowObjects().map((r) => String(r.run_id));
+    for (const runId of oldRuns) await deleteRun(runId, canvasId);
+    for (const item of archive.runs) {
+      for (const step of item.steps) {
+        await recordStep({ ...step, canvasId, kind: item.run.kind, seq: step.seq ?? 0,
+          startedMs: step.startedMs ?? Date.now(), status: step.status as StepTrace["status"] });
+        for (const entry of Array.isArray(step.events) ? step.events : []) {
+          await recordEvent(step.runId, step.execId, entry, canvasId);
+        }
+      }
+    }
+    await conn.run("COMMIT");
+  } catch (err) { await conn.run("ROLLBACK"); throw err; }
 }
