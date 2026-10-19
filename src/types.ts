@@ -172,6 +172,8 @@ export type CommentNode = Node<CommentData, "comment">;
 export type WorkspaceFileNode = Node<WorkspaceFileData, "workspace-file">;
 export type GraphNode = InputNode | ContextNode | OutputNode | CommentNode | WorkspaceFileNode;
 export type GraphEdgeData = {
+  /** Managed feedback route created by the Loop toggle; safe to remove when looping is disabled. */
+  loopFeedback?: boolean;
   /** Legacy midpoint retained for graphs saved before segment controls were introduced. */
   control?: { x: number; y: number };
   /** Editable coordinates for the orthogonal route's movable interior segments. */

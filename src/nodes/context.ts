@@ -17,6 +17,7 @@ export type GraphActions = {
     id: string,
     patch: Partial<InputData> | ((data: InputData) => Partial<InputData>),
   ) => void;
+  setLoop: (id: string, enabled: boolean) => void;
   updateContext: (
     id: string,
     patch: Partial<ContextData> | ((data: ContextData) => Partial<ContextData>),

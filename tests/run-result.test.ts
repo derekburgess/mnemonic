@@ -157,6 +157,25 @@ test("loop iterations append outputs and move selected routes to the latest outp
   assert.equal(second.nodes.length, 4);
 });
 
+test("managed loop feedback seeds itself, becomes output context, and does not create a scheduling cycle", () => {
+  const producer = { id: "step", type: "step", position: { x: 0, y: 0 }, data: {
+    label: "Loop", loop: true, model: "test", effort: "off", outputs: 1, status: "idle",
+  } } as InputNode;
+  const seeded = [{ id: "feedback", source: producer.id, target: producer.id, data: { loopFeedback: true } }];
+
+  assert.deepEqual(topoOrder([producer], seeded), { order: [producer.id], cycle: [] });
+  assert.deepEqual(resolveContext(producer.id, [producer], seeded), []);
+
+  const first = commitRun([producer], seeded, producer,
+    [{ text: "first", model: "test", effort: "off", execId: "first" }],
+    { append: true, moveRoutes: true });
+  assert.ok(!first.edges.some((edge) => edge.source === producer.id && edge.target === producer.id));
+  assert.ok(first.edges.some((edge) => edge.source === first.outputIds[0] && edge.target === producer.id
+    && edge.data?.loopFeedback));
+  assert.deepEqual(resolveContext(producer.id, first.nodes, first.edges).map((block) => block.text), ["first"]);
+  assert.deepEqual(topoOrder(first.nodes, first.edges), { order: [producer.id], cycle: [] });
+});
+
 test("all-output loops retain every iteration route and provide ordered accumulated context", () => {
   const producer = { id: "step", type: "step", position: { x: 0, y: 0 }, data: { label: "Loop", loop: true, loopOutputMode: "all" } } as InputNode;
   const consumer = { ...producer, id: "next", data: { ...producer.data, label: "Next", loop: false }, position: { x: 1200, y: 0 } };
@@ -164,12 +183,15 @@ test("all-output loops retain every iteration route and provide ordered accumula
   const first = commitRun([producer, consumer], [], producer,
     [{ text: "first", model: "test", effort: "off", execId: "first" }], options);
   const linked = [...first.edges, { id: "selected", source: first.outputIds[0], target: consumer.id }];
+  linked.push({ id: "feedback", source: first.outputIds[0], target: producer.id, data: { loopFeedback: true } });
   const second = commitRun(first.nodes, linked, producer,
     [{ text: "second", model: "test", effort: "off", execId: "second" }], options);
 
   assert.ok(second.edges.some((edge) => edge.id === "selected"));
   assert.ok(second.edges.some((edge) => edge.source === second.outputIds[0] && edge.target === consumer.id));
   assert.deepEqual(resolveContext(consumer.id, second.nodes, second.edges).map((c) => c.text), ["first", "second"]);
+  assert.equal(second.edges.filter((edge) => edge.target === producer.id && edge.data?.loopFeedback).length, 2);
+  assert.deepEqual(resolveContext(producer.id, second.nodes, second.edges).map((c) => c.text), ["first", "second"]);
 });
 
 

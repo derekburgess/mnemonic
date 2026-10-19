@@ -1163,6 +1163,7 @@ test("loop limit stops after the configured iterations and switches looping off"
   await expect(outputMode).toBeDisabled();
   await expect(loop.getByRole("button", { name: "Run", exact: true })).toBeVisible();
   await expect(page.locator(".react-flow__node-artifact")).toHaveCount(2);
+  await expect.poll(() => state.graph.edges.filter((edge: any) => edge.data?.loopFeedback).length).toBe(0);
   await page.waitForTimeout(400);
   expect(state.executions).toHaveLength(2);
 });
@@ -1199,6 +1200,7 @@ test("all-output loops preserve outputs, context, and trace routing while anothe
   completed.set(state.executions[0].trace.execId, "first loop output");
   await expect(page.locator(".react-flow__node-artifact")).toHaveCount(1);
   await expect.poll(() => state.executions.length).toBe(2);
+  expect(state.executions[1].input).toContain("first loop output");
   await page.getByRole("button", { name: "Inference", exact: true }).click();
   const transform = page.locator(".react-flow__node-step").last();
   await transform.getByRole("button", { name: "Expand step", exact: true }).click();
@@ -1227,11 +1229,10 @@ test("all-output loops preserve outputs, context, and trace routing while anothe
   await expect.poll(() => state.executions.length).toBe(4);
   expect(state.executions[3].input).toContain("transformed feedback");
   expect(state.executions[1].trace.loopOutputMode).toBe("all");
-  expect(state.executions[3].trace.context.map(({ label, text }: any) => ({ label, text }))).toEqual([
-    { label: "Transform", text: "transformed feedback" },
-    { label: "Step 1", text: "Make an output" },
+  expect(state.executions[3].trace.context.map(({ text }: any) => text)).toEqual([
+    "first loop output", "transformed feedback", "second loop output", "Make an output",
   ]);
-  expect(state.executions[3].trace.context.map((block: any) => block.source.kind)).toEqual(["output", "context"]);
+  expect(state.executions[3].trace.context.map((block: any) => block.source.kind)).toEqual(["output", "output", "output", "context"]);
   await expect(page.locator(".react-flow__node-artifact")).toHaveCount(3);
   const secondLoopId = (await page.locator(".react-flow__node-artifact").filter({ hasText: "second loop output" }).getAttribute("data-id"))!;
   await expect.poll(() => state.graph.edges.filter((edge: any) => edge.target === transformId

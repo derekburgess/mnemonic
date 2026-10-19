@@ -76,7 +76,11 @@ const byId = (nodes: GraphNode[]) => new Map(nodes.map((n) => [n.id, n]));
 export function inputDependencies(nodes: GraphNode[], edges: GraphEdge[]): Map<string, Set<string>> {
   const map = byId(nodes);
   const incoming = new Map<string, string[]>();
-  for (const e of edges) incoming.set(e.target, [...(incoming.get(e.target) ?? []), e.source]);
+  // Feedback is execution context, not a scheduling dependency: otherwise a looping step would
+  // depend on itself and disappear into the topological cycle list.
+  for (const e of edges.filter((edge) => !edge.data?.loopFeedback)) {
+    incoming.set(e.target, [...(incoming.get(e.target) ?? []), e.source]);
+  }
 
   const deps = new Map<string, Set<string>>();
   for (const n of nodes) {
@@ -435,8 +439,12 @@ export function commitRun(
   // candidates rather than only the first. Targets are collapsed to a set first, or re-running
   // an N-way fan-out would multiply the edges each time.
   const consumers = options.preserveRoutes ? [] : [...new Set([...inherited, ...prewired].map((e) => e.target))];
+  const loopTargets = new Set([...inherited, ...prewired]
+    .filter((edge) => edge.data?.loopFeedback)
+    .map((edge) => edge.target));
   const migrated: GraphEdge[] = outputs.flatMap((o) =>
-    consumers.map((target) => ({ id: uid(), source: o.id, target })),
+    consumers.map((target) => ({ id: uid(), source: o.id, target,
+      ...(loopTargets.has(target) ? { data: { loopFeedback: true } } : {}) })),
   );
 
   return {

@@ -20,7 +20,7 @@ const asDuration = (seconds: number) => seconds < 60 ? `${seconds}s` : `${second
 
 export function InputNodeView({ id, data }: NodeProps<InputNode>) {
   const { activeNodeIds, stopNode, openSandboxConfig, providerModels, providerSettings, defaultProvider,
-    currentId, workspaceCounts, updateInput: onChange, runOne: onRun, removeNode: onDelete } = useGraphActions();
+    currentId, workspaceCounts, updateInput: onChange, setLoop, runOne: onRun, removeNode: onDelete } = useGraphActions();
   const provider = data.provider ?? defaultProvider;
   const models = providerModels[provider] ?? [];
   const localModelsRequired = provider === "huggingface" && !!providerSettings?.providers?.find((value) => value.provider === provider)?.runLocally;
@@ -92,7 +92,7 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         <div className="sandbox-row loop-controls nodrag">
           <div className="loop-controls-main">
             <label className="sandbox-control"><span className="skip sandbox"><input type="checkbox" checked={!!data.loop}
-              onChange={(event) => onChange(id, { loop: event.target.checked })} /><span className="track" aria-hidden="true" /></span><span>Loop node</span></label>
+              onChange={(event) => setLoop(id, event.target.checked)} /><span className="track" aria-hidden="true" /></span><span>Loop node</span></label>
             <label className="loop-limit"><input className="line nodrag" type="number" min={1} max={MAX_LOOP_LIMIT} step={1}
               value={data.loopLimit ?? DEFAULT_LOOP_LIMIT} aria-label="Loop iterations" disabled={!data.loop}
               onChange={(event) => onChange(id, { loopLimit: normalizeLoopLimit(Number(event.target.value)) })} /></label>

@@ -219,7 +219,26 @@ function migrateContextNodes(snapshot: Snapshot): Snapshot {
 
 function migrateSnapshot(snapshot: Snapshot): Snapshot {
   const renamed = { ...snapshot, nodes: snapshot.nodes.map(migrateNode) };
-  return migrateContextNodes(migrateToolNodes(renamed));
+  const migrated = migrateContextNodes(migrateToolNodes(renamed));
+  const map = new Map(migrated.nodes.map((node) => [node.id, node]));
+  let edges = migrated.edges.filter((edge) => {
+    const target = map.get(edge.target);
+    return !(edge.data?.loopFeedback && target && isInput(target) && !target.data.loop);
+  }).map((edge) => {
+    const target = map.get(edge.target);
+    const source = map.get(edge.source);
+    const isFeedback = target && isInput(target) && target.data.loop &&
+      (edge.source === target.id || (source && isOutput(source) && source.data.sourceId === target.id));
+    return isFeedback && !edge.data?.loopFeedback
+      ? { ...edge, data: { ...(edge.data ?? {}), loopFeedback: true } }
+      : edge;
+  });
+  for (const node of migrated.nodes.filter((candidate): candidate is InputNode => isInput(candidate) && !!candidate.data.loop)) {
+    if (!edges.some((edge) => edge.target === node.id && edge.data?.loopFeedback)) {
+      edges = [...edges, { id: uid(), source: node.id, target: node.id, data: { loopFeedback: true } }];
+    }
+  }
+  return { ...migrated, edges };
 }
 
 function loadSnapshot(): Snapshot | null {
@@ -365,6 +384,15 @@ function Canvas() {
     },
     [setNodes],
   );
+
+  const setLoop = useCallback((id: string, enabled: boolean) => {
+    updateInput(id, { loop: enabled });
+    setEdges((current) => {
+      if (!enabled) return current.filter((edge) => !(edge.target === id && edge.data?.loopFeedback));
+      if (current.some((edge) => edge.target === id && edge.data?.loopFeedback)) return current;
+      return [...current, { id: uid(), source: id, target: id, data: { loopFeedback: true } }];
+    });
+  }, [setEdges, updateInput]);
 
   const updateContext = useCallback(
     (id: string, patch: Partial<ContextData> | ((data: ContextData) => Partial<ContextData>)) => {
@@ -652,7 +680,7 @@ function Canvas() {
           const next = live.current.nodes.find((node) => node.id === id);
           if (!looping || controller.signal.aborted || !next || !isInput(next) || !next.data.loop || next.data.error) break;
           if (iterations >= normalizeLoopLimit(next.data.loopLimit)) {
-            publish(patchStatus(live.current, id, { loop: false }));
+            setLoop(id, false);
             break;
           }
           // Yield between iterations so graph edits, Stop, and other nodes remain responsive.
@@ -672,7 +700,7 @@ function Canvas() {
         setActiveNodeIds([...nodeRuns.current.keys()]);
       }
     },
-    [executeNode, publish],
+    [executeNode, publish, setLoop],
   );
 
   /**
@@ -895,8 +923,8 @@ function Canvas() {
   ])), [nodes, edges]);
 
   const actions = useMemo(
-    () => ({ activeNodeIds, stopNode, openWorkspaceChanges, openWorkspaceFile, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, workspaceCounts, updateInput, updateContext, updateOutput, updateComment, updateWorkspaceFile, updateEdgeRoute, runOne, removeNode }),
-    [activeNodeIds, stopNode, openWorkspaceChanges, openWorkspaceFile, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, workspaceCounts, updateInput, updateContext, updateOutput, updateComment, updateWorkspaceFile, updateEdgeRoute, runOne, removeNode],
+    () => ({ activeNodeIds, stopNode, openWorkspaceChanges, openWorkspaceFile, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, workspaceCounts, updateInput, setLoop, updateContext, updateOutput, updateComment, updateWorkspaceFile, updateEdgeRoute, runOne, removeNode }),
+    [activeNodeIds, stopNode, openWorkspaceChanges, openWorkspaceFile, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, workspaceCounts, updateInput, setLoop, updateContext, updateOutput, updateComment, updateWorkspaceFile, updateEdgeRoute, runOne, removeNode],
   );
 
   return (
