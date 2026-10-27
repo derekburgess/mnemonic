@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { Effort, InputNode, LoopOutputMode, ToolConfig } from "../types";
 import { Icon } from "../icons";
@@ -9,6 +10,8 @@ import { SandboxToggle } from "./SandboxToggle";
 import { DeleteButton } from "./DeleteButton";
 import { ToolEditor, BuiltinTool, WORKSPACE_TOOLS } from "./ToolEditor";
 import { useGraphActions } from "./context";
+import { CopyButton } from "./CopyButton";
+import { parseInferenceConfiguration, serializeInferenceConfiguration } from "../inferenceConfig";
 
 const EFFORTS: Effort[] = ["off", "minimal", "low", "medium", "high"];
 const MAX_OUTPUTS = 8;
@@ -31,23 +34,78 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
   const current = currentId === id;
   const tools = data.tools ?? [];
   const workspaceCount = workspaceCounts[id] ?? 0;
+  const [configurationOpen, setConfigurationOpen] = useState(false);
+  const [flipDirection, setFlipDirection] = useState<"front" | "back" | null>(null);
+  const [configurationDraft, setConfigurationDraft] = useState("");
+  const [configurationError, setConfigurationError] = useState<string | null>(null);
   const setTools = (next: ToolConfig[]) => onChange(id, { tools: next });
   const patchTool = (toolId: string, patch: Partial<ToolConfig>) => setTools(tools.map((tool) => tool.id === toolId ? { ...tool, ...patch } : tool));
 
-  return (
-    <div className={`node input nopan${current ? " current" : ""} status-${data.status}${collapsed ? " collapsed" : ""}`}>
-      <Handle type="target" position={Position.Left} />
-      <header className="node-head">
-        <input className={`label nodrag${data.label === "Unnamed" || data.label === "Name this step" ? " unnamed" : ""}`}
-          placeholder="Unnamed" value={data.label} onChange={(event) => onChange(id, { label: event.target.value })}
-          aria-label="Step name" />
-        <button className="icon collapse-toggle nodrag" onClick={() => onChange(id, { collapsed: !collapsed })}
-          aria-label={collapsed ? "Expand step" : "Collapse step"} aria-expanded={!collapsed}>
-          <Icon name="chevron" size={13} />
-        </button>
-        <DeleteButton onClick={() => onDelete(id)} title="Delete step" />
-      </header>
+  const startFlip = (target: boolean) => {
+    setConfigurationOpen(target);
+    setFlipDirection(target ? "back" : "front");
+  };
 
+  const flipConfiguration = () => {
+    if (!configurationOpen) {
+      setConfigurationDraft(serializeInferenceConfiguration(data));
+      setConfigurationError(null);
+      startFlip(true);
+      return;
+    }
+    try {
+      const next = parseInferenceConfiguration(configurationDraft);
+      onChange(id, {
+        provider: next.provider,
+        label: next.label ?? "Unnamed",
+        model: next.model ?? "",
+        effort: next.effort ?? "off",
+        sandbox: next.sandbox,
+        sandboxConfig: next.sandboxConfig,
+        useGpu: next.useGpu,
+        tools: next.tools,
+        workspaceTools: next.workspaceTools,
+        maxRounds: next.maxRounds,
+        loopLimit: next.loopLimit,
+        loopOutputMode: next.loopOutputMode,
+        timeoutSec: next.timeoutSec,
+        outputs: next.outputs ?? 1,
+      });
+      setLoop(id, next.loop ?? false);
+      setConfigurationError(null);
+      startFlip(false);
+    } catch (error) {
+      setConfigurationError((error as Error).message);
+    }
+  };
+
+  const header = <header className="node-head">
+    <input className={`label nodrag${data.label === "Unnamed" || data.label === "Name this step" ? " unnamed" : ""}`}
+      placeholder="Unnamed" value={data.label} onChange={(event) => onChange(id, { label: event.target.value })}
+      aria-label="Step name" />
+    <button className="icon collapse-toggle nodrag" onClick={() => onChange(id, { collapsed: !collapsed })}
+      aria-label={collapsed ? "Expand step" : "Collapse step"} aria-expanded={!collapsed}>
+      <Icon name="chevron" size={13} />
+    </button>
+    <button className="icon configuration-toggle nodrag" onClick={flipConfiguration}
+      disabled={flipDirection !== null}
+      aria-label={configurationOpen ? "Apply inference configuration" : "Show inference configuration"}
+      aria-pressed={configurationOpen}>
+      <Icon name="eye" size={14} />
+    </button>
+    <DeleteButton onClick={() => onDelete(id)} title="Delete step" />
+  </header>;
+
+  return (
+    <div className={`node input nopan${current ? " current" : ""} status-${data.status}${collapsed ? " collapsed" : ""}${configurationOpen ? " configuration-open" : ""}${flipDirection ? ` configuration-flipping configuration-to-${flipDirection}` : ""}`}>
+      <Handle type="target" position={Position.Left} />
+      {header}
+      <div className="inference-card-stage"
+        onAnimationEnd={(event) => {
+          if (!event.animationName.includes("inference-card-flip-in-")) return;
+          setFlipDirection(null);
+        }}>
+        <div className="inference-card-face inference-card-front" aria-hidden={configurationOpen}>
       <div className="row"><label>Provider
         <select className="nodrag" value={provider} onChange={(event) => {
           const next = event.target.value as Provider;
@@ -126,6 +184,23 @@ export function InputNodeView({ id, data }: NodeProps<InputNode>) {
         {busy ? <><Icon name="stop" /> {data.loop ? "Stop loop" : "Stop step"}</>
           : <><Icon name="play" /> {data.loop ? "Start loop" : "Run"}</>}
       </button>
+        </div>
+
+        <div className="inference-card-face inference-card-back" aria-hidden={!configurationOpen}>
+          <div className="inference-configuration">
+            <div className="field">
+              <textarea className="configuration-json nodrag nowheel" value={configurationDraft}
+                aria-label="Inference configuration JSON"
+                onChange={(event) => {
+                  setConfigurationDraft(event.target.value);
+                  setConfigurationError(null);
+                }} />
+              <CopyButton text={configurationDraft} label="Copy inference configuration" />
+            </div>
+            {configurationError && <p className="error nodrag" role="alert">{configurationError}</p>}
+          </div>
+        </div>
+      </div>
       <Handle type="source" position={Position.Right} />
     </div>
   );

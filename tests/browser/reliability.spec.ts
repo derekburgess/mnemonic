@@ -5,7 +5,7 @@ function seed(outputs = 1) {
     label: "Step 1", model: "test", effort: "off", prompt: "Make an output", outputs, status: "idle", timeoutSec: 30,
   } }], edges: [], updatedMs: 1 };
 }
-async function setup(page: Page, outputs = 1) {
+async function setup(page: Page, outputs = 1, options: { startupDelay?: number } = {}) {
   const state = { graph: seed(outputs) as any, complete: false, partial: false, offline: false,
     cancelled: new Set<string>(), executions: [] as any[] };
   await page.addInitScript((graph) => {
@@ -17,6 +17,9 @@ async function setup(page: Page, outputs = 1) {
   await page.route("**/api/**", async (route) => {
     const req = route.request(); const url = new URL(req.url()); const path = url.pathname;
     const json = (body: unknown, status = 200) => route.fulfill({ status, json: body });
+    if (options.startupDelay && (path === "/api/settings" || path === "/api/models")) {
+      await new Promise((resolve) => setTimeout(resolve, options.startupDelay));
+    }
     if (path === "/api/local-model/models") return json({ models: [], activity: null });
     if (path === "/api/models") return json({ models: ["test"] });
     if (path === "/api/sandbox") return json({ available: true });
@@ -55,6 +58,16 @@ async function setup(page: Page, outputs = 1) {
   await expect(page.locator(".save-status")).toHaveText("Saved");
   return state;
 }
+
+test("startup overlay covers the canvas until graph and provider controls settle", async ({ page }) => {
+  const setupPromise = setup(page, 1, { startupDelay: 500 });
+  const overlay = page.getByRole("status", { name: "Loading canvas" });
+  await expect(overlay).toBeVisible();
+  await setupPromise;
+  await expect(overlay).toBeHidden();
+  await expect(page.locator('.react-flow__node-step[data-id="step"]')).toBeVisible();
+  await expect(page.locator(".app")).toHaveAttribute("aria-busy", "false");
+});
 
 async function runStep(page: Page) {
   await page.getByRole("button", { name: "Run", exact: true }).click();
@@ -118,6 +131,113 @@ test("canvas can zoom out beyond the React Flow default", async ({ page }) => {
   expect(scale).toBeLessThan(0.5);
   expect(scale).toBeGreaterThanOrEqual(0.1);
   expect(scale).toBeLessThanOrEqual(0.11);
+});
+
+test("inference configuration flip keeps the card height fixed", async ({ page }) => {
+  await setup(page);
+  const wrapper = page.locator('.react-flow__node-step[data-id="step"]');
+  const card = page.locator('.react-flow__node-step[data-id="step"] .node');
+  await card.getByRole("button", { name: "Add a tool" }).click();
+  await card.getByRole("button", { name: "Add a tool" }).click();
+  const eye = card.getByRole("button", { name: "Show inference configuration" });
+  const header = card.locator(":scope > .node-head");
+  await expect(header).toHaveCount(1);
+  const headerBefore = await header.boundingBox();
+  const sampleFlip = async () => {
+    return wrapper.evaluate(async (element) => {
+      const heights: Array<{ wrapper: number; card: number }> = [];
+      const started = performance.now();
+      while (performance.now() - started < 400) {
+        heights.push({
+          wrapper: element.getBoundingClientRect().height,
+          card: element.querySelector(".node")!.getBoundingClientRect().height,
+        });
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      }
+      return heights;
+    });
+  };
+
+  const expectFixedHeight = (heights: Array<{ wrapper: number; card: number }>) => {
+    expect(Math.max(...heights.map((height) => height.card)) - Math.min(...heights.map((height) => height.card))).toBeLessThan(0.1);
+    expect(Math.max(...heights.map((height) => Math.abs(height.wrapper - height.card)))).toBeLessThan(0.1);
+  };
+
+  const openingSamplesPromise = sampleFlip();
+  await eye.click();
+  const openingHeights = await openingSamplesPromise;
+  expectFixedHeight(openingHeights);
+  expect(await header.boundingBox()).toEqual(headerBefore);
+  await expect(header).toHaveCSS("transform", "none");
+  await expect(card.getByRole("textbox", { name: "Step name" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Apply inference configuration" })).toBeEnabled();
+  const jsonFill = await card.evaluate((node) => {
+    const back = node.querySelector(".inference-card-back")!.getBoundingClientRect();
+    const textarea = node.querySelector(".configuration-json")!.getBoundingClientRect();
+    return {
+      bottomGap: Math.abs(back.bottom - textarea.bottom),
+      availableHeight: back.height,
+      textareaHeight: textarea.height,
+    };
+  });
+  expect(jsonFill.bottomGap).toBeLessThan(0.5);
+  expect(jsonFill.textareaHeight).toBeGreaterThan(jsonFill.availableHeight / 2);
+  const apply = card.getByRole("button", { name: "Apply inference configuration" });
+  const samplesPromise = sampleFlip();
+  await apply.click();
+  const heights = await samplesPromise;
+  expectFixedHeight(heights);
+
+  await eye.click();
+  await expect(apply).toBeEnabled();
+  const configuration = card.getByRole("textbox", { name: "Inference configuration JSON" });
+  const editedConfiguration = JSON.parse(await configuration.inputValue());
+  editedConfiguration.tools = [];
+  await configuration.fill(JSON.stringify(editedConfiguration, null, 2));
+  await apply.click();
+  await expect(card.getByText("Tools (0)", { exact: true })).toBeVisible();
+});
+
+test("sandbox trace hydration does not change an inference node's height after reload", async ({ page }) => {
+  const state = await setup(page);
+  const finishedMs = Date.now();
+  state.graph.nodes[0].data = {
+    ...state.graph.nodes[0].data,
+    sandbox: true,
+    status: "done",
+    lastExecution: {
+      canvasId: "legacy",
+      runId: "sandbox-run",
+      execIds: ["sandbox-exec"],
+      startedMs: finishedMs - 1000,
+      finishedMs,
+      timeoutSec: 30,
+    },
+  };
+  let releaseProgress!: () => void;
+  const progressGate = new Promise<void>((resolve) => { releaseProgress = resolve; });
+  await page.route("**/api/trace/runs/sandbox-run/progress*", async (route) => {
+    await progressGate;
+    await route.fulfill({ json: {
+      cursor: 1,
+      events: [{ id: "event", order: 1, at: finishedMs - 500, execId: "sandbox-exec",
+        kind: "model.started", detail: { round: 1 }, source: "proxy" }],
+      steps: [{ execId: "sandbox-exec", status: "ok", error: null, finishedMs }],
+    } });
+  });
+  await page.evaluate((graph) => {
+    localStorage.setItem("mnemonic.graph.v1", JSON.stringify({ nodes: graph.nodes, edges: graph.edges }));
+  }, state.graph);
+  await page.reload();
+
+  const card = page.locator('.react-flow__node-step[data-id="step"] .node');
+  await expect(card.getByRole("status", { name: "Sandbox status" })).toHaveText("Starting execution");
+  await expect(card.getByText("Activity", { exact: true })).toBeVisible();
+  const heightBeforeTrace = await card.evaluate((node) => (node as HTMLElement).offsetHeight);
+  releaseProgress();
+  await expect(card.getByRole("status", { name: "Sandbox status" })).toHaveText("Completed");
+  const heightAfterTrace = await card.evaluate((node) => (node as HTMLElement).offsetHeight);
+  expect(heightAfterTrace).toBe(heightBeforeTrace);
 });
 
 test("header import uses a pointer cursor across the file input surface", async ({ page }) => {
@@ -452,7 +572,7 @@ test("input nodes collapse to their name and primary actions and persist", async
   await expect(node.getByRole("combobox", { name: "Provider", exact: true })).toBeVisible();
   await expect(node.getByRole("combobox", { name: "Model", exact: true })).toBeVisible();
   await expect(node.getByRole("combobox", { name: "Thinking", exact: true })).toHaveCount(0);
-  await expect(node.locator("textarea")).toHaveCount(0);
+  await expect(node.getByRole("textbox", { name: "Inference configuration JSON" })).toBeHidden();
   await expect.poll(() => state.graph.nodes[0].data.collapsed).toBe(true);
 
   await page.reload();

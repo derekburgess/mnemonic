@@ -66,6 +66,19 @@ body {
 .app { display: flex; flex-direction: column; height: 100vh; }
 .workspace { flex: 1; display: flex; min-height: 0; }
 .canvas { flex: 1; min-width: 0; min-height: 0; }
+.startup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--bg);
+  color: var(--dim);
+  font-size: 13px;
+}
+.startup-overlay .spinner { width: 24px; height: 24px; }
 
 /* ---------- toolbar ---------- */
 
@@ -232,7 +245,7 @@ button.tinted:hover:not(:disabled) {
 
 .node-head { display: flex; align-items: center; gap: 6px; }
 /* Keep trailing actions at the node's top-right even when header metadata spans multiple lines. */
-.node-head > :is(.collapse-toggle, .icon.tint-err) { align-self: flex-start; }
+.node-head > :is(.collapse-toggle, .configuration-toggle, .icon.tint-err) { align-self: flex-start; }
 .collapse-toggle { background: transparent; border-color: transparent; }
 .collapse-toggle .glyph { transition: transform 120ms ease; }
 .node.input:not(.collapsed) > .node-head > .collapse-toggle .glyph { transform: rotate(90deg); }
@@ -462,6 +475,110 @@ textarea.text { font-family: inherit; resize: both; }
   color: var(--input-blue);
   background: color-mix(in srgb, var(--input-blue) 14%, transparent);
   border-color: transparent;
+}
+.node.input .configuration-toggle {
+  color: var(--input-blue);
+  background: transparent;
+  border-color: transparent;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.node.input .configuration-toggle:hover:not(:disabled),
+.node.input .configuration-toggle[aria-pressed="true"] {
+  color: var(--input-blue);
+  background: color-mix(in srgb, var(--input-blue) 14%, transparent);
+  border-color: transparent;
+}
+.inference-card-stage {
+  position: relative;
+  width: 100%;
+  min-width: var(--field-w);
+  overflow: hidden;
+  perspective: 900px;
+}
+.inference-card-face {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  transform-origin: center center;
+  backface-visibility: hidden;
+}
+.inference-card-front {
+  transform: rotateY(0);
+  visibility: visible;
+}
+.inference-card-back {
+  position: absolute;
+  inset: 0;
+  transform: rotateY(-90deg);
+  visibility: hidden;
+  pointer-events: none;
+}
+.inference-card-back .inference-configuration,
+.inference-card-back .inference-configuration > .field { min-height: 0; }
+.inference-card-back .inference-configuration {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  width: 100%;
+  min-width: var(--field-w);
+}
+.inference-card-back .inference-configuration > .field {
+  display: flex;
+  flex: 1;
+}
+.inference-card-back .configuration-json {
+  flex: 1;
+  width: 100%;
+  min-width: var(--field-w);
+  min-height: 0;
+  padding: 8px 36px 8px 8px;
+  resize: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  line-height: 1.45;
+  tab-size: 2;
+}
+.node.input.configuration-open:not(.configuration-flipping) .inference-card-front {
+  transform: rotateY(90deg);
+  visibility: hidden;
+  pointer-events: none;
+}
+.node.input.configuration-open:not(.configuration-flipping) .inference-card-back {
+  transform: rotateY(0);
+  visibility: visible;
+  pointer-events: auto;
+}
+.node.input.configuration-flipping .inference-card-face {
+  visibility: visible;
+  pointer-events: none;
+}
+.node.input.configuration-flipping.configuration-to-back .inference-card-front {
+  animation: inference-card-flip-out-back 120ms ease-in both;
+}
+.node.input.configuration-flipping.configuration-to-back .inference-card-back {
+  animation: inference-card-flip-in-back 120ms 120ms ease-out both;
+}
+.node.input.configuration-flipping.configuration-to-front .inference-card-back {
+  animation: inference-card-flip-out-front 120ms ease-in both;
+}
+.node.input.configuration-flipping.configuration-to-front .inference-card-front {
+  animation: inference-card-flip-in-front 120ms 120ms ease-out both;
+}
+@keyframes inference-card-flip-out-back {
+  from { transform: rotateY(0); }
+  to { transform: rotateY(90deg); }
+}
+@keyframes inference-card-flip-in-back {
+  from { transform: rotateY(-90deg); }
+  to { transform: rotateY(0); }
+}
+@keyframes inference-card-flip-out-front {
+  from { transform: rotateY(0); }
+  to { transform: rotateY(-90deg); }
+}
+@keyframes inference-card-flip-in-front {
+  from { transform: rotateY(90deg); }
+  to { transform: rotateY(0); }
 }
 .node.input .node-head .label.unnamed,
 .node.input .node-head .label::placeholder,

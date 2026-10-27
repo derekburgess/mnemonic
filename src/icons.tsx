@@ -38,6 +38,12 @@ const PATHS: Record<string, React.ReactNode> = {
     </>
   ),
   check: <path d="m5 12 4 4L19 6" />,
+  eye: (
+    <>
+      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z" />
+      <circle cx="12" cy="12" r="2.5" />
+    </>
+  ),
   list: (
     <>
       <path d="M8 6h13M8 12h13M8 18h13" />

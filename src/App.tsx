@@ -289,18 +289,18 @@ function Canvas() {
   }, [setEdges]);
   const [providerSettings, setProviderSettings] = useState<PlatformSettings | null>(null);
   const [providerModels, setProviderModels] = useState<Partial<Record<Provider, string[]>>>({});
+  const [providersReady, setProvidersReady] = useState(false);
   const defaultProvider = providerSettings?.provider ?? "openai";
   const providerRefresh = useRef(0);
-  const refreshProviders = useCallback((settings: PlatformSettings) => {
+  const refreshProviders = useCallback(async (settings: PlatformSettings) => {
     setProviderSettings(settings);
     const revision = ++providerRefresh.current;
-    for (const config of settings.providers?.filter((p) => p.configured) ?? [settings]) {
-      void fetchModels(config.provider).then((models) => {
-        if (revision === providerRefresh.current) {
-          setProviderModels((current) => ({ ...current, [config.provider]: models }));
-        }
-      });
-    }
+    const configs = settings.providers?.filter((provider) => provider.configured) ?? [settings];
+    const models = await Promise.all(configs.map(async (config) =>
+      [config.provider, await fetchModels(config.provider)] as const));
+    if (revision !== providerRefresh.current) return;
+    setProviderModels(Object.fromEntries(models));
+    setProvidersReady(true);
   }, []);
   const [stepped, setStepped] = useState<string[]>([]);
   const steppedRef = useRef<string[]>([]);
@@ -337,7 +337,7 @@ function Canvas() {
   }, []);
 
   useEffect(() => {
-    fetchSettings().then(refreshProviders).catch(() => {});
+    void fetchSettings().then(refreshProviders).catch(() => setProvidersReady(true));
   }, [refreshProviders]);
 
   useEffect(() => {
@@ -359,6 +359,7 @@ function Canvas() {
   );
 
   const [saveState, setSaveState] = useState<SaveState>({ label: "Checking", ready: false });
+  const [canvasRevealed, setCanvasRevealed] = useState(false);
   useEffect(() => {
     const writer = new GraphSync(live.current, (snapshot) => publish(migrateSnapshot(snapshot)), setSaveState);
     sync.current = writer;
@@ -366,6 +367,19 @@ function Canvas() {
     return () => writer.stop();
   }, [publish]);
   useEffect(() => { sync.current?.update({ canvasId: live.current.canvasId, nodes, edges }); }, [nodes, edges]);
+  useEffect(() => {
+    // Keep the already-mounted canvas covered until remote graph reconciliation and every
+    // provider-dependent control have rendered, then give React Flow a frame to measure them.
+    if (saveState.label === "Checking" || !providersReady) return;
+    let settleFrame = 0;
+    const renderFrame = requestAnimationFrame(() => {
+      settleFrame = requestAnimationFrame(() => setCanvasRevealed(true));
+    });
+    return () => {
+      cancelAnimationFrame(renderFrame);
+      cancelAnimationFrame(settleFrame);
+    };
+  }, [saveState.label, providersReady]);
 
   const patchStatus = (snap: Snapshot, id: string, patch: Partial<InputData>): Snapshot => ({
     ...snap,
@@ -929,7 +943,7 @@ function Canvas() {
 
   return (
     <GraphActionsContext.Provider value={actions}>
-      <div className="app">
+      <div className="app" aria-busy={!canvasRevealed}>
         <header className="toolbar">
           <div className="bar-left">
             <div className="brand">
@@ -1058,6 +1072,10 @@ function Canvas() {
           {panel === "sandbox" && sandboxNode && <SandboxConfigPanel key={sandboxNode.id} node={sandboxNode} onClose={() => setPanel(null)} />}
           {panel === "settings" && <SettingsPanel onClose={() => setPanel(null)} onSaved={() => { void fetchSettings().then(refreshProviders); }} />}
         </div>
+        {!canvasRevealed && <div className="startup-overlay" role="status" aria-label="Loading canvas">
+          <span className="spinner" aria-hidden="true" />
+          <span>Loading canvas…</span>
+        </div>}
       </div>
     </GraphActionsContext.Provider>
   );
