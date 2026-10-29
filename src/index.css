@@ -802,6 +802,15 @@ textarea.text { font-family: inherit; resize: both; }
   border-color: var(--output-purple);
 }
 .node.output:not(.comment) .field .edit-toggle.editing { color: var(--output-purple); }
+.output-changes {
+  color: var(--output-text);
+  background: var(--output-field);
+  border-color: var(--output-line);
+}
+.output-changes:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--output-purple) 14%, var(--output-field));
+  border-color: var(--output-purple);
+}
 .output-collapse-toggle[aria-expanded="true"] .glyph { transform: rotate(90deg); }
 .node.output:not(.comment) .output-collapse-toggle { color: var(--output-purple); }
 .node.output:not(.comment) .output-collapse-toggle:hover:not(:disabled) {

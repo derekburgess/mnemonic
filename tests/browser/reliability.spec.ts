@@ -69,6 +69,16 @@ test("startup overlay covers the canvas until graph and provider controls settle
   await expect(page.locator(".app")).toHaveAttribute("aria-busy", "false");
 });
 
+test("controlled canvas fields preserve the caret while editing in the middle", async ({ page }) => {
+  await setup(page);
+  const name = page.getByRole("textbox", { name: "Step name" });
+  await name.fill("abcdef");
+  await name.evaluate((input: HTMLInputElement) => input.setSelectionRange(2, 2));
+  await name.pressSequentially("XY");
+  await expect(name).toHaveValue("abXYcdef");
+  await expect.poll(() => name.evaluate((input: HTMLInputElement) => input.selectionStart)).toBe(4);
+});
+
 async function runStep(page: Page) {
   await page.getByRole("button", { name: "Run", exact: true }).click();
 }
@@ -115,7 +125,7 @@ test("left drag separates node movement from canvas panning and handles have for
   await expect.poll(() => state.graph.edges.some((edge: any) => edge.source === "step" && edge.target === secondId)).toBe(true);
 });
 
-test("canvas can zoom out beyond the React Flow default", async ({ page }) => {
+test("canvas can zoom beyond the defaults in both directions", async ({ page }) => {
   await setup(page);
   const controls = page.locator(".react-flow__controls");
   await expect(controls.locator("button")).toHaveCount(3);
@@ -129,8 +139,14 @@ test("canvas can zoom out beyond the React Flow default", async ({ page }) => {
   const transform = await page.locator(".react-flow__viewport").getAttribute("style");
   const scale = Number(transform?.match(/scale\(([^)]+)\)/)?.[1]);
   expect(scale).toBeLessThan(0.5);
-  expect(scale).toBeGreaterThanOrEqual(0.1);
-  expect(scale).toBeLessThanOrEqual(0.11);
+  expect(scale).toBeCloseTo(0.075, 5);
+  await expect(zoomOut).toBeDisabled();
+  const zoomIn = page.locator(".react-flow__controls-zoomin");
+  for (let index = 0; index < 30 && await zoomIn.isEnabled(); index++) await zoomIn.click();
+  const zoomedInTransform = await page.locator(".react-flow__viewport").getAttribute("style");
+  const zoomedInScale = Number(zoomedInTransform?.match(/scale\(([^)]+)\)/)?.[1]);
+  expect(zoomedInScale).toBeCloseTo(2.5, 5);
+  await expect(zoomIn).toBeDisabled();
 });
 
 test("inference configuration flip keeps the card height fixed", async ({ page }) => {

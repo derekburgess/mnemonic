@@ -126,7 +126,7 @@ export function OutputNodeView({ id, data }: NodeProps<OutputNode>) {
         </button>
         <CopyButton text={data.text} label="Copy output" />
       </div>}
-      {data.workspaceChanges && data.kind !== "thinking" && <button className="nodrag"
+      {data.workspaceChanges && data.kind !== "thinking" && <button className="output-changes nodrag"
         onClick={() => openWorkspaceChanges(data.workspaceChanges!)}>{pendingChanges === 0 ? "View changes" : `Review changes${pendingChanges === undefined ? "" : ` (${pendingChanges})`}`}</button>}
       {!collapsed && callRows.length > 0 && (
         <button className="calls-toggle nodrag" onClick={() => setCallsOpen((v) => !v)}>

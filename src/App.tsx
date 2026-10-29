@@ -931,10 +931,20 @@ function Canvas() {
     [runOrder, stepped],
   );
 
-  const workspaceCounts = useMemo(() => Object.fromEntries(nodes.filter(isInput).map((node) => [
-    node.id,
-    resolveInheritedInput(node.id, nodes, edges).workspaces.filter((workspace) => workspace.path.trim()).length,
-  ])), [nodes, edges]);
+  const workspaceCountsRef = useRef<Record<string, number>>({});
+  const workspaceCounts = useMemo(() => {
+    const next = Object.fromEntries(nodes.filter(isInput).map((node) => [
+      node.id,
+      resolveInheritedInput(node.id, nodes, edges).workspaces.filter((workspace) => workspace.path.trim()).length,
+    ]));
+    const previous = workspaceCountsRef.current;
+    const keys = Object.keys(next);
+    if (keys.length === Object.keys(previous).length && keys.every((key) => previous[key] === next[key])) {
+      return previous;
+    }
+    workspaceCountsRef.current = next;
+    return next;
+  }, [nodes, edges]);
 
   const actions = useMemo(
     () => ({ activeNodeIds, stopNode, openWorkspaceChanges, openWorkspaceFile, openSandboxConfig, providerModels, providerSettings, defaultProvider, currentId, workspaceCounts, updateInput, setLoop, updateContext, updateOutput, updateComment, updateWorkspaceFile, updateEdgeRoute, runOne, removeNode }),
@@ -1036,7 +1046,8 @@ function Canvas() {
               nodeDragThreshold={0}
               connectionDragThreshold={0}
               connectionRadius={44}
-              minZoom={0.1}
+              minZoom={0.075}
+              maxZoom={2.5}
               fitView
               proOptions={{ hideAttribution: false }}
             >
